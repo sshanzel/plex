@@ -111,7 +111,9 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);
 
   let ephemeralGraph: string | undefined;
-  if (opts.publishFalkor && opts.config.falkordb.enabled) {
+  // Auto-publish when FalkorDB is enabled (so the Browser always reflects the latest
+  // review); callers can opt out with publishFalkor: false.
+  if (opts.publishFalkor !== false && opts.config.falkordb.enabled) {
     const graphName = reviewGraphName(repo, opts);
     const res = await publishNeighborhood(graphName, nb, { url: opts.config.falkordb.url });
     if (res.published) ephemeralGraph = graphName;
