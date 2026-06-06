@@ -42,7 +42,11 @@ export interface MiningConfig {
   maxPrs: number;
   /** Cosine threshold to group review comments into one pitfall cluster. */
   clusterThreshold: number;
-  /** Minimum cluster size to promote into a pitfall (singletons stay anecdotes). */
+  /**
+   * Minimum cluster size sent to the distiller. Default 1: since the LLM is the quality
+   * gate (it SKIPs non-lessons), clustering merges duplicates rather than dropping lone
+   * but valuable comments. Raise to 2+ to require corroboration (fewer LLM calls).
+   */
   minClusterSize: number;
 }
 
@@ -107,7 +111,7 @@ export const defaultConfig: ReviewerConfig = {
   mining: {
     maxPrs: 100,
     clusterThreshold: 0.6,
-    minClusterSize: 2,
+    minClusterSize: 1,
   },
 };
 

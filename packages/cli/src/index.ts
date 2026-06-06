@@ -57,7 +57,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
-  plex mine [repoPath] [--reset] [--all]   # mine PR-review history into pitfalls (incremental)
+  plex mine [repoPath] [--reset] [--all] [--limit <n>]   # mine PR-review history into pitfalls (incremental)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
 
@@ -188,6 +188,7 @@ async function main(): Promise<number> {
     }
     case 'mine': {
       const repoPath = positionals[1] ?? process.cwd();
+      if (typeof flags.limit === 'string') config.mining.maxPrs = Number(flags.limit);
       const res = await mineRepo(repoPath, config, {
         reset: Boolean(flags.reset),
         state: flags.all ? 'all' : 'merged',

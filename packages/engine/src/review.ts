@@ -47,6 +47,18 @@ export interface ReviewContext {
   notes: string[];
 }
 
+/**
+ * A stable, recognizable FalkorDB graph name for a review target (instead of a random
+ * timestamp): `<repo>__pr_<n>` for a PR, else `<repo>__<mode>[_<baseRef>]`. Re-reviewing
+ * the same target reuses the same graph (publish clears it first).
+ */
+function reviewGraphName(repo: string, opts: AssembleOptions): string {
+  const slug = (s: string): string => s.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
+  if (opts.source === 'pr' && opts.pr != null) return `${slug(repo)}__pr_${slug(String(opts.pr))}`;
+  const mode = opts.mode ?? 'working';
+  return `${slug(repo)}__${mode}${opts.baseRef ? '_' + slug(opts.baseRef) : ''}`;
+}
+
 /** Read repo-root `plex.md` (the explicit, human-editable steering surface). */
 function loadReviewerMd(repoPath: string): string | undefined {
   const f = path.join(repoPath, 'plex.md');
@@ -100,7 +112,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
 
   let ephemeralGraph: string | undefined;
   if (opts.publishFalkor && opts.config.falkordb.enabled) {
-    const graphName = `pr_${Date.now().toString(36)}`;
+    const graphName = reviewGraphName(repo, opts);
     const res = await publishNeighborhood(graphName, nb, { url: opts.config.falkordb.url });
     if (res.published) ephemeralGraph = graphName;
   }
