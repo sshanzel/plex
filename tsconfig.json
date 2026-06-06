@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@plex/core": ["packages/core/src/index.ts"],
+      "@plex/ingest": ["packages/ingest/src/index.ts"],
+      "@plex/code-graph": ["packages/code-graph/src/index.ts"],
+      "@plex/neighborhood": ["packages/neighborhood/src/index.ts"],
+      "@plex/engine": ["packages/engine/src/index.ts"],
+      "@plex/knowledge": ["packages/knowledge/src/index.ts"],
+      "@plex/deterministic": ["packages/deterministic/src/index.ts"],
+      "@plex/findings": ["packages/findings/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts"]
+}

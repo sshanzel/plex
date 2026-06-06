@@ -1,0 +1,20 @@
+{
+  "name": "@plex/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@plex/core": "workspace:*",
+    "@plex/ingest": "workspace:*",
+    "@plex/code-graph": "workspace:*",
+    "@plex/neighborhood": "workspace:*",
+    "@plex/deterministic": "workspace:*",
+    "@plex/findings": "workspace:*",
+    "@plex/knowledge": "workspace:*"
+  }
+}

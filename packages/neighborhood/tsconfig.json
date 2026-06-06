@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@plex/core": ["packages/core/src/index.ts"],
+      "@plex/code-graph": ["packages/code-graph/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

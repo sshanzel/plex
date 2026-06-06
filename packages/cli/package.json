@@ -1,0 +1,14 @@
+{
+  "name": "@plex/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "bin": {
+    "plex": "./src/index.ts"
+  },
+  "dependencies": {
+    "@plex/core": "workspace:*",
+    "@plex/engine": "workspace:*"
+  }
+}

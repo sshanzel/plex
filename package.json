@@ -1,0 +1,45 @@
+{
+  "name": "plex-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first, open-source AI code reviewer: an MCP server + CLI that grounds any agent's review in a blast-radius code graph and accumulated review knowledge.",
+  "license": "MIT",
+  "author": "Lee Solevilla",
+  "packageManager": "pnpm@10.32.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsup",
+    "start:mcp": "node dist/plex-mcp.js",
+    "start": "node dist/plex.js",
+    "test": "vitest run && pnpm test:integration",
+    "test:unit": "vitest run",
+    "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts falkor",
+    "test:watch": "vitest",
+    "mcp": "tsx packages/mcp-server/src/index.ts",
+    "plex": "tsx packages/cli/src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "falkordb": "^6.6.2",
+    "kuzu": "^0.11.3",
+    "parse-diff": "^0.11.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "kuzu"
+    ]
+  }
+}

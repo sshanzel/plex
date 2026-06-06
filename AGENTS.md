@@ -1,0 +1,92 @@
+# AGENTS.md
+
+Guide for humans and coding agents continuing work on **reviewer**. Read this first, then [`docs/architecture.md`](docs/architecture.md) and the decision log [`docs/adr/README.md`](docs/adr/README.md).
+
+## What this is (in one breath)
+
+`reviewer` is a **local-first, open-source code reviewer**. It is *not* a new LLM — it's an **MCP server + orchestration layer** that any coding agent (Claude Code, Codex) connects to. It makes that agent rigorous and *unbiased* by running review in a fresh process, grounding it in a **blast-radius map** (Kùzu code graph) and **accumulated review knowledge** (knowledge graph), and merging first-principles + knowledge-grounded + deterministic findings into one ranked stream that learns from the user's verdicts.
+
+## Repo layout
+
+```
+packages/
+  core/          shared types, config, provider interfaces (no deps)
+  ingest/        diff adapters: local git + gh PR → NormalizedDiff
+  code-graph/    Kùzu per-repo graph: TS symbols/imports + git co-change   [M1]
+  neighborhood/  diff→symbols→blast radius; optional FalkorDB ephemeral graph [M1]
+  findings/      merge / dedup / rank / triage                            [M2]
+  deterministic/ Semgrep / ast-grep runner                                [M2]
+  knowledge/     knowledge graph + retrieval + plex.md                [M3]
+  mcp-server/    MCP tool surface + orchestration
+  cli/           `reviewer index | review`                                [M1]
+docs/
+  architecture.md         living architecture
+  adr/README.md           decision log (the "why")
+  milestones/MN.md         intent → acceptance → built (the traceability backbone)
+```
+
+## Dev workflow
+
+```bash
+pnpm install            # kuzu's native build is allowlisted via pnpm.onlyBuiltDependencies
+pnpm typecheck          # tsc -p tsconfig.json (whole workspace, paths-mapped)
+pnpm test               # vitest units + tsx integration scenarios (one process each)
+pnpm test:unit          # vitest only       pnpm test:integration  # Kùzu/DB scenarios
+
+# dev (tsx — convenient, but mind the Kùzu open-limit, ADR-17)
+pnpm mcp                # MCP server on stdio
+pnpm reviewer -- ...    # CLI
+
+# production (bundled, run under node — stable, ADR-19)
+pnpm build              # -> dist/reviewer.js, dist/reviewer-mcp.js
+pnpm start -- index <repo> ; pnpm start -- review <repo> --staged
+pnpm start:mcp          # the server an agent connects to
+```
+
+**How an agent uses it:** point Claude Code / Codex at the MCP server (`pnpm start:mcp`). Flow: `index_repo` once → `get_review_context` (blast radius + deterministic + knowledge + plex.md) → reason → `submit_findings` (returns the ranked, triaged stream) → `record_outcome` per finding (waivers + learning). `seed_knowledge`/`consolidate_knowledge`/`propose_promotions` manage the knowledge base.
+
+Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vitest` run TS directly — no build step in dev. Internal imports use `@plex/<pkg>` (aliased in `tsconfig.json` and `vitest.config.ts`).
+
+## Local services (must remember)
+
+- **Kùzu** is embedded — no server. DBs are directories under a `dataDir` (default `.plex/`). Each repo gets its own DB; the knowledge graph is one shared DB.
+- **FalkorDB** is optional (ephemeral neighborhood layer + live viz). Locally it runs in Docker as container **`reviewer-falkordb`** on **port 6380** (host 6379 is already taken by another Redis on this machine):
+  ```bash
+  docker start reviewer-falkordb   # or: docker run -d --name reviewer-falkordb -p 6380:6379 -p 3001:3000 falkordb/falkordb:latest
+  ```
+  Browser UI: http://localhost:3001. The default config URL is `redis://localhost:6379` (the user-facing default); dev/test must override to `:6380`. If FalkorDB is unreachable, the neighborhood is computed in-process — **never hard-fail on it**.
+
+### Native-integration gotchas (hard-won — see ADR-16, ADR-17)
+
+- **Kùzu + FalkorDB SIGSEGV in the same process.** Never `import('falkordb')` in a process that loaded the Kùzu addon. FalkorDB publishing goes through an isolated child (`packages/neighborhood/src/falkor-worker.mjs`). Keep it that way.
+- **tsx + Kùzu crashes after ~5 `Database` opens in one process.** Plain `node` is stable (12+). So: integration tests run one scenario per tsx process (`pnpm test:integration`), vitest holds only pure units (`pnpm test:unit`), and the shipped server should run built JS under node — not tsx — and **reuse a `Database` per dir** rather than open/close per request.
+- Always close the Kùzu `Connection` before the `Database` (`CodeGraphDB.close()`).
+- Adding a `.test.ts` that opens Kùzu will crash vitest teardown — put it in `integration.mts` instead.
+
+## Conventions & guidelines
+
+- **Verify against reality, not memory.** Both DB clients were validated by smoke tests; when using a new API, check the package's `.d.ts` first (we did this for `kuzu@0.11.3`).
+- **Kùzu queries:** use *prepared statements with named `$params`* for anything containing file paths/user data — never string-concatenate. Undirected traversal `-[r:Rel]-` works; frontier expansion uses `WHERE x.id IN $ids`.
+- **Pure core, impure edges:** keep scoring/ranking/co-change math as pure functions (unit-tested without I/O); isolate git/Kùzu/FalkorDB calls at the boundaries.
+- **Tests prefer real fixtures:** diff/graph tests build a throwaway git repo + in-memory/temp Kùzu DB rather than synthetic strings (a hand-written multi-file diff already fooled `parse-diff` once — see M0 notes).
+- **Provenance is mandatory** on knowledge: every Pitfall links its source Incidents; every graph edge carries `provenance` + `weight`.
+- **Document as you go:** each milestone gets a `docs/milestones/MN.md` (intent → acceptance criteria → what was built → verification). New decisions/deviations get an ADR. This is the user's explicit "always check we did what we intended" requirement — honor it.
+
+## Must-remember invariants (easy to get wrong)
+
+1. **Severity and confidence are separate axes** (ADR-04). "Potential bug" = `bug` severity + low confidence. Never collapse them.
+2. **Prevalence is read by severity** (ADR-05): common *style* → demote to convention; common *bug* → escalate as a systemic migration. Suppression must never silence widespread real bugs.
+3. **Blast radius ≈ coupling, not a precise call graph** (ADR-06). Co-change (git) is the strongest signal for runtime coupling like injected/DI services; imports miss it; precise TS edges are *enrichment*, not the base.
+4. **Co-change must be weighted** (ADR-06): contribution ∝ 1/(commit size) and decays by recency; commits touching > `maxCommitFiles` contribute ≈0 (kills lint/format-sweep noise and the N² blowup).
+5. **The reviewer never sees the author's reasoning** (ADR-02). Review state (raised/resolved/waived) is fed as *facts* from our store, never as prior chain-of-thought — that's the anti-bias mechanism.
+6. **RAG, not fine-tuning** (ADR-01). The model stays a frontier model; our value is the retrieved context + feedback loop.
+7. **v1 is TS/JS via the TS compiler API** (ADR-15), not tree-sitter. Other languages plug in behind the same extractor interface later.
+
+## Scope
+
+- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, M5 promotion + viz + build.
+- **Out of scope (by request):** M4 repo mining/distillation, and the multi-repo workspace in M5. If you build mining later, it populates the knowledge base via the same `KnowledgeStore` (ADR-11) — outcome-weighted, provenance-mandatory.
+
+## Status
+
+All in-scope milestones complete (M0–M3, M5). See `docs/milestones/` for the authoritative per-milestone records and `docs/adr/README.md` for the 19 decisions. `pnpm test` green (28 unit + 7 integration); `pnpm build` produces node-runnable binaries.

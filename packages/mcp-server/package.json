@@ -1,0 +1,14 @@
+{
+  "name": "@plex/mcp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@plex/core": "workspace:*",
+    "@plex/ingest": "workspace:*",
+    "@plex/engine": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  }
+}

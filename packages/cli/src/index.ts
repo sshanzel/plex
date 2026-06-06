@@ -1,0 +1,226 @@
+/**
+ * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
+ * path for agents. Commands: index, review, blast, verdict, verdicts.
+ */
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import {
+  loadConfig,
+  indexRepo,
+  assembleReviewContext,
+  blastRadius,
+  submitVerdict,
+  readVerdicts,
+  seedKnowledge,
+  consolidateKnowledge,
+  getPromotions,
+  reviewContextToHtml,
+  type ReviewContext,
+} from '@plex/engine';
+import type { VerdictKind, WaiverScope } from '@plex/core';
+
+type LocalDiffMode = 'working' | 'staged' | 'branch';
+
+interface Parsed {
+  positionals: string[];
+  flags: Record<string, string | boolean>;
+}
+
+function parse(argv: string[]): Parsed {
+  const positionals: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { positionals, flags };
+}
+
+const USAGE = `plex — local-first code review context
+
+Usage:
+  plex index [repoPath]
+  plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--falkor] [--json] [--html <file>]
+  plex blast [repoPath] --files <a.ts,b.ts>
+  plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
+  plex verdicts [repoPath]
+  plex seed [repoPath] [--file <markdown>]
+
+Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
+
+function printReview(ctx: ReviewContext): void {
+  const out: string[] = [];
+  out.push(`repo: ${ctx.repo}   base: ${ctx.baseRef}`);
+  out.push('');
+  out.push(`Changed (${ctx.changed.length}):`);
+  for (const c of ctx.changed) {
+    out.push(`  ${c.file}:${c.startLine}-${c.endLine}${c.symbol ? `  ${c.symbol}` : ''}`);
+  }
+  out.push('');
+  out.push(`Blast radius — coupled files (${ctx.blastRadius.length}):`);
+  for (const n of ctx.blastRadius) {
+    out.push(
+      `  ${n.score.toFixed(3)}  ${String(n.node.props.path)}  [${n.via.join(', ')}]  (hop ${n.distance})`,
+    );
+  }
+  out.push('');
+  out.push(`Deterministic findings (${ctx.deterministic.length}):`);
+  for (const f of ctx.deterministic) {
+    out.push(`  [${f.severity}] ${f.location.file}:${f.location.startLine}  ${f.title}`);
+  }
+  out.push('');
+  out.push(`Relevant knowledge / pitfalls (${ctx.knowledge.length}):`);
+  for (const k of ctx.knowledge) {
+    out.push(`  ${k.score.toFixed(3)}  [${k.pitfall.category}] ${k.pitfall.title}`);
+  }
+  if (ctx.reviewerMd) {
+    out.push('');
+    out.push('plex.md (project guidance):');
+    out.push(ctx.reviewerMd.split('\n').map((l) => `  ${l}`).join('\n'));
+  }
+  if (ctx.ephemeralGraph) {
+    out.push('');
+    out.push(`FalkorDB graph: ${ctx.ephemeralGraph} (inspect in FalkorDB Browser)`);
+  }
+  out.push('');
+  out.push('Notes for the reviewing agent:');
+  for (const note of ctx.notes) out.push(`  • ${note}`);
+  process.stdout.write(out.join('\n') + '\n');
+}
+
+async function main(): Promise<number> {
+  const { positionals, flags } = parse(process.argv.slice(2));
+  const command = positionals[0];
+  const config = loadConfig();
+
+  switch (command) {
+    case 'index': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const res = await indexRepo(repoPath, config);
+      process.stdout.write(
+        `Indexed ${res.files} files, ${res.symbols} symbols, ${res.imports} imports, ` +
+          `${res.coChangePairs} co-change pairs from ${res.commits} commits.\n` +
+          `Graph: ${res.graphDir}\n`,
+      );
+      return 0;
+    }
+    case 'review': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const mode: LocalDiffMode | undefined = flags.staged
+        ? 'staged'
+        : flags.branch
+          ? 'branch'
+          : undefined;
+      const useFalkor = Boolean(flags.falkor);
+      if (useFalkor) config.falkordb.enabled = true;
+      const ctx = await assembleReviewContext({
+        repoPath,
+        config,
+        source: flags.pr ? 'pr' : 'local',
+        mode,
+        baseRef: typeof flags.branch === 'string' ? flags.branch : undefined,
+        pr: typeof flags.pr === 'string' ? flags.pr : undefined,
+        publishFalkor: useFalkor,
+      });
+      if (typeof flags.html === 'string') {
+        writeFileSync(flags.html, reviewContextToHtml(ctx));
+        process.stdout.write(`Wrote neighborhood visualization to ${flags.html}\n`);
+      }
+      if (flags.json) process.stdout.write(JSON.stringify(ctx, null, 2) + '\n');
+      else printReview(ctx);
+      return 0;
+    }
+    case 'blast': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const files = typeof flags.files === 'string' ? flags.files.split(',').map((s) => s.trim()) : [];
+      if (files.length === 0) {
+        process.stderr.write('blast requires --files <a.ts,b.ts>\n');
+        return 1;
+      }
+      const neighbors = await blastRadius(repoPath, files, config);
+      process.stdout.write(JSON.stringify({ neighbors }, null, 2) + '\n');
+      return 0;
+    }
+    case 'verdict': {
+      const findingId = positionals[1];
+      const kind = positionals[2] as VerdictKind | undefined;
+      if (!findingId || !kind || !['accept', 'reject', 'waive'].includes(kind)) {
+        process.stderr.write('Usage: plex verdict <findingId> <accept|reject|waive> [--scope <s>]\n');
+        return 1;
+      }
+      const repoPath = typeof flags.repo === 'string' ? flags.repo : process.cwd();
+      const stored = await submitVerdict(
+        repoPath,
+        {
+          findingId,
+          kind,
+          scope: typeof flags.scope === 'string' ? (flags.scope as WaiverScope) : undefined,
+          note: typeof flags.note === 'string' ? flags.note : undefined,
+          file: typeof flags.file === 'string' ? flags.file : undefined,
+          line: typeof flags.line === 'string' ? Number(flags.line) : undefined,
+          title: typeof flags.title === 'string' ? flags.title : undefined,
+          pattern: typeof flags.pattern === 'string' ? flags.pattern : undefined,
+          category: typeof flags.category === 'string' ? flags.category : undefined,
+        },
+        config,
+      );
+      process.stdout.write(`Recorded: ${JSON.stringify(stored)}\n`);
+      return 0;
+    }
+    case 'verdicts': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const list = await readVerdicts(repoPath, config);
+      process.stdout.write(JSON.stringify(list, null, 2) + '\n');
+      return 0;
+    }
+    case 'seed': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const file = typeof flags.file === 'string' ? flags.file : path.join(repoPath, 'plex.md');
+      if (!existsSync(file)) {
+        process.stderr.write(`No markdown to seed from (${file}). Pass --file <path>.\n`);
+        return 1;
+      }
+      const added = await seedKnowledge(config, readFileSync(file, 'utf8'));
+      process.stdout.write(`Seeded ${added} pitfall(s) from ${file} into ${config.knowledgeDir}\n`);
+      return 0;
+    }
+    case 'promote': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const c = await consolidateKnowledge(config);
+      const mdFile = path.join(repoPath, 'plex.md');
+      const existing = existsSync(mdFile) ? readFileSync(mdFile, 'utf8') : '';
+      const promo = await getPromotions(config, existing);
+      const out: string[] = [`Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes.`];
+      if (promo.markdown.length) {
+        out.push('', 'Suggested plex.md additions:', ...promo.markdown.map((l) => `  ${l}`));
+      }
+      if (promo.rules.length) {
+        out.push('', 'Suggested ast-grep rule stubs:', ...promo.rules.map((r) => r.split('\n').map((l) => `  ${l}`).join('\n')));
+      }
+      if (!promo.markdown.length && !promo.rules.length) out.push('No promotions suggested yet.');
+      process.stdout.write(out.join('\n') + '\n');
+      return 0;
+    }
+    default:
+      process.stdout.write(USAGE + '\n');
+      return command ? 1 : 0;
+  }
+}
+
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
