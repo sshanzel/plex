@@ -34,11 +34,18 @@ const SYSTEM =
  */
 export async function llmDistill(input: ClusterInput, llm: CompletionProvider): Promise<Pitfall | null> {
   const comments = input.comments;
+  const render = (c: (typeof comments)[number], i: number): string => {
+    const head = `${i + 1}. [${c.path ?? '?'}] ${c.body}`;
+    if (!c.replies?.length) return head;
+    return head + '\n' + c.replies.map((r) => `   ↳ ${r.author ?? 'reply'}: ${r.body}`).join('\n');
+  };
   const prompt =
-    `These ${comments.length} review comments were flagged on similar code. Decide whether they represent a ` +
-    `pitfall a future reviewer should remember. SKIP (respond exactly {"skip": true}) ONLY if trivial or not a ` +
-    `real, reusable lesson. A lesson specific to THIS project is still worth keeping — mark its scope "repo".\n\n` +
-    comments.map((c, i) => `${i + 1}. [${c.path ?? '?'}] ${c.body}`).join('\n') +
+    `These ${comments.length} review comments (with their thread discussion) were flagged on similar code. ` +
+    `Decide whether they represent a pitfall a future reviewer should remember. SKIP (respond exactly ` +
+    `{"skip": true}) if trivial, not a reusable lesson, OR if the discussion shows the suggestion was ` +
+    `dismissed, disagreed with, or deemed intentional/not-needed — that means it was NOT accepted, so do not ` +
+    `store it. A lesson specific to THIS project IS worth keeping — mark its scope "repo".\n\n` +
+    comments.map(render).join('\n') +
     `\n\nReturn JSON: {"skip": false, "title": short imperative, "why": "1-2 sentences", ` +
     `"mitigation": "how to avoid", "category": "security|performance|error-handling|concurrency|testing|types|api-design|style|general", ` +
     `"tier": "codifiable if a linter could catch it, else judgmental", ` +

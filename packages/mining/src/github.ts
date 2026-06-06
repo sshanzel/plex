@@ -37,7 +37,38 @@ export async function listPrs(opts: {
   return JSON.parse(stdout) as PrRef[];
 }
 
-/** Fetch the review comments for a single PR (best-effort). */
+/**
+ * Group a flat list of review comments into threads: each top-level comment carries its
+ * replies (the discussion that reveals the outcome). PURE — unit-tested. Replies whose
+ * root can't be resolved are dropped.
+ */
+export function groupThreads(flat: RawComment[]): RawComment[] {
+  const byId = new Map(flat.map((c) => [c.id, c]));
+  const tops = flat
+    .filter((c) => c.inReplyToId == null)
+    .map((c) => ({ ...c, replies: [] as { author?: string; body: string }[] }));
+  const topById = new Map(tops.map((t) => [t.id, t]));
+
+  const rootId = (c: RawComment): string => {
+    let cur = c;
+    const seen = new Set<string>();
+    while (cur.inReplyToId != null && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const parent = byId.get(String(cur.inReplyToId));
+      if (!parent) break;
+      cur = parent;
+    }
+    return cur.id;
+  };
+
+  for (const c of flat) {
+    if (c.inReplyToId == null) continue;
+    topById.get(rootId(c))?.replies!.push({ author: c.author, body: c.body });
+  }
+  return tops;
+}
+
+/** Fetch the review comments for a single PR, grouped into threads (best-effort). */
 export async function fetchCommentsForPr(cwd: string, pr: PrRef): Promise<RawComment[]> {
   try {
     const { stdout } = await pexec(
@@ -45,8 +76,7 @@ export async function fetchCommentsForPr(cwd: string, pr: PrRef): Promise<RawCom
       ['api', '--paginate', `repos/{owner}/{repo}/pulls/${pr.number}/comments`],
       { cwd, maxBuffer: MAX_BUFFER },
     );
-    const raw = JSON.parse(stdout) as GhComment[];
-    return raw.map((c) => ({
+    const flat: RawComment[] = (JSON.parse(stdout) as GhComment[]).map((c) => ({
       id: String(c.id),
       prNumber: pr.number,
       prMerged: pr.mergedAt != null,
@@ -58,6 +88,7 @@ export async function fetchCommentsForPr(cwd: string, pr: PrRef): Promise<RawCom
       createdAt: c.created_at,
       inReplyToId: c.in_reply_to_id,
     }));
+    return groupThreads(flat);
   } catch {
     return [];
   }

@@ -12,6 +12,12 @@ export interface RawComment {
   author?: string;
   createdAt?: string;
   inReplyToId?: number;
+  /**
+   * Replies in the same review thread — the discussion that reveals the real outcome
+   * (e.g. a responder saying "don't do this" / "intentional" means the comment was
+   * dismissed, not accepted). The LLM distiller reads these to decide skip vs store.
+   */
+  replies?: { author?: string; body: string }[];
 }
 
 export interface MineResult {

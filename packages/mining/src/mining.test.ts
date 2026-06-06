@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CompletionProvider } from '@plex/core';
 import { isSubstantive, categorize } from './classify';
 import { greedyCluster, centroid } from './cluster';
+import { groupThreads } from './github';
 import { llmDistill } from './distill';
 import type { RawComment } from './types';
 
@@ -31,6 +32,21 @@ describe('greedyCluster', () => {
   });
   it('centroid averages rows', () => {
     expect(centroid([[2, 0], [0, 2]])).toEqual([1, 1]);
+  });
+});
+
+describe('groupThreads', () => {
+  it('attaches replies to their top-level comment (the discussion that reveals outcome)', () => {
+    const flat: RawComment[] = [
+      { id: '1', prNumber: 7, prMerged: true, body: 'This query is missing a tenant id filter' },
+      { id: '2', prNumber: 7, prMerged: true, body: 'Intentional — admin queries are cross-tenant by design', inReplyToId: 1 },
+      { id: '3', prNumber: 7, prMerged: true, body: 'A separate, unrelated comment' },
+    ];
+    const threads = groupThreads(flat);
+    expect(threads.map((t) => t.id).sort()).toEqual(['1', '3']); // replies are not separate items
+    const t1 = threads.find((t) => t.id === '1')!;
+    expect(t1.replies).toHaveLength(1);
+    expect(t1.replies![0]!.body).toContain('Intentional');
   });
 });
 
