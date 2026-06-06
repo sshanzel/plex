@@ -69,6 +69,19 @@ claude mcp add plex -- node /abs/path/to/dist/plex-mcp.js
 ```
 Then, inside a target repo, ask your agent to *"review my staged changes with Plex."* A ready-made review subagent is included at [`.claude/agents/`](.) — drop one into any repo.
 
+## Supporting services (Docker Compose)
+
+Plex runs locally; these are the optional datastore + UIs it can use:
+
+```bash
+cp .env.example .env     # adjust ports/paths if needed
+pnpm db:up               # FalkorDB + Browser → http://localhost:53000  (redis on :56379)
+pnpm ui:kuzu             # optional: Kùzu Explorer → http://localhost:58000 (set KUZU_DB_FILE)
+pnpm db:down
+```
+
+The FalkorDB Browser shows the per-review **neighborhood** graph (named `<repo>__<target>`); Kùzu Explorer browses a repo's durable code graph (pin the image to your Kùzu version). For most uses the `review --html` Cytoscape output is the quickest way to *see* a review's blast radius.
+
 ## CLI
 
 `plex index · review · blast · verdict · verdicts · seed · promote · mine`

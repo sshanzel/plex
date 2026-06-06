@@ -49,12 +49,12 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 
 ## Local services (must remember)
 
-- **Kùzu** is embedded — no server. DBs are directories under a `dataDir` (default `.plex/`). Each repo gets its own DB; the knowledge graph is one shared DB.
-- **FalkorDB** is optional (ephemeral neighborhood layer + live viz). Locally it runs in Docker as container **`reviewer-falkordb`** on **port 6380** (host 6379 is already taken by another Redis on this machine):
+- **Kùzu** is embedded — no server. The per-repo code graph is a single file at `<repo>/.plex/graph.kuzu`. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
+- **FalkorDB** is optional (ephemeral neighborhood layer + live viz). Run it via Docker Compose (pinned `falkordb/falkordb:v4.18.9`):
   ```bash
-  docker start reviewer-falkordb   # or: docker run -d --name reviewer-falkordb -p 6380:6379 -p 3001:3000 falkordb/falkordb:latest
+  pnpm db:up     # plex-falkordb: redis on :56379, Browser on http://localhost:53000
   ```
-  Browser UI: http://localhost:3001. The default config URL is `redis://localhost:6379` (the user-facing default); dev/test must override to `:6380`. If FalkorDB is unreachable, the neighborhood is computed in-process — **never hard-fail on it**.
+  Ports are in the rarely-used 5xxxx range (override in `.env`). Set `PLEX_FALKORDB_URL=redis://localhost:56379` to enable the `--falkor` layer (config default is `redis://localhost:6379`). If FalkorDB is unreachable, the neighborhood is computed in-process — **never hard-fail on it**.
 
 ### Native-integration gotchas (hard-won — see ADR-16, ADR-17)
 

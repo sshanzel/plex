@@ -1,0 +1,49 @@
+# Plex supporting services. Plex itself runs locally (CLI / MCP); these are just the
+# datastore + UIs it can use. Copy .env.example to .env to override ports/paths.
+#
+#   pnpm db:up        # FalkorDB + its Browser
+#   pnpm ui:kuzu      # + Kùzu Explorer (optional; see notes below)
+#   pnpm db:down
+name: plex
+
+services:
+  # FalkorDB — backs the ephemeral per-review "neighborhood" graphs (ADR-07/16) and
+  # ships a graph Browser. Redis API on 6380 (6379 is usually taken locally).
+  falkordb:
+    image: falkordb/falkordb:v4.18.9
+    container_name: plex-falkordb
+    ports:
+      - "${PLEX_FALKORDB_PORT:-56379}:6379" # → PLEX_FALKORDB_URL=redis://localhost:56379
+      - "${PLEX_FALKORDB_BROWSER_PORT:-53000}:3000" # Browser → http://localhost:53000
+    volumes:
+      - plex-falkordb-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # Kùzu Explorer — browse a repo's DURABLE code graph (optional, best-effort).
+  # Start with: `pnpm ui:kuzu` (or `docker compose --profile kuzu up -d`).
+  # Notes:
+  #  - Point KUZU_DB_FILE (in .env) at a repo's single-file code graph, written by
+  #    `plex index <repo>` to <repo>/.plex/graph.kuzu.
+  #  - Pin KUZU_EXPLORER_TAG to your Kùzu version (this repo uses kuzu 0.11.x); a
+  #    mismatched Explorer rejects the storage format.
+  #  - The primary "clickable graph" in Plex is the FalkorDB review-neighborhood;
+  #    the Kùzu code graph is mostly a query backend.
+  kuzu-explorer:
+    image: kuzudb/explorer:${KUZU_EXPLORER_TAG:-0.11.3} # match the kuzu npm version
+    container_name: plex-kuzu-explorer
+    profiles: ["kuzu"]
+    ports:
+      - "${KUZU_EXPLORER_PORT:-58000}:8000" # → http://localhost:58000
+    environment:
+      - MODE=READ_ONLY
+    volumes:
+      - "${KUZU_DB_FILE:-./.plex/graph.kuzu}:/database"
+    restart: unless-stopped
+
+volumes:
+  plex-falkordb-data:
