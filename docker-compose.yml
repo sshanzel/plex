@@ -7,11 +7,14 @@
 name: plex
 
 services:
-  # FalkorDB — backs the ephemeral per-review "neighborhood" graphs (ADR-07/16) and
-  # ships a graph Browser. Redis API on 6380 (6379 is usually taken locally).
+  # FalkorDB — the REQUIRED per-PR working-memory graph ("brain of the PR": blast
+  # radius + rounds/findings/verdicts/comments — ADR-22/23, isolated via ADR-16) and a
+  # graph Browser. Redis API mapped to :56379 locally (6379 is usually taken).
+  # AOF is on so the PR history survives restarts (in-memory otherwise — ADR-22).
   falkordb:
     image: falkordb/falkordb:v4.18.9
     container_name: plex-falkordb
+    command: ["--appendonly", "yes"]
     ports:
       - "${PLEX_FALKORDB_PORT:-56379}:6379" # → PLEX_FALKORDB_URL=redis://localhost:56379
       - "${PLEX_FALKORDB_BROWSER_PORT:-53000}:3000" # Browser → http://localhost:53000
