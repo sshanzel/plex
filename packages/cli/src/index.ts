@@ -68,7 +68,9 @@ Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVID
 function printReview(ctx: ReviewContext): void {
   const out: string[] = [];
   out.push(`repo: ${ctx.repo}   base: ${ctx.baseRef}`);
-  if (ctx.graphStale) {
+  if (ctx.graphStale?.refreshed) {
+    out.push(`↻ graph was ${ctx.graphStale.behind} commit(s) behind HEAD — auto-refreshed (incremental) before review.`);
+  } else if (ctx.graphStale) {
     const b = ctx.graphStale.behind;
     out.push(
       `⚠ graph ${b > 0 ? `${b} commit(s) behind` : 'out of sync with'} HEAD — blast radius may be incomplete. Run \`plex index --incremental\`.`,

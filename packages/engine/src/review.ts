@@ -63,6 +63,8 @@ export interface GraphStaleness {
   indexedSha?: string;
   /** Commits HEAD is ahead of the indexed sha (0 = fresh, -1 = unknown). */
   behind: number;
+  /** True when the review auto-refreshed the graph (incremental) before proceeding. */
+  refreshed?: boolean;
 }
 
 /** The grounded bundle handed to a fresh reviewing agent (ADR-02/03). */
@@ -119,6 +121,8 @@ export interface AssembleOptions extends DiffSource {
   config: ReviewerConfig;
   /** Mirror the neighborhood into FalkorDB for live viz (requires falkordb.enabled). */
   publishFalkor?: boolean;
+  /** Auto-refresh the graph (incremental) when it has drifted behind HEAD. Default true (ADR-25). */
+  autoIndex?: boolean;
 }
 
 const AGENT_NOTES = [
@@ -220,24 +224,38 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     throw new Error(`No code graph at ${p.graphDir}. Run \`reviewer index\` (or the index_repo tool) first.`);
   }
 
-  // Query Kùzu fully, then close BEFORE any FalkorDB work (ADR-16).
+  // Keep the graph fresh BEFORE computing blast radius (ADR-25): if it has drifted behind
+  // HEAD, auto-refresh it incrementally so the neighborhood is never silently stale. Only a
+  // definite drift (behind > 0) triggers it — an unknown sha (-1) or missing graph is only
+  // reported, since refreshing those would mean a surprise full rebuild mid-review.
+  let graphStale: GraphStaleness | undefined;
+  {
+    const sdb = new CodeGraphDB(p.graphDir);
+    let indexedSha: string | undefined;
+    try {
+      indexedSha = (await getMeta(sdb, 'headSha')) ?? undefined;
+    } finally {
+      await sdb.close();
+    }
+    const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
+    if (indexedSha && behind > 0 && opts.autoIndex !== false) {
+      await indexRepo(p.repoPath, opts.config, { incremental: true });
+      graphStale = { indexedSha, behind, refreshed: true };
+    } else if (!indexedSha || behind !== 0) {
+      graphStale = { indexedSha, behind, refreshed: false };
+    }
+  }
+
+  // Query Kùzu fully (now fresh), then close BEFORE any FalkorDB work (ADR-16).
   const db = new CodeGraphDB(p.graphDir);
   let repo: string;
   let nb: ReviewNeighborhood;
-  let indexedSha: string | undefined;
   try {
     repo = (await getMeta(db, 'repo')) ?? p.repoPath;
-    indexedSha = (await getMeta(db, 'headSha')) ?? undefined;
     nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
   } finally {
     await db.close();
   }
-
-  // Staleness (ADR-25): if the graph is behind HEAD, the blast radius may miss recent /
-  // new files. Surface it rather than silently serving a stale neighborhood.
-  let graphStale: GraphStaleness | undefined;
-  const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
-  if (!indexedSha || behind > 0 || behind === -1) graphStale = { indexedSha, behind };
 
   const deterministic = await runDeterministic(p.repoPath, diff, { repoName: repo });
 
@@ -289,11 +307,13 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     notes: [
       ...AGENT_NOTES,
       ...(brain ? BRAIN_NOTES : []),
-      ...(graphStale
-        ? [
-            `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Consider re-indexing (\`plex index --incremental\`).`,
-          ]
-        : []),
+      ...(graphStale?.refreshed
+        ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
+        : graphStale
+          ? [
+              `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Re-index (\`plex index --incremental\`).`,
+            ]
+          : []),
     ],
   };
 }
