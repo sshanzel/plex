@@ -35,7 +35,9 @@ Copilot review hits usage limits; the Claude solo plan has no review feature; an
 ## Storage topology — N + 1 (ADR-07)
 
 - **Kùzu** (embedded, MIT, disk-backed) holds the **durable** graphs: one DB per repo (code graph) + one global **knowledge** graph. They join at `Finding` nodes (`Finding ─AT→ CodeLocation`, `Finding ─INSTANCE_OF→ Pitfall`).
-- **FalkorDB** (in-memory, multi-graph) holds the **ephemeral** per-PR "review neighborhood" graph `pr_<id>` — cheap to materialize, and inspectable live in FalkorDB Browser for debugging "what did the reviewer actually see." Optional; falls back to in-process if unreachable.
+- **FalkorDB** (in-memory, multi-graph) holds the per-PR **working-memory graph** `<repo>__pr_<id>` — the "brain of the PR." Today it materializes the blast radius (computed from Kùzu + the diff); M6 (ADR-22/23) extends it to `Round`/`Finding`/`Verdict`/`Comment` nodes that the review flow *queries* for round-aware signals (what changed since last round, and what changed **without feedback**). Durable truth stays in JSON/Kùzu, so the graph is rebuildable; FalkorDB is **optional** (in-process fallback) and never load-bearing for correctness.
+
+> **Blast radius does not come from FalkorDB.** It is computed from the **Kùzu** code graph + the diff: the diff says which existing files/symbols changed, and Kùzu says what is coupled to them (co-change + imports + precise refs). FalkorDB receives the result. That is why a review of a brand-new PR works even with FalkorDB off — and why M6 makes FalkorDB earn its keep instead of being a picture.
 
 ## Code understanding is layered (ADR-06)
 
