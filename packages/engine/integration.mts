@@ -241,7 +241,7 @@ test('knowledge', 'engine: seed -> review retrieves pitfalls -> learn on accept'
     );
     git(repo, 'add', '-A');
 
-    const config = resolveConfig({ knowledgeDir });
+    const config = resolveConfig({ knowledgeDir, embedding: { provider: 'fake' } }); // fake = test-only
     const seeded = await seedKnowledge(config, readFileSync(join(repo, 'plex.md'), 'utf8'));
     assert.ok(seeded >= 1, `seeded ${seeded}`);
 

@@ -2,7 +2,9 @@
  * Reviewer configuration. Sensible local-first defaults; everything overridable.
  */
 
-export type EmbeddingProviderName = 'openai' | 'voyage' | 'ollama' | 'fake';
+// `none` = no embeddings configured (knowledge features disabled until you pick one).
+// `fake` is a deterministic test-only embedder — never used in real operation.
+export type EmbeddingProviderName = 'voyage' | 'openai' | 'gemini' | 'ollama' | 'none' | 'fake';
 
 export interface EmbeddingConfig {
   provider: EmbeddingProviderName;
@@ -81,9 +83,9 @@ export const defaultConfig: ReviewerConfig = {
   dataDir: '.plex',
   knowledgeDir: path.join(os.homedir(), '.plex', 'knowledge'),
   embedding: {
-    provider: 'fake',
-    model: 'voyage-code-3',
-    apiKeyEnv: 'VOYAGE_API_KEY',
+    // Real operation requires a real provider; knowledge features stay disabled until
+    // one is set (PLEX_EMBEDDING_PROVIDER). Never defaults to the test-only fake embedder.
+    provider: 'none',
   },
   falkordb: {
     enabled: false,

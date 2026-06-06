@@ -28,7 +28,21 @@ export function buildKnowledgeQuery(
     .slice(0, 2000);
 }
 
-/** Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21). */
+const NO_EMBEDDINGS =
+  "No embedding provider — set PLEX_EMBEDDING_PROVIDER (voyage | openai | gemini | ollama) and its API key. ('fake' is test-only.)";
+
+/** Embedding provider or throw — for write paths that must not store noise. */
+export function requireEmbeddings(config: ReviewerConfig) {
+  const p = createEmbeddingProvider(config.embedding);
+  if (!p) throw new Error(NO_EMBEDDINGS);
+  return p;
+}
+
+/**
+ * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
+ * Degrades gracefully: with no embedding provider configured, returns nothing (review
+ * still runs on blast radius + deterministic checks).
+ */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,
   queryText: string,
@@ -37,13 +51,13 @@ export async function getRelevantKnowledge(
 ): Promise<RetrievedPitfall[]> {
   if (!queryText.trim()) return [];
   const provider = createEmbeddingProvider(config.embedding);
+  if (!provider) return [];
   return retrieveRelevant(knowledgeStore(config), provider, queryText, topK, 0.05, repo);
 }
 
 /** Seed the knowledge base from markdown (cold start — ADR-09). */
 export async function seedKnowledge(config: ReviewerConfig, md: string): Promise<number> {
-  const provider = createEmbeddingProvider(config.embedding);
-  return seedFromMarkdown(knowledgeStore(config), provider, md);
+  return seedFromMarkdown(knowledgeStore(config), requireEmbeddings(config), md);
 }
 
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */

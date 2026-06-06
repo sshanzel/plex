@@ -58,9 +58,10 @@ Status legend: ✅ accepted · 🔁 superseded · 🧪 provisional
 ## ADR-12 — Language: TypeScript/Node ✅
 **Decision.** Implement everything in TS/Node. Matches expertise (fastest), single runtime to ship, native TS compiler access. Python reserved only for heavy mining clustering if ever needed.
 
-## ADR-13 — Embeddings: pluggable provider ✅
-**Context.** Opus/Claude are *not* embedding models.
-**Decision.** Abstract embeddings to `text → vector`. Default Voyage `voyage-code-3` or OpenAI `text-embedding-3-small` (cents); local Ollama option for private repos; a deterministic fake for tests. Vectors in Kùzu's vector index or a `sqlite-vec` sidecar.
+## ADR-13 — Embeddings: pluggable provider; real-or-nothing ✅
+**Context.** Opus/Claude are *not* embedding models. Embeddings power knowledge retrieval AND mining clustering.
+**Decision.** Abstract embeddings to `text → vector`. Providers: Voyage `voyage-code-3` (code-specialized, Anthropic-recommended), OpenAI `text-embedding-3-small`, Google `gemini-embedding-001`, local Ollama `nomic-embed-text`. **No fake/heuristic embeddings in real operation** — the default is `none`; the deterministic `fake` embedder is test-only. Retrieval degrades gracefully without a provider (returns nothing); write paths (seed/mine) error.
+**Consequences.** Knowledge features require an explicit real provider (no silent noise — fake embeddings don't discriminate, so they pollute retrieval). Switching providers requires re-embedding (vectors aren't cross-comparable). Updated after observing fake embeddings retrieve every pitfall for any query.
 
 ## ADR-14 — All inputs normalize to "diff vs base ref" ✅
 **Decision.** Local (working/staged/branch) and GitHub PR (`gh pr diff`) inputs both reduce to one `NormalizedDiff`. PR-vs-local is not a meaningful internal distinction; `gh` is just an adapter.

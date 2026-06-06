@@ -81,23 +81,47 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-/** Construct the configured provider. Defaults to the deterministic fake. */
-export function createEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider {
+/** Google Gemini embeddings (e.g. `gemini-embedding-001`). */
+export class GeminiEmbeddingProvider implements EmbeddingProvider {
+  readonly name = 'gemini';
+  readonly dimensions = 3072;
+  constructor(private model: string, private apiKey: string, private baseUrl = 'https://generativelanguage.googleapis.com') {}
+  async embed(texts: string[]): Promise<number[][]> {
+    const body = {
+      requests: texts.map((t) => ({ model: `models/${this.model}`, content: { parts: [{ text: t }] } })),
+    };
+    const data = await postJson(`${this.baseUrl}/v1beta/models/${this.model}:batchEmbedContents?key=${this.apiKey}`, body, {});
+    return data.embeddings.map((e: { values: number[] }) => e.values);
+  }
+}
+
+/**
+ * Construct the configured embedding provider, or `null` when none is usable (provider
+ * `none`, or a missing API key). Real operation requires a real provider; `fake` is a
+ * deterministic test-only embedder and is never the default. Callers treat `null` as
+ * "knowledge features unavailable" (retrieval returns nothing; writes error).
+ */
+export function createEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider | null {
+  const env = process.env;
   switch (cfg.provider) {
-    case 'openai': {
-      const key = process.env[cfg.apiKeyEnv ?? 'OPENAI_API_KEY'];
-      if (!key) throw new Error(`OpenAI embeddings need ${cfg.apiKeyEnv ?? 'OPENAI_API_KEY'}`);
-      return new OpenAIEmbeddingProvider(cfg.model ?? 'text-embedding-3-small', key, cfg.baseUrl);
-    }
     case 'voyage': {
-      const key = process.env[cfg.apiKeyEnv ?? 'VOYAGE_API_KEY'];
-      if (!key) throw new Error(`Voyage embeddings need ${cfg.apiKeyEnv ?? 'VOYAGE_API_KEY'}`);
-      return new VoyageEmbeddingProvider(cfg.model ?? 'voyage-code-3', key, cfg.baseUrl);
+      const key = env[cfg.apiKeyEnv ?? 'VOYAGE_API_KEY'];
+      return key ? new VoyageEmbeddingProvider(cfg.model ?? 'voyage-code-3', key, cfg.baseUrl) : null;
+    }
+    case 'openai': {
+      const key = env[cfg.apiKeyEnv ?? 'OPENAI_API_KEY'];
+      return key ? new OpenAIEmbeddingProvider(cfg.model ?? 'text-embedding-3-small', key, cfg.baseUrl) : null;
+    }
+    case 'gemini': {
+      const key = env[cfg.apiKeyEnv ?? 'GEMINI_API_KEY'];
+      return key ? new GeminiEmbeddingProvider(cfg.model ?? 'gemini-embedding-001', key, cfg.baseUrl) : null;
     }
     case 'ollama':
       return new OllamaEmbeddingProvider(cfg.model ?? 'nomic-embed-text', cfg.baseUrl);
     case 'fake':
+      return new FakeEmbeddingProvider(); // test-only
+    case 'none':
     default:
-      return new FakeEmbeddingProvider();
+      return null;
   }
 }

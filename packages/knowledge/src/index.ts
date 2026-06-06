@@ -2,6 +2,7 @@ export {
   FakeEmbeddingProvider,
   OpenAIEmbeddingProvider,
   VoyageEmbeddingProvider,
+  GeminiEmbeddingProvider,
   OllamaEmbeddingProvider,
   createEmbeddingProvider,
 } from './embeddings';

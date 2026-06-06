@@ -2,8 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
 import { mineHistory, scanHistory, categorize, type MineResult } from '@plex/mining';
-import { createEmbeddingProvider } from '@plex/knowledge';
-import { knowledgeStore } from './knowledge';
+import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
 
 /** Per-repo incremental mining cursor (ADR-11): which PRs have been scanned. */
@@ -50,7 +49,7 @@ export async function mineRepo(
   const repo = path.basename(p.repoPath);
   const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadMiningState(repoPath, config);
 
-  const embed = createEmbeddingProvider(config.embedding);
+  const embed = requireEmbeddings(config);
   const store = knowledgeStore(config);
   const { result, scannedPrs } = await mineHistory(store, embed, config, {
     cwd: p.repoPath,
@@ -99,7 +98,7 @@ export async function scanForMining(
   const repo = path.basename(p.repoPath);
   const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadMiningState(repoPath, config);
 
-  const embed = createEmbeddingProvider(config.embedding);
+  const embed = requireEmbeddings(config);
   const store = knowledgeStore(config);
   const scan = await scanHistory(store, embed, config, {
     cwd: p.repoPath,
@@ -157,7 +156,7 @@ export async function addMinedPitfalls(
   repo?: string,
 ): Promise<{ added: number }> {
   const store = knowledgeStore(config);
-  const embed = createEmbeddingProvider(config.embedding);
+  const embed = requireEmbeddings(config);
   let added = 0;
   for (const p of pitfalls) {
     if (await store.hasPitfallTitled(p.title)) continue;
