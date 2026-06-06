@@ -24,25 +24,26 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Kùzu Explorer — browse a repo's DURABLE code graph (optional, best-effort).
+  # Kùzu Explorer — browse a repo's DURABLE code graph (optional).
   # Start with: `pnpm ui:kuzu` (or `docker compose --profile kuzu up -d`).
   # Notes:
-  #  - Point KUZU_DB_FILE (in .env) at a repo's single-file code graph, written by
-  #    `plex index <repo>` to <repo>/.plex/graph.kuzu.
-  #  - Pin KUZU_EXPLORER_TAG to your Kùzu version (this repo uses kuzu 0.11.x); a
-  #    mismatched Explorer rejects the storage format.
+  #  - KUZU_DB_DIR (in .env) = a repo's Plex data DIR (e.g. <repo>/.plex); it is mounted
+  #    to /database. KUZU_FILE = the db filename inside it (default graph.kuzu). The
+  #    Explorer opens /database/<KUZU_FILE>.
+  #  - Pinned to kuzudb/explorer:0.11.3 to match kuzu@0.11.3 (storage format must match).
   #  - The primary "clickable graph" in Plex is the FalkorDB review-neighborhood;
   #    the Kùzu code graph is mostly a query backend.
   kuzu-explorer:
-    image: kuzudb/explorer:${KUZU_EXPLORER_TAG:-0.11.3} # match the kuzu npm version
+    image: kuzudb/explorer:${KUZU_EXPLORER_TAG:-0.11.3}
     container_name: plex-kuzu-explorer
     profiles: ["kuzu"]
     ports:
       - "${KUZU_EXPLORER_PORT:-58000}:8000" # → http://localhost:58000
     environment:
       - MODE=READ_ONLY
+      - KUZU_FILE=${KUZU_FILE:-graph.kuzu}
     volumes:
-      - "${KUZU_DB_FILE:-./.plex/graph.kuzu}:/database"
+      - "${KUZU_DB_DIR:-./.plex}:/database"
     restart: unless-stopped
 
 volumes:
