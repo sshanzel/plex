@@ -7,6 +7,8 @@ import path from 'node:path';
 import {
   loadConfig,
   indexRepo,
+  installHooks,
+  uninstallHooks,
   assembleReviewContext,
   blastRadius,
   submitVerdict,
@@ -51,7 +53,9 @@ function parse(argv: string[]): Parsed {
 const USAGE = `plex — local-first code review context
 
 Usage:
-  plex index [repoPath]
+  plex index [repoPath] [--incremental]                  # --incremental: refresh only changed files (ADR-25)
+  plex install-hooks [repoPath]                          # auto-incremental-index on pull/checkout/rebase
+  plex uninstall-hooks [repoPath]
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--falkor] [--json] [--html <file>]
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
@@ -64,6 +68,12 @@ Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVID
 function printReview(ctx: ReviewContext): void {
   const out: string[] = [];
   out.push(`repo: ${ctx.repo}   base: ${ctx.baseRef}`);
+  if (ctx.graphStale) {
+    const b = ctx.graphStale.behind;
+    out.push(
+      `⚠ graph ${b > 0 ? `${b} commit(s) behind` : 'out of sync with'} HEAD — blast radius may be incomplete. Run \`plex index --incremental\`.`,
+    );
+  }
   const cc = ctx.changeContext;
   if (cc && (cc.title || cc.description || cc.commits?.length)) {
     out.push('');
@@ -137,11 +147,39 @@ async function main(): Promise<number> {
   switch (command) {
     case 'index': {
       const repoPath = positionals[1] ?? process.cwd();
-      const res = await indexRepo(repoPath, config);
+      const res = await indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) });
+      if (res.incremental) {
+        process.stdout.write(
+          `Incrementally updated ${res.files} file(s) (+${res.added ?? 0} ~${res.modified ?? 0} -${res.deleted ?? 0}): ` +
+            `${res.symbols} symbols re-extracted, co-change recomputed (${res.coChangePairs} pairs).\n` +
+            `Graph: ${res.graphDir}\n`,
+        );
+      } else {
+        process.stdout.write(
+          `Indexed ${res.files} files, ${res.symbols} symbols, ${res.imports} imports, ` +
+            `${res.coChangePairs} co-change pairs from ${res.commits} commits.\n` +
+            `Graph: ${res.graphDir}\n`,
+        );
+      }
+      return 0;
+    }
+    case 'install-hooks': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const cliPath = process.argv[1] ?? path.resolve('dist/plex.js');
+      const res = installHooks(repoPath, cliPath);
       process.stdout.write(
-        `Indexed ${res.files} files, ${res.symbols} symbols, ${res.imports} imports, ` +
-          `${res.coChangePairs} co-change pairs from ${res.commits} commits.\n` +
-          `Graph: ${res.graphDir}\n`,
+        `Installed auto-index git hooks (${res.hooks.join(', ')}) in ${res.hooksDir}.\n` +
+          `The graph now refreshes incrementally on pull / checkout / rebase.\n`,
+      );
+      return 0;
+    }
+    case 'uninstall-hooks': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const res = uninstallHooks(repoPath);
+      process.stdout.write(
+        res.hooks.length
+          ? `Removed plex auto-index from hooks: ${res.hooks.join(', ')}.\n`
+          : `No plex auto-index hooks found.\n`,
       );
       return 0;
     }

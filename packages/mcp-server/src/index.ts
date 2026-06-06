@@ -60,9 +60,9 @@ const diffSourceShape = {
 
 server.tool(
   'index_repo',
-  'Build (full rebuild) the code graph for a repo: TS symbols/imports + git co-change.',
-  { repoPath: z.string().optional() },
-  (a) => guard(() => indexRepo(a.repoPath ?? process.cwd(), config), 'index_repo'),
+  'Build the code graph for a repo (TS symbols/imports + git co-change). Full rebuild by default; pass incremental:true to refresh only files changed since the last index (falls back to full when needed).',
+  { repoPath: z.string().optional(), incremental: z.boolean().optional() },
+  (a) => guard(() => indexRepo(a.repoPath ?? process.cwd(), config, { incremental: a.incremental }), 'index_repo'),
 );
 
 server.tool(

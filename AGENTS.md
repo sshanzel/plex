@@ -94,9 +94,9 @@ Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive 
 
 ## Scope
 
-- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain (round-aware review + changed-without-feedback + audit log)**.
+- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain (round-aware review + changed-without-feedback + audit log)**, **M7 incremental indexing + graph staleness + git hooks**.
 - **Out of scope (by request):** the multi-repo workspace in M5.
 
 ## Status
 
-All milestones complete (M0–M6). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 24 decisions. `pnpm test` green (43 unit + 7 integration); the PR brain is verified E2E under node via `pnpm test:brain`; `pnpm build` produces node-runnable binaries. The MCP server exposes 13 tools (FalkorDB + an embedding provider required for the review flow — M6).
+All milestones complete (M0–M7). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 25 decisions. `pnpm test` green (43 unit + 8 integration); the PR brain is verified E2E under node via `pnpm test:brain`; `pnpm build` produces node-runnable binaries. Keep the graph fresh with `plex index --incremental` (or `plex install-hooks` for auto-refresh on pull/checkout/rebase); reviews warn when the graph is behind HEAD. The MCP server exposes 13 tools (FalkorDB + an embedding provider required for the review flow — M6).

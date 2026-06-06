@@ -124,7 +124,7 @@ The flat log is greppable and graph-independent; the FalkorDB brain (ADR-22) is 
 **Limitation (honest scope).** The server logs what it **provided** and what the agent **submitted** — not the agent's private reasoning. Attribution is therefore *correlational* ("finding X was submitted with pitfalls A,B and coupled files C,D in context"), which is enough to tune retrieval/weights, debug context assembly, and answer "what did the reviewer see." It deliberately does **not** capture chain-of-thought (ADR-02).
 **Consequences.** Real-outcome tuning of retrieval and `signal` weights becomes possible; "why did this surface?" is answerable after the fact; provenance, not opinion, is what's stored.
 
-## ADR-25 — Incremental indexing + graph staleness 🧪 (M7)
+## ADR-25 — Incremental indexing + graph staleness ✅ (built, M7)
 **Context.** The full code-graph build re-parses *every* file with the TS compiler — the dominant cost, and real on large monorepos (playright). After a pull/merge the graph drifts: edges for edited files go stale and **brand-new files have no node at all** until a manual reindex, silently shrinking the blast radius. The graph already stamps `headSha` at index time (`build.ts`), but nothing reads it back. Crucially, the full graph is *worth* building once — PR-level work only **reads** it, and blast radius is meaningless without the whole repo's couplings (you expand *into* files the diff didn't touch). So the answer is "build once, refresh cheaply," not "index per-PR."
 **Decision.** Three parts:
 - **Staleness signal.** On review, compare the graph's stored `headSha` to current `HEAD`; surface "graph N commits behind / new files unindexed" in the review context + CLI. Never silently serve a stale blast radius.

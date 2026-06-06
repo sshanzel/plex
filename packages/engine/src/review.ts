@@ -11,7 +11,15 @@ import type {
   PrComment,
   AttributedChange,
 } from '@plex/core';
-import { CodeGraphDB, buildCodeGraph, getMeta, type BuildResult } from '@plex/code-graph';
+import {
+  CodeGraphDB,
+  buildCodeGraph,
+  updateCodeGraph,
+  FullRebuildRequired,
+  getMeta,
+  commitsBehind,
+  type BuildResult,
+} from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
 import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings';
@@ -26,14 +34,35 @@ import { brainEnabled, loadRoundState, recordRound, type RoundSummary } from './
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings } from './knowledge';
 
-/** Full rebuild of a repo's code graph. */
+/**
+ * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
+ * files changed since the graph's stored `headSha` and falls back to a full build when an
+ * incremental update isn't possible (no prior graph / rewritten history — ADR-25).
+ */
 export async function indexRepo(
   repoPath: string,
   config: ReviewerConfig,
-): Promise<BuildResult & { graphDir: string }> {
+  opts: { incremental?: boolean } = {},
+): Promise<BuildResult & { graphDir: string; incremental: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
+  if (opts.incremental && existsSync(p.graphDir)) {
+    try {
+      const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+      return { ...res, graphDir: p.graphDir };
+    } catch (e) {
+      if (!(e instanceof FullRebuildRequired)) throw e;
+      // fall through to a full rebuild
+    }
+  }
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
-  return { ...res, graphDir: p.graphDir };
+  return { ...res, graphDir: p.graphDir, incremental: false };
+}
+
+/** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */
+export interface GraphStaleness {
+  indexedSha?: string;
+  /** Commits HEAD is ahead of the indexed sha (0 = fresh, -1 = unknown). */
+  behind: number;
 }
 
 /** The grounded bundle handed to a fresh reviewing agent (ADR-02/03). */
@@ -53,6 +82,8 @@ export interface ReviewContext {
   changeContext?: ChangeContext;
   /** Contents of the repo's `plex.md`, if present (human-authored guidance — ADR-09). */
   reviewerMd?: string;
+  /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
+  graphStale?: GraphStaleness;
   // --- PR brain (M6, ADR-22/23) — present when FalkorDB is enabled ---
   /** Stable target id / FalkorDB graph name for this review. */
   target?: string;
@@ -193,12 +224,20 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const db = new CodeGraphDB(p.graphDir);
   let repo: string;
   let nb: ReviewNeighborhood;
+  let indexedSha: string | undefined;
   try {
     repo = (await getMeta(db, 'repo')) ?? p.repoPath;
+    indexedSha = (await getMeta(db, 'headSha')) ?? undefined;
     nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
   } finally {
     await db.close();
   }
+
+  // Staleness (ADR-25): if the graph is behind HEAD, the blast radius may miss recent /
+  // new files. Surface it rather than silently serving a stale neighborhood.
+  let graphStale: GraphStaleness | undefined;
+  const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
+  if (!indexedSha || behind > 0 || behind === -1) graphStale = { indexedSha, behind };
 
   const deterministic = await runDeterministic(p.repoPath, diff, { repoName: repo });
 
@@ -240,13 +279,22 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     knowledge,
     changeContext,
     reviewerMd: loadReviewerMd(p.repoPath),
+    graphStale,
     target,
     round: brain ? brain.round : undefined,
     priorRounds: brain?.priorRounds,
     unexplainedChanges: brain?.unexplainedChanges,
     openComments: brain?.openComments,
     ephemeralGraph: brain?.target,
-    notes: brain ? [...AGENT_NOTES, ...BRAIN_NOTES] : AGENT_NOTES,
+    notes: [
+      ...AGENT_NOTES,
+      ...(brain ? BRAIN_NOTES : []),
+      ...(graphStale
+        ? [
+            `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Consider re-indexing (\`plex index --incremental\`).`,
+          ]
+        : []),
+    ],
   };
 }
 

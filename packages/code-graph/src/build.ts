@@ -4,8 +4,9 @@ import type { CoChangeConfig } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
-import { aggregateCoChange, readCommits, headSha } from './co-change';
+import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince } from './co-change';
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
+import { getMeta } from './query';
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -35,6 +36,17 @@ export interface BuildResult {
   coChangePairs: number;
   commits: number;
 }
+
+/** Outcome of an incremental update — file counts reflect only what changed (ADR-25). */
+export interface UpdateResult extends BuildResult {
+  incremental: true;
+  added: number;
+  modified: number;
+  deleted: number;
+}
+
+/** Reason an incremental update couldn't run and a full rebuild is required. */
+export class FullRebuildRequired extends Error {}
 
 async function discoverFiles(root: string): Promise<string[]> {
   const out: string[] = [];
@@ -173,6 +185,135 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
 
     return {
       files: relFiles.length,
+      symbols: symbolCount,
+      imports: importRows.length,
+      refs: refCount,
+      coChangePairs,
+      commits,
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+/**
+ * Incrementally refresh an existing graph (ADR-25): re-extract only the files changed
+ * since the graph's stored `headSha`, drop deleted ones, and recompute co-change. Pays
+ * O(changed files) instead of re-parsing the whole repo.
+ *
+ * Edge correctness: a **modified** file keeps its File node so its *incoming* edges (from
+ * unchanged importers) survive — only its Symbols + *outgoing* Imports/Refs are replaced.
+ * A **deleted** file is `DETACH DELETE`d (removing its incoming edges too).
+ *
+ * Throws `FullRebuildRequired` when there's no stored sha or the diff can't be computed
+ * (history rewritten) — callers should fall back to `buildCodeGraph`.
+ */
+export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult> {
+  const repoPath = path.resolve(opts.repoPath);
+  const repoName = opts.repoName ?? path.basename(repoPath);
+
+  const db = new CodeGraphDB(opts.dbDir);
+  try {
+    const storedSha = await getMeta(db, 'headSha');
+    if (!storedSha) throw new FullRebuildRequired('graph has no stored headSha; run a full index first');
+    const delta = await changedSourceFilesSince(repoPath, storedSha);
+    if (!delta) throw new FullRebuildRequired('cannot diff stored sha against HEAD (history rewritten?); run a full index');
+
+    const absFiles = await discoverFiles(repoPath);
+    const relFiles = absFiles.map((f) => path.relative(repoPath, f).split(path.sep).join('/'));
+    const fileSet = new Set(relFiles);
+    const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
+
+    // 1. Deleted (and rename-from): remove the File node + its Symbols (and dangling edges).
+    for (const rel of delta.deleted) {
+      await db.run('MATCH (f:File {id:$id})-[:Declares]->(s:Symbol) DETACH DELETE s', { id: rel });
+      await db.run('MATCH (f:File {id:$id}) DETACH DELETE f', { id: rel });
+    }
+    // 2. Modified: keep the File node (preserve incoming edges); clear Symbols + outgoing edges.
+    for (const rel of delta.modified) {
+      await db.run('MATCH (f:File {id:$id})-[:Declares]->(s:Symbol) DETACH DELETE s', { id: rel });
+      await db.run('MATCH (:File {id:$id})-[r:Imports]->() DELETE r', { id: rel });
+      await db.run('MATCH (:File {id:$id})-[r:Refs]->() DELETE r', { id: rel });
+    }
+
+    // 3. Ensure File nodes for added/modified files that still exist on disk.
+    const upserts = [...new Set([...delta.added, ...delta.modified])].filter((rel) => fileSet.has(rel));
+    await db.insertMany(
+      'MERGE (f:File {id:$id}) SET f.path=$path, f.repo=$repo, f.lang=$lang',
+      upserts.map((rel) => ({ id: rel, path: rel, repo: repoName, lang: path.extname(rel).slice(1) })),
+    );
+
+    // 4. Re-extract symbols/imports/precise refs for the upserted files only.
+    let symbolCount = 0;
+    const symbolRows: Record<string, unknown>[] = [];
+    const declareRows: Record<string, unknown>[] = [];
+    const importEdges = new Set<string>();
+    const fileSpecifiers: PreciseImportInput[] = [];
+    for (const rel of upserts) {
+      let text: string;
+      try {
+        text = await fs.readFile(absByRel.get(rel)!, 'utf8');
+      } catch {
+        continue;
+      }
+      const { symbols, imports } = extractFromSource(rel, text);
+      for (const s of symbols) {
+        const id = `${rel}#${s.name}#${s.startLine}`;
+        symbolRows.push({ id, name: s.name, kind: s.kind, file: rel, startLine: s.startLine, endLine: s.endLine, exported: s.exported });
+        declareRows.push({ f: rel, s: id });
+        symbolCount++;
+      }
+      for (const spec of imports) {
+        const target = resolveRelativeImport(rel, spec, fileSet);
+        if (target && target !== rel) importEdges.add(`${rel}\t${target}`);
+      }
+      fileSpecifiers.push({ rel, abs: absByRel.get(rel)!, specifiers: imports });
+    }
+    await db.insertMany(
+      'CREATE (:Symbol {id:$id, name:$name, kind:$kind, file:$file, startLine:$startLine, endLine:$endLine, exported:$exported})',
+      symbolRows,
+    );
+    await db.insertMany('MATCH (f:File {id:$f}), (s:Symbol {id:$s}) CREATE (f)-[:Declares]->(s)', declareRows);
+    const importRows = [...importEdges].map((e) => {
+      const [from, to] = e.split('\t');
+      return { from, to };
+    });
+    await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Imports]->(b)', importRows);
+
+    let refCount = 0;
+    if (opts.precise !== false) {
+      const precise = resolvePreciseImports(repoPath, fileSpecifiers, fileSet).filter((e) => !importEdges.has(`${e.from}\t${e.to}`));
+      await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)', precise.map((e) => ({ from: e.from, to: e.to })));
+      refCount = precise.length;
+    }
+
+    // 5. Recompute co-change fully (the cheap half — no TS parse; ADR-25).
+    await db.run('MATCH ()-[r:CoChange]->() DELETE r');
+    let coChangePairs = 0;
+    let commits = 0;
+    try {
+      const cs = await readCommits(repoPath, opts.coChange.maxCommits);
+      commits = cs.length;
+      const pairs = aggregateCoChange(cs, opts.coChange).filter((p) => fileSet.has(p.a) && fileSet.has(p.b));
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) CREATE (a)-[:CoChange {weight:$weight, cnt:$cnt}]->(b)',
+        pairs.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+      );
+      coChangePairs = pairs.length;
+    } catch {
+      // not a git repo / no history
+    }
+
+    // 6. Re-stamp the indexed head.
+    const sha = await headSha(repoPath);
+    await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'headSha', v: sha });
+
+    return {
+      incremental: true,
+      files: upserts.length,
+      added: delta.added.length,
+      modified: delta.modified.length,
+      deleted: delta.deleted.length,
       symbols: symbolCount,
       imports: importRows.length,
       refs: refCount,

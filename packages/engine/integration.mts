@@ -14,11 +14,13 @@ import { join } from 'node:path';
 import { resolveConfig, type NormalizedDiff } from '@plex/core';
 import {
   buildCodeGraph,
+  updateCodeGraph,
   CodeGraphDB,
   getSymbolsInFile,
   getCoChangeEdges,
   getImportEdges,
   getRefEdges,
+  getMeta,
 } from '@plex/code-graph';
 import { computeNeighborhood, publishNeighborhood } from '@plex/neighborhood';
 import {
@@ -155,6 +157,55 @@ test('falkor', 'neighborhood: FalkorDB publish (best-effort)', async () => {
   const res = await publishNeighborhood('pr_integration_test', nb, { url: FALKOR_URL });
   if (!res.published) {
     console.log(`  (skipped: FalkorDB not reachable at ${FALKOR_URL} — ${res.reason})`);
+  }
+});
+
+test('incremental', 'code-graph: incremental update (ADR-25) — add/modify/delete, preserve incoming edges', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-inc-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-incdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'src/b.ts'), 'export function b() {\n  return 1;\n}\n');
+    writeFileSync(join(repo, 'src/a.ts'), "import { b } from './b';\nexport function a() {\n  return b();\n}\n");
+    writeFileSync(join(repo, 'src/c.ts'), 'export const gone = true;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    // mutate: modify b (new symbol), delete c, add d — then commit (new HEAD).
+    writeFileSync(join(repo, 'src/b.ts'), 'export function b() {\n  return 1;\n}\nexport function b2() {\n  return 2;\n}\n');
+    rmSync(join(repo, 'src/c.ts'));
+    writeFileSync(join(repo, 'src/d.ts'), 'export const fresh = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'mutate');
+
+    const res = await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    assert.equal(res.incremental, true);
+    assert.ok(res.added >= 1 && res.deleted >= 1 && res.modified >= 1, `delta a=${res.added} m=${res.modified} d=${res.deleted}`);
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const cGone = await db.run("MATCH (f:File {id:'src/c.ts'}) RETURN f.id AS id", {});
+      assert.equal(cGone.length, 0, 'deleted file node removed');
+      const dAdded = await db.run("MATCH (f:File {id:'src/d.ts'}) RETURN f.id AS id", {});
+      assert.equal(dAdded.length, 1, 'added file node present');
+      const bSyms = await getSymbolsInFile(db, 'src/b.ts');
+      assert.ok(bSyms.some((s) => s.name === 'b2'), 'modified file re-extracted (new symbol b2)');
+      const aImports = await getImportEdges(db, ['src/a.ts']);
+      assert.ok(aImports.some((e) => e.dst === 'src/b.ts'), 'incoming edge a->b survived b being modified');
+      const stamped = await getMeta(db, 'headSha');
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+      assert.equal(stamped, head, 'headSha re-stamped to current HEAD');
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
   }
 });
 

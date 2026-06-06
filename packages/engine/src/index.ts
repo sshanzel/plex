@@ -20,7 +20,9 @@ export {
   assembleReviewContext,
   blastRadius,
 } from './review';
-export type { ReviewContext, AssembleOptions } from './review';
+export type { ReviewContext, AssembleOptions, GraphStaleness } from './review';
+export { installHooks, uninstallHooks } from './hooks';
+export type { HookResult } from './hooks';
 export { getDeterministicFindings, rankReviewFindings } from './findings';
 export type { SubmittedFinding, RankReviewOptions } from './findings';
 export {

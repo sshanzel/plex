@@ -1,7 +1,11 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isSupportedSource } from './extract-ts';
 
 const pexec = promisify(execFile);
+const GIT_MAX_BUFFER = 256 * 1024 * 1024;
+
+const isIndexable = (p: string): boolean => isSupportedSource(p) && !p.endsWith('.d.ts');
 
 export interface CommitRecord {
   /** Author/commit time in seconds since epoch. */
@@ -110,5 +114,57 @@ export async function headSha(cwd: string): Promise<string> {
     return stdout.trim();
   } catch {
     return '';
+  }
+}
+
+/** Indexable source files added/modified/deleted between `sha` and HEAD (ADR-25). */
+export interface ChangedFiles {
+  added: string[];
+  modified: string[];
+  deleted: string[];
+}
+
+/**
+ * Source files changed since `sha` (`git diff --name-status -M sha HEAD`). Renames split
+ * into delete(old)+add(new). Returns `null` when the diff can't be computed (e.g. the sha
+ * is no longer in history after a force-push) — the caller should fall back to a full build.
+ */
+export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
+  } catch {
+    return null;
+  }
+  const added: string[] = [];
+  const modified: string[] = [];
+  const deleted: string[] = [];
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    const status = parts[0] ?? '';
+    if (status.startsWith('R')) {
+      const oldP = parts[1];
+      const newP = parts[2];
+      if (oldP && isIndexable(oldP)) deleted.push(oldP);
+      if (newP && isIndexable(newP)) added.push(newP);
+    } else {
+      const p = parts[1];
+      if (!p || !isIndexable(p)) continue;
+      if (status.startsWith('A')) added.push(p);
+      else if (status.startsWith('D')) deleted.push(p);
+      else modified.push(p);
+    }
+  }
+  return { added, modified, deleted };
+}
+
+/** How many commits HEAD is ahead of `sha` (the graph's staleness). -1 if unknown. */
+export async function commitsBehind(cwd: string, sha: string): Promise<number> {
+  try {
+    const { stdout } = await pexec('git', ['rev-list', '--count', `${sha}..HEAD`], { cwd });
+    return Number(stdout.trim()) || 0;
+  } catch {
+    return -1;
   }
 }
