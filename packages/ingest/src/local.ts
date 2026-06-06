@@ -11,6 +11,16 @@ async function runGit(args: string[], cwd: string): Promise<string> {
   return stdout;
 }
 
+/** Commit subjects in `baseRef..HEAD` (the change's narrative, for branch reviews). */
+export async function getCommitSubjects(cwd: string, baseRef: string, limit = 20): Promise<string[]> {
+  try {
+    const out = await runGit(['log', `${baseRef}..HEAD`, '--no-merges', '--format=%s', '-n', String(limit)], cwd);
+    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export type LocalDiffMode = 'working' | 'staged' | 'branch';
 
 export interface LocalDiffOptions {

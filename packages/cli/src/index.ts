@@ -64,6 +64,21 @@ Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVID
 function printReview(ctx: ReviewContext): void {
   const out: string[] = [];
   out.push(`repo: ${ctx.repo}   base: ${ctx.baseRef}`);
+  const cc = ctx.changeContext;
+  if (cc && (cc.title || cc.description || cc.commits?.length)) {
+    out.push('');
+    out.push('Stated intent (check the code against this):');
+    if (cc.title) out.push(`  title: ${cc.title}`);
+    if (cc.url) out.push(`  url:   ${cc.url}`);
+    if (cc.description) {
+      out.push('  description:');
+      out.push(cc.description.split('\n').map((l) => `    ${l}`).join('\n'));
+    }
+    if (cc.commits?.length) {
+      out.push('  commits:');
+      for (const c of cc.commits) out.push(`    - ${c}`);
+    }
+  }
   out.push('');
   out.push(`Changed (${ctx.changed.length}):`);
   for (const c of ctx.changed) {

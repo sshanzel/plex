@@ -12,8 +12,8 @@ import {
  *   PLEX_DATA_DIR             where per-repo data lives (default `.plex`)
  *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)
  *   PLEX_FALKORDB_URL         enables the ephemeral layer, e.g. redis://localhost:6380
- *   PLEX_EMBEDDING_PROVIDER   openai | voyage | ollama | fake
- *   PLEX_LLM_PROVIDER         mining distiller: claude-cli | anthropic | openai | heuristic
+ *   PLEX_EMBEDDING_PROVIDER   voyage | openai | gemini | ollama | none (default none)
+ *   PLEX_LLM_PROVIDER         mining distiller: claude-cli | anthropic | openai
  *   PLEX_LLM_MODEL            model id for the mining distiller
  */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {

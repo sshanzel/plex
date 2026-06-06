@@ -23,3 +23,24 @@ export async function getPrDiff(opts: PrDiffOptions): Promise<NormalizedDiff> {
   });
   return normalizeUnifiedDiff(stdout, `pr/${opts.pr}`);
 }
+
+export interface PrMeta {
+  title?: string;
+  body?: string;
+  url?: string;
+}
+
+/** Fetch a PR's title/description/url (the stated motivation) via `gh`. Best-effort. */
+export async function getPrMeta(opts: PrDiffOptions): Promise<PrMeta> {
+  const cwd = opts.cwd ?? process.cwd();
+  try {
+    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'title,body,url'], {
+      cwd,
+      maxBuffer: MAX_BUFFER,
+    });
+    const j = JSON.parse(stdout) as PrMeta;
+    return { title: j.title, body: j.body, url: j.url };
+  } catch {
+    return {};
+  }
+}

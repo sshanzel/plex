@@ -3,6 +3,7 @@ export type { RepoPaths } from './paths';
 export { loadConfig } from './config-load';
 export { resolveDiff } from './diff';
 export type { DiffSource } from './diff';
+export { resolveChangeContext } from './change-context';
 export {
   indexRepo,
   assembleReviewContext,

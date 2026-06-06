@@ -42,6 +42,19 @@ export interface NormalizedDiff {
   files: DiffFile[];
 }
 
+/**
+ * The *stated motivation* behind a change — PR title/description or commit messages.
+ * Lets the reviewer check the code AGAINST its claimed intent (e.g. flag overclaims, or
+ * behavior that contradicts the description).
+ */
+export interface ChangeContext {
+  title?: string;
+  description?: string;
+  /** Commit subjects in the diff range (for branch reviews). */
+  commits?: string[];
+  url?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Code graph (durable, per-repo) — unioned edge sources by provenance (ADR-06)
 // ---------------------------------------------------------------------------

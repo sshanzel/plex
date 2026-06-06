@@ -7,6 +7,7 @@ import type {
   NeighborEntry,
   NormalizedDiff,
   Finding,
+  ChangeContext,
 } from '@plex/core';
 import { CodeGraphDB, buildCodeGraph, getMeta, type BuildResult } from '@plex/code-graph';
 import { computeNeighborhood, publishNeighborhood } from '@plex/neighborhood';
@@ -14,6 +15,7 @@ import { runDeterministic } from '@plex/deterministic';
 import type { RetrievedPitfall } from '@plex/knowledge';
 import { repoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
+import { resolveChangeContext } from './change-context';
 import { buildKnowledgeQuery, getRelevantKnowledge } from './knowledge';
 
 /** Full rebuild of a repo's code graph. */
@@ -39,6 +41,8 @@ export interface ReviewContext {
   deterministic: Finding[];
   /** Relevant pitfalls retrieved from the knowledge base (ADR-01). */
   knowledge: RetrievedPitfall[];
+  /** Stated motivation (PR title/body or commit subjects) — check the code against its claims. */
+  changeContext?: ChangeContext;
   /** Contents of the repo's `plex.md`, if present (human-authored guidance — ADR-09). */
   reviewerMd?: string;
   /** FalkorDB graph name if the ephemeral layer was published. */
@@ -81,6 +85,7 @@ const AGENT_NOTES = [
   'Report bugs, potential bugs, improvements, and nits. Severity (bug|improvement|nit) and confidence (0..1) are independent: a high-severity, low-confidence item is a "potential bug" — say so honestly.',
   '`blastRadius` lists files coupled to the change (co-change = historical, import = structural). Inspect them for breakage the diff might cause.',
   '`deterministic` findings are already computed — incorporate them, do not re-derive them.',
+  '`changeContext` is the author\'s STATED intent (PR title/description or commit subjects) — NOT ground truth. Check the code against it: flag where the diff does less than it claims, does something the description omits, or contradicts the stated motivation.',
   'A pattern repeated across many files is likely a convention (demote) — unless it is a bug, in which case it is systemic (escalate as a migration).',
   'Submit findings via `submit_findings` (merged & ranked with deterministic ones); log the user\'s decision via `record_outcome`.',
 ];
@@ -88,7 +93,10 @@ const AGENT_NOTES = [
 /** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
-  const diff = await resolveDiff(opts.repoPath, opts.config, opts);
+  const [diff, changeContext] = await Promise.all([
+    resolveDiff(opts.repoPath, opts.config, opts),
+    resolveChangeContext(opts.repoPath, opts.config, opts),
+  ]);
 
   if (!existsSync(p.graphDir)) {
     throw new Error(`No code graph at ${p.graphDir}. Run \`reviewer index\` (or the index_repo tool) first.`);
@@ -131,6 +139,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     blastRadius: nb.neighbors,
     deterministic,
     knowledge,
+    changeContext,
     reviewerMd: loadReviewerMd(p.repoPath),
     ephemeralGraph,
     notes: AGENT_NOTES,
