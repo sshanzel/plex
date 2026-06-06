@@ -85,11 +85,14 @@ const RECORD = '';
 
 /**
  * Read commit history (timestamp + touched files) via git. `maxCommits` of 0 = full
- * history. Merge commits are excluded. This is the only impure part of co-change.
+ * history. `sinceRef` restricts to `sinceRef..HEAD` (the new commits, for incremental
+ * co-change — ADR-26). Merge commits are excluded. This is the only impure part of
+ * co-change.
  */
-export async function readCommits(cwd: string, maxCommits: number): Promise<CommitRecord[]> {
+export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {
   const args = ['log', '--no-merges', '--name-only', `--pretty=format:${RECORD}%ct`];
   if (maxCommits > 0) args.push('-n', String(maxCommits));
+  if (sinceRef) args.push(`${sinceRef}..HEAD`);
   const { stdout } = await pexec('git', args, { cwd, maxBuffer: 256 * 1024 * 1024 });
 
   const commits: CommitRecord[] = [];

@@ -100,7 +100,17 @@ export async function submitVerdict(
   config: ReviewerConfig,
   target?: string,
 ): Promise<StoredVerdict> {
-  const stored = await recordVerdict(repoPath, input, config);
+  // For waivers, embed the finding's title so it can be re-matched semantically next round
+  // (ADR-27) — best-effort: only when a real provider is configured.
+  let enriched = input;
+  if (input.kind === 'waive' && input.embedding == null) {
+    const text = [input.title, input.note].filter(Boolean).join(' — ').trim();
+    if (text) {
+      const provider = createEmbeddingProvider(config.embedding);
+      if (provider) enriched = { ...input, embedding: (await provider.embed([text]))[0] };
+    }
+  }
+  const stored = await recordVerdict(repoPath, enriched, config);
   if (input.kind === 'accept') {
     await learnIncident(config, {
       file: input.file,

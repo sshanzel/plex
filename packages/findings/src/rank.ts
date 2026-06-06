@@ -8,6 +8,8 @@ export interface RankOptions {
   weights?: SignalWeights;
   /** Prevalence at/above which a finding is treated as a codebase norm. */
   prevalenceThreshold?: number;
+  /** Cosine ≥ this lets pattern/category waivers suppress the same issue semantically (ADR-27). */
+  semanticThreshold?: number;
 }
 
 const TRIAGE_PRIORITY: Record<RankedFinding['triage'], number> = {
@@ -36,7 +38,7 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
   const ranked: RankedFinding[] = dedupeFindings(findings).map((f) => {
     const signal = computeSignal(f, f.agreedSources.length, weights);
     let triage: RankedFinding['triage'];
-    if (isWaived(f, waivers)) {
+    if (isWaived(f, waivers, opts.semanticThreshold)) {
       triage = 'suppressed';
     } else if ((f.prevalence ?? 0) >= threshold) {
       triage = f.severity === 'bug' ? 'systemic-migration' : 'convention';

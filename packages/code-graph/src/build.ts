@@ -287,19 +287,33 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       refCount = precise.length;
     }
 
-    // 5. Recompute co-change fully (the cheap half — no TS parse; ADR-25).
-    await db.run('MATCH ()-[r:CoChange]->() DELETE r');
+    // 5. Co-change: merge ONLY the commits since the last index (ADR-26) — accumulate onto
+    //    stored pairs; create only new pairs reaching minPairCount within this window.
+    //    Deleted files' edges were already removed (step 1); new pairs are fileSet-filtered.
+    //    Decay re-baselines on a full build; here new commits land at full recency (the
+    //    `Math.max(0, …)` clamp in aggregateCoChange), so no epoch bookkeeping is needed.
     let coChangePairs = 0;
     let commits = 0;
     try {
-      const cs = await readCommits(repoPath, opts.coChange.maxCommits);
+      const cs = await readCommits(repoPath, opts.coChange.maxCommits, storedSha);
       commits = cs.length;
-      const pairs = aggregateCoChange(cs, opts.coChange).filter((p) => fileSet.has(p.a) && fileSet.has(p.b));
+      const inc = aggregateCoChange(cs, { ...opts.coChange, minPairCount: 1 }).filter((p) => fileSet.has(p.a) && fileSet.has(p.b));
+      const strong = inc.filter((p) => p.count >= opts.coChange.minPairCount);
+      const weak = inc.filter((p) => p.count < opts.coChange.minPairCount);
+      // strong: create-or-accumulate (reaches the threshold within this window).
       await db.insertMany(
-        'MATCH (a:File {id:$a}), (b:File {id:$b}) CREATE (a)-[:CoChange {weight:$weight, cnt:$cnt}]->(b)',
-        pairs.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[c:CoChange]->(b) ' +
+          'ON CREATE SET c.weight = $weight, c.cnt = $cnt ' +
+          'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
+        strong.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
-      coChangePairs = pairs.length;
+      // weak: accumulate into ALREADY-stored pairs only — never create singletons (keeps
+      // the N² denoising of ADR-06). A pair below threshold in every window stays pruned.
+      await db.insertMany(
+        'MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
+        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+      );
+      coChangePairs = strong.length;
     } catch {
       // not a git repo / no history
     }

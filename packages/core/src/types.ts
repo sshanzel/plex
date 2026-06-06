@@ -131,6 +131,8 @@ export interface Finding {
   /** 0..1 how common this pattern is in the repo (drives prevalence-by-severity). */
   prevalence?: number;
   tags?: string[];
+  /** Retrieval vector of title+body, set at rank time for semantic waiver matching (ADR-27). */
+  embedding?: number[];
 }
 
 /** A finding after merge/dedup/ranking, with its computed signal and triage. */
@@ -179,6 +181,12 @@ export interface Waiver {
   pattern?: string;
   /** Category tag for category-scope match. */
   category?: string;
+  /**
+   * Embedding of the waived finding (set when a provider is configured). Lets pattern/
+   * category-scoped waivers suppress the *same issue* across rounds by meaning, surviving
+   * line drift and wording changes — not just exact title/line identity (ADR-27).
+   */
+  embedding?: number[];
 }
 
 // ---------------------------------------------------------------------------

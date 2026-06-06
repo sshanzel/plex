@@ -10,6 +10,8 @@ export interface WaiverIdentity {
   title?: string;
   pattern?: string;
   category?: string;
+  /** Embedding of the waived finding for semantic re-matching (ADR-27). */
+  embedding?: number[];
 }
 
 export type VerdictInput = Verdict & WaiverIdentity;
@@ -61,5 +63,6 @@ export async function loadWaivers(repoPath: string, config: ReviewerConfig): Pro
       title: v.title,
       pattern: v.pattern,
       category: v.category,
+      embedding: v.embedding,
     }));
 }

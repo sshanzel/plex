@@ -209,6 +209,75 @@ test('incremental', 'code-graph: incremental update (ADR-25) — add/modify/dele
   }
 });
 
+test('cochange-inc', 'code-graph: incremental co-change merges new commits (ADR-26)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-cci-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-ccidb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'src/a.ts'), 'export const a = 1;\n');
+    writeFileSync(join(repo, 'src/b.ts'), 'export const b = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'c0'); // couples a,b (cnt 1)
+    for (let i = 0; i < 2; i++) {
+      appendFileSync(join(repo, 'src/a.ts'), `// ${i}\n`);
+      appendFileSync(join(repo, 'src/b.ts'), `// ${i}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', `c${i + 1}`); // +1 each → cnt 3, passes minPairCount=2
+    }
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    // one more coupling commit, then incremental — should accumulate, not re-crawl history.
+    appendFileSync(join(repo, 'src/a.ts'), '// x\n');
+    appendFileSync(join(repo, 'src/b.ts'), '// x\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'c3');
+    await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const e = (await getCoChangeEdges(db, ['src/a.ts'])).find((x) => x.dst === 'src/b.ts');
+      assert.ok(e, 'a-b co-change present after incremental');
+      assert.equal(e!.cnt, 4, `incremental merged the new coupling commit (cnt ${e?.cnt}, expected 3+1)`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('semantic-waiver', 'engine: a semantic waiver suppresses the same issue next run (ADR-27)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-sw-'));
+  try {
+    const config = resolveConfig({ embedding: { provider: 'fake' } }); // fake = test-only embedder
+
+    // Waive "this kind of issue" repo-wide — the embedding is stored on the verdict.
+    await submitVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'pattern-repo', title: 'venue_opened double-fire' }, config);
+
+    // Next run: the same issue (same text → identical fake vector → cosine 1.0) is suppressed,
+    // and an unrelated finding is NOT.
+    const ranked = await rankReviewFindings(
+      repo,
+      config,
+      [
+        { title: 'venue_opened double-fire', severity: 'bug', confidence: 0.6, file: 'src/a.ts', startLine: 1, source: 'first-principles' },
+        { title: 'unrelated missing null check', severity: 'bug', confidence: 0.6, file: 'src/a.ts', startLine: 9, source: 'first-principles' },
+      ],
+      { mode: 'staged', includeDeterministic: false },
+    );
+    const waived = ranked.find((r) => r.title === 'venue_opened double-fire');
+    const other = ranked.find((r) => r.title.includes('null check'));
+    assert.equal(waived?.triage, 'suppressed', 'semantic waiver suppressed the same issue');
+    assert.notEqual(other?.triage, 'suppressed', 'unrelated finding not suppressed');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('precise', 'code-graph: precise resolver follows tsconfig path aliases', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-pre-'));
   const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-predb-')), 'g.kuzu');
