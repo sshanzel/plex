@@ -106,9 +106,22 @@ function printReview(ctx: ReviewContext): void {
     out.push('plex.md (project guidance):');
     out.push(ctx.reviewerMd.split('\n').map((l) => `  ${l}`).join('\n'));
   }
+  if (ctx.round != null) {
+    out.push('');
+    out.push(`PR brain — round ${ctx.round}${ctx.priorRounds && ctx.priorRounds.length > 1 ? ` (of ${ctx.priorRounds.length})` : ''}, target ${ctx.target}`);
+    if (ctx.openComments && ctx.openComments.length) {
+      out.push(`  PR comments this round: ${ctx.openComments.length}`);
+    }
+    if (ctx.unexplainedChanges && ctx.unexplainedChanges.length) {
+      out.push(`  Changed WITHOUT feedback (scrutinize — ${ctx.unexplainedChanges.length}):`);
+      for (const u of ctx.unexplainedChanges) out.push(`    ${u.file}:${u.start}-${u.end}`);
+    } else if (ctx.priorRounds && ctx.priorRounds.length > 1) {
+      out.push('  No unexplained changes since last round.');
+    }
+  }
   if (ctx.ephemeralGraph) {
     out.push('');
-    out.push(`FalkorDB graph: ${ctx.ephemeralGraph} (inspect in FalkorDB Browser)`);
+    out.push(`FalkorDB brain: ${ctx.ephemeralGraph} (inspect in FalkorDB Browser)`);
   }
   out.push('');
   out.push('Notes for the reviewing agent:');

@@ -4,6 +4,17 @@ export { loadConfig } from './config-load';
 export { resolveDiff } from './diff';
 export type { DiffSource } from './diff';
 export { resolveChangeContext } from './change-context';
+export { reviewTarget } from './target';
+export {
+  brainEnabled,
+  loadRoundState,
+  recordRound,
+  writeFindings,
+  writeVerdict,
+} from './brain';
+export type { RoundState, RoundSummary, BrainSignal } from './brain';
+export { logAudit, readAudit, auditFinding } from './audit';
+export type { AuditEvent } from './audit';
 export {
   indexRepo,
   assembleReviewContext,

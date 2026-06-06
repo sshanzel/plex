@@ -26,6 +26,7 @@ import {
   consolidateKnowledge,
   getPromotions,
   submitVerdict,
+  reviewTarget,
   scanForMining,
   addMinedPitfalls,
   mineRepo,
@@ -34,6 +35,10 @@ import {
 } from '@plex/engine';
 
 const config = loadConfig();
+// The PR brain is part of the product (ADR-22): FalkorDB is REQUIRED for the MCP review
+// flow. Enable it by default (respecting PLEX_FALKORDB_URL); reviews error with a clear
+// "run `pnpm db:up`" if it is unreachable, rather than silently degrading.
+config.falkordb.enabled = true;
 const server = new McpServer({ name: 'plex', version: '0.2.0' });
 
 const json = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] });
@@ -147,7 +152,7 @@ server.tool(
 
 server.tool(
   'record_outcome',
-  'Record the user\'s verdict on a finding (accept | reject | waive). For waivers, pass the finding identity (file/line/title/pattern/category) so it suppresses matching findings next run.',
+  'Record the user\'s verdict on a finding (accept | reject | waive). For waivers, pass the finding identity (file/line/title/pattern/category) so it suppresses matching findings next run. Pass the same diff source (source/pr/mode/baseRef) you reviewed so the verdict lands on the right PR brain.',
   {
     repoPath: z.string().optional(),
     findingId: z.string(),
@@ -159,26 +164,37 @@ server.tool(
     title: z.string().optional(),
     pattern: z.string().optional(),
     category: z.string().optional(),
+    ...diffSourceShape,
   },
   (a) =>
     guard(
-      async () => ({
-        recorded: await submitVerdict(
-          a.repoPath ?? process.cwd(),
-          {
-            findingId: a.findingId,
-            kind: a.kind,
-            scope: a.scope,
-            note: a.note,
-            file: a.file,
-            line: a.line,
-            title: a.title,
-            pattern: a.pattern,
-            category: a.category,
-          },
-          config,
-        ),
-      }),
+      async () => {
+        const repoPath = a.repoPath ?? process.cwd();
+        const target = reviewTarget(path.basename(path.resolve(repoPath)), {
+          source: a.source,
+          mode: a.mode,
+          baseRef: a.baseRef,
+          pr: a.pr,
+        });
+        return {
+          recorded: await submitVerdict(
+            repoPath,
+            {
+              findingId: a.findingId,
+              kind: a.kind,
+              scope: a.scope,
+              note: a.note,
+              file: a.file,
+              line: a.line,
+              title: a.title,
+              pattern: a.pattern,
+              category: a.category,
+            },
+            config,
+            target,
+          ),
+        };
+      },
       'record_outcome',
     ),
 );

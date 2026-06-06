@@ -8,15 +8,23 @@ import type {
   NormalizedDiff,
   Finding,
   ChangeContext,
+  PrComment,
+  AttributedChange,
 } from '@plex/core';
 import { CodeGraphDB, buildCodeGraph, getMeta, type BuildResult } from '@plex/code-graph';
-import { computeNeighborhood, publishNeighborhood } from '@plex/neighborhood';
+import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
+import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings';
+import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
+import { fetchCommentsForPr } from '@plex/mining';
 import type { RetrievedPitfall } from '@plex/knowledge';
 import { repoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
-import { buildKnowledgeQuery, getRelevantKnowledge } from './knowledge';
+import { reviewTarget } from './target';
+import { brainEnabled, loadRoundState, recordRound, type RoundSummary } from './brain';
+import { logAudit } from './audit';
+import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings } from './knowledge';
 
 /** Full rebuild of a repo's code graph. */
 export async function indexRepo(
@@ -45,22 +53,24 @@ export interface ReviewContext {
   changeContext?: ChangeContext;
   /** Contents of the repo's `plex.md`, if present (human-authored guidance — ADR-09). */
   reviewerMd?: string;
-  /** FalkorDB graph name if the ephemeral layer was published. */
+  // --- PR brain (M6, ADR-22/23) — present when FalkorDB is enabled ---
+  /** Stable target id / FalkorDB graph name for this review. */
+  target?: string;
+  /** This review's round number (1-based). */
+  round?: number;
+  /** Prior rounds on this target (facts that cross rounds — ADR-02). */
+  priorRounds?: RoundSummary[];
+  /**
+   * Regions changed since the previous round that NO prior finding or PR comment explains
+   * (semantic match — ADR-23). The highest-priority thing for the fresh reviewer to check.
+   */
+  unexplainedChanges?: AttributedChange[];
+  /** PR-thread comments ingested this round (facts). */
+  openComments?: PrComment[];
+  /** FalkorDB graph name if the brain/ephemeral layer was published. */
   ephemeralGraph?: string;
   /** Guidance for the reviewing agent. */
   notes: string[];
-}
-
-/**
- * A stable, recognizable FalkorDB graph name for a review target (instead of a random
- * timestamp): `<repo>__pr_<n>` for a PR, else `<repo>__<mode>[_<baseRef>]`. Re-reviewing
- * the same target reuses the same graph (publish clears it first).
- */
-function reviewGraphName(repo: string, opts: AssembleOptions): string {
-  const slug = (s: string): string => s.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
-  if (opts.source === 'pr' && opts.pr != null) return `${slug(repo)}__pr_${slug(String(opts.pr))}`;
-  const mode = opts.mode ?? 'working';
-  return `${slug(repo)}__${mode}${opts.baseRef ? '_' + slug(opts.baseRef) : ''}`;
 }
 
 /** Read repo-root `plex.md` (the explicit, human-editable steering surface). */
@@ -90,6 +100,83 @@ const AGENT_NOTES = [
   'Submit findings via `submit_findings` (merged & ranked with deterministic ones); log the user\'s decision via `record_outcome`.',
 ];
 
+const BRAIN_NOTES = [
+  '`unexplainedChanges` are regions that changed since the last round with NO prior finding or PR comment explaining them — scrutinize these FIRST; nobody asked for them.',
+  '`priorRounds` and `openComments` are FACTS from earlier rounds (not prior reasoning — ADR-02): use them to stay consistent across rounds without re-deriving or anchoring on past opinions.',
+];
+
+interface BrainContext {
+  target: string;
+  round: number;
+  priorRounds: RoundSummary[];
+  unexplainedChanges: AttributedChange[];
+  openComments: PrComment[];
+}
+
+/**
+ * Build the PR-brain context for this review (ADR-22/23): determine the round, ingest PR
+ * comments, attribute what changed since last round (semantic — embeddings REQUIRED, no
+ * heuristic; ADR-13), and persist the round to FalkorDB. Throws if FalkorDB/embeddings are
+ * unavailable — the brain has no fallback.
+ */
+async function buildBrainContext(
+  opts: AssembleOptions,
+  repo: string,
+  nb: ReviewNeighborhood,
+  baseRef: string,
+): Promise<BrainContext> {
+  const config = opts.config;
+  const cwd = repoPaths(opts.repoPath, config.dataDir).repoPath;
+  const target = reviewTarget(repo, opts);
+  const embedder = requireEmbeddings(config); // brain matching needs real embeddings (ADR-13)
+
+  const headSha =
+    opts.source === 'pr' && opts.pr != null ? await getPrHeadSha({ pr: opts.pr, cwd }) : await getHeadSha(cwd);
+
+  // requireFalkor: throws a clear "run pnpm db:up" if FalkorDB is unreachable.
+  const state = await loadRoundState(target, config);
+  const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
+  const round = sameRound ? state.lastN : state.lastN + 1;
+
+  let comments: PrComment[] = [];
+  if (opts.source === 'pr' && opts.pr != null) {
+    const raw = await fetchCommentsForPr(cwd, { number: Number(opts.pr), mergedAt: null });
+    comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
+  }
+
+  // Attribute changes since the previous round: feedback-driven vs unexplained (ADR-23).
+  let unexplainedChanges: AttributedChange[] = [];
+  if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
+    const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
+    const signals = [
+      ...state.signals,
+      ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
+    ].filter((s) => s.text.trim());
+    if (changed.length > 0 && signals.length > 0) {
+      const regionTexts = changed.map((c) => c.text);
+      const signalTexts = signals.map((s) => s.text);
+      const vecs = await embedder.embed([...regionTexts, ...signalTexts]);
+      const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: vecs[i] ?? [] }));
+      const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
+      unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
+    } else if (changed.length > 0) {
+      // No prior findings/comments to explain anything → everything that moved is unexplained.
+      unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+    }
+  }
+
+  await recordRound(
+    target,
+    repo,
+    { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef },
+    nb,
+    comments,
+    config,
+  );
+
+  return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments };
+}
+
 /** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
@@ -118,14 +205,26 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
   const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);
 
-  let ephemeralGraph: string | undefined;
-  // Auto-publish when FalkorDB is enabled (so the Browser always reflects the latest
-  // review); callers can opt out with publishFalkor: false.
-  if (opts.publishFalkor !== false && opts.config.falkordb.enabled) {
-    const graphName = reviewGraphName(repo, opts);
-    const res = await publishNeighborhood(graphName, nb, { url: opts.config.falkordb.url });
-    if (res.published) ephemeralGraph = graphName;
-  }
+  // PR brain (ADR-22/23): required when FalkorDB is enabled — rounds, comments, and the
+  // semantic "changed-without-feedback" signal. No in-process fallback.
+  const brain = brainEnabled(opts.config) ? await buildBrainContext(opts, repo, nb, diff.baseRef) : undefined;
+  const target = brain?.target ?? reviewTarget(repo, opts);
+  const round = brain?.round ?? 1;
+
+  // Attribution audit log (ADR-24) — graph-independent; logs what was PROVIDED, not reasoning.
+  await logAudit(opts.repoPath, opts.config, {
+    type: 'context_assembled',
+    repo,
+    target,
+    round,
+    ts: new Date().toISOString(),
+    baseRef: diff.baseRef,
+    files: diff.files.map((f) => f.path),
+    blastRadius: nb.neighbors.map((n) => ({ path: String(n.node.props.path), score: n.score, via: n.via })),
+    knowledge: knowledge.map((k) => ({ id: k.pitfall.id, score: k.score })),
+    changeContext: changeContext != null,
+    unexplainedChanges: brain?.unexplainedChanges.length ?? 0,
+  });
 
   return {
     repo,
@@ -141,8 +240,13 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     knowledge,
     changeContext,
     reviewerMd: loadReviewerMd(p.repoPath),
-    ephemeralGraph,
-    notes: AGENT_NOTES,
+    target,
+    round: brain ? brain.round : undefined,
+    priorRounds: brain?.priorRounds,
+    unexplainedChanges: brain?.unexplainedChanges,
+    openComments: brain?.openComments,
+    ephemeralGraph: brain?.target,
+    notes: brain ? [...AGENT_NOTES, ...BRAIN_NOTES] : AGENT_NOTES,
   };
 }
 

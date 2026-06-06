@@ -44,3 +44,17 @@ export async function getPrMeta(opts: PrDiffOptions): Promise<PrMeta> {
     return {};
   }
 }
+
+/** The PR's head commit SHA — keys a review round (ADR-23). Empty string if unavailable. */
+export async function getPrHeadSha(opts: PrDiffOptions): Promise<string> {
+  const cwd = opts.cwd ?? process.cwd();
+  try {
+    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'headRefOid'], {
+      cwd,
+      maxBuffer: MAX_BUFFER,
+    });
+    return (JSON.parse(stdout) as { headRefOid?: string }).headRefOid ?? '';
+  } catch {
+    return '';
+  }
+}

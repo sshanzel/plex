@@ -4,6 +4,9 @@ import { runDeterministic } from '@plex/deterministic';
 import { rankFindings } from '@plex/findings';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
+import { reviewTarget } from './target';
+import { brainEnabled, loadRoundState, writeFindings } from './brain';
+import { logAudit, auditFinding } from './audit';
 
 /** A finding as submitted by the reviewing agent (flat shape for the MCP tool). */
 export interface SubmittedFinding {
@@ -64,5 +67,24 @@ export async function rankReviewFindings(
 
   const det = opts.includeDeterministic === false ? [] : await getDeterministicFindings(repoPath, config, opts);
   const waivers = await loadWaivers(repoPath, config);
-  return rankFindings([...agent, ...det], { waivers });
+  const ranked = rankFindings([...agent, ...det], { waivers });
+
+  // Persist into the PR brain (round-tagged) + audit log (ADR-22/24).
+  const target = reviewTarget(repo, opts);
+  let round = 1;
+  if (brainEnabled(config)) {
+    const state = await loadRoundState(target, config);
+    round = state.lastN || 1;
+    await writeFindings(target, round, ranked, config);
+  }
+  await logAudit(repoPath, config, {
+    type: 'findings_submitted',
+    repo,
+    target,
+    round,
+    ts: new Date().toISOString(),
+    findings: ranked.map(auditFinding),
+  });
+
+  return ranked;
 }

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ReviewerConfig, CodeLocation, Finding, IncidentOutcome } from '@plex/core';
 import {
   KnowledgeStore,
@@ -12,6 +13,8 @@ import {
   type Promotions,
 } from '@plex/knowledge';
 import { recordVerdict, type VerdictInput, type StoredVerdict } from './verdicts';
+import { brainEnabled, loadRoundState, writeVerdict } from './brain';
+import { logAudit } from './audit';
 
 export function knowledgeStore(config: ReviewerConfig): KnowledgeStore {
   return new KnowledgeStore(config.knowledgeDir);
@@ -87,12 +90,15 @@ export async function getPromotions(
 
 /**
  * Record a verdict and close the feedback loop: an `accept` becomes a knowledge incident
- * (the reviewer learns from confirmed findings — ADR-10). Used by both MCP and CLI.
+ * (the reviewer learns from confirmed findings — ADR-10), and the verdict is projected
+ * into the PR brain + audit log (ADR-22/24). `target` (from the caller's diff source)
+ * keys which PR graph the verdict lands in. Used by both MCP and CLI.
  */
 export async function submitVerdict(
   repoPath: string,
   input: VerdictInput,
   config: ReviewerConfig,
+  target?: string,
 ): Promise<StoredVerdict> {
   const stored = await recordVerdict(repoPath, input, config);
   if (input.kind === 'accept') {
@@ -101,6 +107,30 @@ export async function submitVerdict(
       snippet: input.title,
       pitfallId: input.pattern,
       outcome: 'accepted',
+    });
+  }
+
+  if (target) {
+    let round = 1;
+    if (brainEnabled(config)) {
+      const state = await loadRoundState(target, config);
+      round = state.lastN || 1;
+      await writeVerdict(
+        target,
+        round,
+        { findingId: input.findingId, kind: input.kind, scope: input.scope, title: input.title, file: input.file, line: input.line, ts: stored.ts },
+        config,
+      );
+    }
+    await logAudit(repoPath, config, {
+      type: 'outcome_recorded',
+      repo: path.basename(path.resolve(repoPath)),
+      target,
+      round,
+      ts: stored.ts,
+      findingId: input.findingId,
+      kind: input.kind,
+      scope: input.scope,
     });
   }
   return stored;

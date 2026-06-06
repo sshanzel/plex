@@ -212,6 +212,52 @@ export interface Pitfall {
   embedding?: number[];
 }
 
+// ---------------------------------------------------------------------------
+// Review brain (M6) — per-PR working memory, persisted in FalkorDB (ADR-22/23)
+// ---------------------------------------------------------------------------
+
+/** A review invocation on a target at a distinct head — rounds accumulate (ADR-23). */
+export interface ReviewRound {
+  /** Stable target id (`<repo>__pr_<n>` / `<repo>__<mode>`). */
+  target: string;
+  /** 1-based round number. */
+  n: number;
+  ts: string;
+  /** Head commit reviewed this round (PR head / local HEAD) — keys "what changed since". */
+  headSha?: string;
+  baseRef: string;
+}
+
+/** A PR-thread review comment, ingested per round as a *fact* (never chain-of-thought). */
+export interface PrComment {
+  id: string;
+  file?: string;
+  line?: number;
+  body: string;
+  author?: string;
+  createdAt?: string;
+}
+
+/** A contiguous changed region on the new side of a file (used for round deltas). */
+export interface ChangedRegion {
+  file: string;
+  start: number;
+  end: number;
+}
+
+export type ChangeAttribution = 'feedback-driven' | 'unexplained';
+
+/**
+ * A region changed since the previous round, classified by whether a prior finding or
+ * PR comment explains it (ADR-23). `unexplained` = changed with nothing driving it →
+ * the highest-value signal for the fresh reviewer to scrutinize.
+ */
+export interface AttributedChange extends ChangedRegion {
+  attribution: ChangeAttribution;
+  /** What explains a feedback-driven change (a comment/finding reference). */
+  reason?: string;
+}
+
 export type IncidentSource = 'review' | 'mined' | 'seed';
 export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted';
 

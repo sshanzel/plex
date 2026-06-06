@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { NormalizedDiff } from '@plex/core';
-import { normalizeUnifiedDiff } from './normalize';
+import { normalizeUnifiedDiff, addedTextByFile, type ChangedFileText } from './normalize';
 
 const pexec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -16,6 +16,28 @@ export async function getCommitSubjects(cwd: string, baseRef: string, limit = 20
   try {
     const out = await runGit(['log', `${baseRef}..HEAD`, '--no-merges', '--format=%s', '-n', String(limit)], cwd);
     return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** The current HEAD commit SHA — keys a review round (ADR-23). Empty string if unavailable. */
+export async function getHeadSha(cwd: string): Promise<string> {
+  try {
+    return (await runGit(['rev-parse', 'HEAD'], cwd)).trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Per-file added-line text changed between two commits (`from..to`) — the inter-round
+ * delta whose content gets embedded for semantic change attribution (ADR-23). Best-effort.
+ */
+export async function getChangedFileTexts(cwd: string, fromSha: string, toSha: string): Promise<ChangedFileText[]> {
+  try {
+    const text = await runGit(['diff', `${fromSha}..${toSha}`], cwd);
+    return addedTextByFile(text);
   } catch {
     return [];
   }

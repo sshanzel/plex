@@ -22,6 +22,39 @@ export function groupRanges(lines: number[]): LineRange[] {
   return ranges;
 }
 
+/** Per-file added-line content + span — the text to embed for round attribution (ADR-23). */
+export interface ChangedFileText {
+  file: string;
+  start: number;
+  end: number;
+  /** Added lines joined (capped) — the semantic content of the change. */
+  text: string;
+}
+
+/**
+ * Extract the added-line text per file from a unified diff. Pure — used to embed what
+ * actually changed since the last round (no line-number heuristics; ADR-13/23).
+ */
+export function addedTextByFile(diffText: string): ChangedFileText[] {
+  const out: ChangedFileText[] = [];
+  for (const f of parseDiff(diffText)) {
+    const file = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
+    const lines: number[] = [];
+    const texts: string[] = [];
+    for (const c of f.chunks ?? []) {
+      for (const ch of c.changes) {
+        if (ch.type === 'add' && typeof ch.ln === 'number') {
+          lines.push(ch.ln);
+          texts.push(ch.content.replace(/^\+/, ''));
+        }
+      }
+    }
+    if (lines.length === 0) continue;
+    out.push({ file, start: Math.min(...lines), end: Math.max(...lines), text: texts.join('\n').slice(0, 4000) });
+  }
+  return out;
+}
+
 function statusOf(f: { new?: boolean; deleted?: boolean; from?: string; to?: string }): DiffFileStatus {
   if (f.new) return 'added';
   if (f.deleted) return 'deleted';

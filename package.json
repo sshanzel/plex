@@ -22,6 +22,7 @@
     "test:unit": "vitest run",
     "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts falkor",
     "test:watch": "vitest",
+    "test:brain": "pnpm build && node scripts/brain-check.mjs",
     "mcp": "tsx packages/mcp-server/src/index.ts",
     "plex": "tsx packages/cli/src/index.ts"
   },

@@ -4,5 +4,5 @@ export {
   symbolsTouchedByRanges,
 } from './compute';
 export type { NeighborhoodOptions } from './compute';
-export { publishNeighborhood } from './falkor';
-export type { PublishOptions, PublishResult } from './falkor';
+export { publishNeighborhood, runFalkor } from './falkor';
+export type { FalkorOptions, FalkorStatement, FalkorRunResult, PublishResult } from './falkor';
