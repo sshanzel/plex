@@ -11,7 +11,8 @@
       "@plex/engine": ["packages/engine/src/index.ts"],
       "@plex/knowledge": ["packages/knowledge/src/index.ts"],
       "@plex/deterministic": ["packages/deterministic/src/index.ts"],
-      "@plex/findings": ["packages/findings/src/index.ts"]
+      "@plex/findings": ["packages/findings/src/index.ts"],
+      "@plex/mining": ["packages/mining/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"]

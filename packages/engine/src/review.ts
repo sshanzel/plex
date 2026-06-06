@@ -96,7 +96,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const deterministic = await runDeterministic(p.repoPath, diff, { repoName: repo });
 
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
-  const knowledge = await getRelevantKnowledge(opts.config, query);
+  const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);
 
   let ephemeralGraph: string | undefined;
   if (opts.publishFalkor && opts.config.falkordb.enabled) {

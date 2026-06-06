@@ -22,5 +22,18 @@ export {
   getPromotions,
 } from './knowledge';
 export { reviewContextToHtml } from './viz';
+export {
+  mineRepo,
+  scanForMining,
+  addMinedPitfalls,
+  loadMiningState,
+} from './mining';
+export type {
+  MineRepoOptions,
+  MiningState,
+  MiningCluster,
+  ScanForMiningResult,
+  AgentPitfall,
+} from './mining';
 export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
 export type { StoredVerdict, VerdictInput, WaiverIdentity } from './verdicts';

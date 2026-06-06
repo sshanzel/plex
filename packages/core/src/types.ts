@@ -186,6 +186,13 @@ export interface Pitfall {
   tier: PitfallTier;
   /** 0..1, grows with corroborating incidents and accepted outcomes. */
   confidence: number;
+  /**
+   * `global` applies to every repo; `repo` is specific to its origin project but still
+   * stored (it helps whenever working on that project). Undefined = global (back-compat).
+   */
+  scope?: 'global' | 'repo';
+  /** Origin repo — set for repo-scoped / mined pitfalls; used to filter retrieval. */
+  repo?: string;
   /** Provenance: ids of the incidents this pitfall was distilled from. */
   incidentIds: string[];
   /** Retrieval vector (set when the pitfall is written). */

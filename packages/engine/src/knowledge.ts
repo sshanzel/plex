@@ -28,15 +28,16 @@ export function buildKnowledgeQuery(
     .slice(0, 2000);
 }
 
-/** Retrieve relevant pitfalls (ADR-01 grounded retrieval). */
+/** Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21). */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,
   queryText: string,
   topK = 5,
+  repo?: string,
 ): Promise<RetrievedPitfall[]> {
   if (!queryText.trim()) return [];
   const provider = createEmbeddingProvider(config.embedding);
-  return retrieveRelevant(knowledgeStore(config), provider, queryText, topK);
+  return retrieveRelevant(knowledgeStore(config), provider, queryText, topK, 0.05, repo);
 }
 
 /** Seed the knowledge base from markdown (cold start — ADR-09). */

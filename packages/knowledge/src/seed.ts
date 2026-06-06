@@ -49,6 +49,7 @@ export async function seedFromMarkdown(
       category: it.category,
       tier: 'judgmental',
       confidence: 0.4,
+      scope: 'global',
       incidentIds: [],
       embedding,
     };

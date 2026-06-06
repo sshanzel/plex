@@ -28,6 +28,24 @@ export interface CoChangeConfig {
   maxCommits: number;
 }
 
+/** Generative LLM used ONLY by the offline mining/distillation pipeline (ADR-02). */
+export type LlmProviderName = 'heuristic' | 'claude-cli' | 'anthropic' | 'openai';
+export interface LlmConfig {
+  provider: LlmProviderName;
+  model?: string;
+  apiKeyEnv?: string;
+  baseUrl?: string;
+}
+
+export interface MiningConfig {
+  /** Merged PRs to scan, most recent first (0 = as many as gh returns). */
+  maxPrs: number;
+  /** Cosine threshold to group review comments into one pitfall cluster. */
+  clusterThreshold: number;
+  /** Minimum cluster size to promote into a pitfall (singletons stay anecdotes). */
+  minClusterSize: number;
+}
+
 export interface ReviewerConfig {
   /** Per-repo Kùzu data directory (default `.reviewer` under each repo). */
   dataDir: string;
@@ -47,6 +65,9 @@ export interface ReviewerConfig {
     /** Minimum aggregate coupling score to include a neighbor. */
     minScore: number;
   };
+  /** Generative LLM for mining/distillation (offline only). */
+  llm: LlmConfig;
+  mining: MiningConfig;
 }
 
 import os from 'node:os';
@@ -75,6 +96,19 @@ export const defaultConfig: ReviewerConfig = {
     maxNeighbors: 40,
     minScore: 0.05,
   },
+  llm: {
+    // Mining distillation is LLM-only (ADR-20). Default to the local `claude` CLI so it
+    // rides the Claude subscription with no API key; falls back to ANTHROPIC_API_KEY only
+    // if the provider is explicitly set to `anthropic`.
+    provider: 'claude-cli',
+    model: 'claude-haiku-4-5-20251001',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+  },
+  mining: {
+    maxPrs: 100,
+    clusterThreshold: 0.6,
+    minClusterSize: 2,
+  },
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
@@ -85,5 +119,7 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     falkordb: { ...defaultConfig.falkordb, ...overrides.falkordb },
     coChange: { ...defaultConfig.coChange, ...overrides.coChange },
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
+    llm: { ...defaultConfig.llm, ...overrides.llm },
+    mining: { ...defaultConfig.mining, ...overrides.mining },
   };
 }

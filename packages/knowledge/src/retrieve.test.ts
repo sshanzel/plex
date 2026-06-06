@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Pitfall } from '@plex/core';
 import { KnowledgeStore } from './store';
 import { FakeEmbeddingProvider } from './embeddings';
 import { seedFromMarkdown, parseMarkdownPitfalls } from './seed';
@@ -41,5 +42,23 @@ describe('seed + retrieve', () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.pitfall.title.toLowerCase()).toContain('tenant id');
     expect(results[0]!.score).toBeGreaterThan(results[results.length - 1]!.score - 1e-9);
+  });
+
+  it('scopes repo-specific pitfalls to their origin repo (ADR-21)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-'));
+    const store = new KnowledgeStore(dir);
+    const [g, r] = await provider.embed(['validate tenant id query', 'use the internal RpcClient wrapper']);
+    const base = (over: Partial<Pitfall>): Pitfall => ({
+      id: over.id!, title: over.title!, trigger: over.title!, why: '', category: 'general',
+      tier: 'judgmental', confidence: 0.5, incidentIds: [], ...over,
+    });
+    await store.addPitfall(base({ id: 'g', title: 'validate tenant id on query', scope: 'global', embedding: g }));
+    await store.addPitfall(base({ id: 'r', title: 'use the internal RpcClient wrapper', scope: 'repo', repo: 'svc-a', embedding: r }));
+
+    const query = 'validate tenant id query and use the internal RpcClient wrapper';
+    const forA = (await retrieveRelevant(store, provider, query, 5, 0, 'svc-a')).map((x) => x.pitfall.id).sort();
+    const forB = (await retrieveRelevant(store, provider, query, 5, 0, 'svc-b')).map((x) => x.pitfall.id).sort();
+    expect(forA).toEqual(['g', 'r']); // repo-scoped visible in its own repo
+    expect(forB).toEqual(['g']); // and hidden elsewhere; global always visible
   });
 });

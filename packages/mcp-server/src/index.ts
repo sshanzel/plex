@@ -10,6 +10,7 @@
  * plex.md), get_blast_radius, get_deterministic_findings, submit_findings (merged &
  * ranked stream), record_outcome (scoped verdicts). get_relevant_knowledge lands in M3.
  */
+import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -25,7 +26,11 @@ import {
   consolidateKnowledge,
   getPromotions,
   submitVerdict,
+  scanForMining,
+  addMinedPitfalls,
+  mineRepo,
   type SubmittedFinding,
+  type AgentPitfall,
 } from '@plex/engine';
 
 const config = loadConfig();
@@ -180,9 +185,15 @@ server.tool(
 
 server.tool(
   'get_relevant_knowledge',
-  'Retrieve relevant pitfalls from the knowledge base for a query (e.g. changed symbols + finding titles).',
-  { query: z.string(), topK: z.number().optional() },
-  (a) => guard(async () => ({ pitfalls: await getRelevantKnowledge(config, a.query, a.topK ?? 5) }), 'get_relevant_knowledge'),
+  'Retrieve relevant pitfalls for a query (e.g. changed symbols + finding titles). Pass repoPath to include that repo\'s project-specific pitfalls (global ones always apply).',
+  { query: z.string(), topK: z.number().optional(), repoPath: z.string().optional() },
+  (a) =>
+    guard(
+      async () => ({
+        pitfalls: await getRelevantKnowledge(config, a.query, a.topK ?? 5, path.basename(path.resolve(a.repoPath ?? process.cwd()))),
+      }),
+      'get_relevant_knowledge',
+    ),
 );
 
 server.tool(
@@ -204,6 +215,46 @@ server.tool(
   'Propose graph→markdown (plex.md) and graph→rule (ast-grep) promotions for high-confidence / codifiable pitfalls.',
   { existingMarkdown: z.string().optional() },
   (a) => guard(() => getPromotions(config, a.existingMarkdown ?? ''), 'propose_promotions'),
+);
+
+// --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.
+server.tool(
+  'mine_scan',
+  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls.',
+  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
+  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_scan'),
+);
+
+server.tool(
+  'add_pitfalls',
+  'Store pitfalls you distilled from mine_scan clusters (embedding computed server-side, deduped by title). Pass incidentIds for provenance; scope "repo" (default) keeps project-specific pitfalls scoped to repoPath, "global" applies everywhere.',
+  {
+    repoPath: z.string().optional(),
+    pitfalls: z.array(
+      z.object({
+        title: z.string(),
+        why: z.string(),
+        mitigation: z.string().optional(),
+        category: z.string(),
+        tier: z.enum(['codifiable', 'judgmental']).optional(),
+        confidence: z.number().optional(),
+        scope: z.enum(['global', 'repo']).optional(),
+        incidentIds: z.array(z.string()).optional(),
+      }),
+    ),
+  },
+  (a) =>
+    guard(
+      () => addMinedPitfalls(config, a.pitfalls as AgentPitfall[], path.basename(path.resolve(a.repoPath ?? process.cwd()))),
+      'add_pitfalls',
+    ),
+);
+
+server.tool(
+  'mine_history',
+  'One-shot standalone mining: scan + distill (heuristic, or the configured LLM if a key is set) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning.',
+  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
+  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_history'),
 );
 
 const transport = new StdioServerTransport();

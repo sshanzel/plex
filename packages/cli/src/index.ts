@@ -15,6 +15,7 @@ import {
   consolidateKnowledge,
   getPromotions,
   reviewContextToHtml,
+  mineRepo,
   type ReviewContext,
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
@@ -56,6 +57,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
+  plex mine [repoPath] [--reset] [--all]   # mine PR-review history into pitfalls (incremental)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
 
@@ -182,6 +184,19 @@ async function main(): Promise<number> {
       const repoPath = positionals[1] ?? process.cwd();
       const list = await readVerdicts(repoPath, config);
       process.stdout.write(JSON.stringify(list, null, 2) + '\n');
+      return 0;
+    }
+    case 'mine': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const res = await mineRepo(repoPath, config, {
+        reset: Boolean(flags.reset),
+        state: flags.all ? 'all' : 'merged',
+      });
+      process.stdout.write(
+        `Mined ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +
+          `${res.comments} comments → ${res.substantive} substantive → ${res.clusters} clusters → ` +
+          `+${res.pitfalls} pitfalls, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
+      );
       return 0;
     }
     case 'seed': {

@@ -69,8 +69,9 @@ Ranked by `signal = severity × confidence × deviation-from-norm × blastRadius
 | `deterministic` | built-in TS-AST checks + Semgrep/ast-grep detection | ✅ |
 | `findings` | merge/dedup/rank/triage (signal, prevalence-by-severity, waivers) | ✅ |
 | `knowledge` | embeddings, JSON store, retrieval, seeding, promotion (ADR-18) | ✅ |
+| `mining` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
 | `engine` | orchestration: index, assemble context, rank, verdicts, knowledge, viz | ✅ |
 | `mcp-server` | the 10-tool MCP surface | ✅ |
 | `cli` | `index · review · blast · verdict · seed · promote` | ✅ |
 
-> Mining/distillation (M4) and the multi-repo workspace are intentionally **out of scope**. Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19).
+> The multi-repo workspace is intentionally **out of scope**. Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19).

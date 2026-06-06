@@ -1,13 +1,20 @@
-import { resolveConfig, type ReviewerConfig, type EmbeddingProviderName } from '@plex/core';
+import {
+  resolveConfig,
+  type ReviewerConfig,
+  type EmbeddingProviderName,
+  type LlmProviderName,
+} from '@plex/core';
 
 /**
  * Build a config from environment variables over the local-first defaults. Only
  * defined env vars override, so defaults are preserved.
  *
- *   PLEX_DATA_DIR             where per-repo data lives (default `.reviewer`)
+ *   PLEX_DATA_DIR             where per-repo data lives (default `.plex`)
  *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)
  *   PLEX_FALKORDB_URL         enables the ephemeral layer, e.g. redis://localhost:6380
  *   PLEX_EMBEDDING_PROVIDER   openai | voyage | ollama | fake
+ *   PLEX_LLM_PROVIDER         mining distiller: claude-cli | anthropic | openai | heuristic
+ *   PLEX_LLM_MODEL            model id for the mining distiller
  */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
   const env = process.env;
@@ -17,6 +24,12 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   if (env.PLEX_FALKORDB_URL) o.falkordb = { enabled: true, url: env.PLEX_FALKORDB_URL };
   if (env.PLEX_EMBEDDING_PROVIDER) {
     o.embedding = { provider: env.PLEX_EMBEDDING_PROVIDER as EmbeddingProviderName };
+  }
+  if (env.PLEX_LLM_PROVIDER || env.PLEX_LLM_MODEL) {
+    o.llm = {
+      provider: (env.PLEX_LLM_PROVIDER as LlmProviderName) ?? 'heuristic',
+      ...(env.PLEX_LLM_MODEL ? { model: env.PLEX_LLM_MODEL } : {}),
+    };
   }
   return resolveConfig({ ...o, ...overrides });
 }

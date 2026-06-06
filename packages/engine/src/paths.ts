@@ -7,6 +7,8 @@ export interface RepoPaths {
   graphDir: string;
   /** Append-only verdict log (feedback-loop seed). */
   verdictsFile: string;
+  /** Incremental mining cursor (which PRs have been scanned). */
+  miningStateFile: string;
 }
 
 /** Resolve where reviewer keeps per-repo data (default `<repo>/.reviewer`). */
@@ -18,5 +20,6 @@ export function repoPaths(repoPath: string, dataDir = '.plex'): RepoPaths {
     reviewerDir,
     graphDir: path.join(reviewerDir, 'graph.kuzu'),
     verdictsFile: path.join(reviewerDir, 'verdicts.jsonl'),
+    miningStateFile: path.join(reviewerDir, 'mining-state.json'),
   };
 }

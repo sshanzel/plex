@@ -52,8 +52,8 @@ Status legend: ✅ accepted · 🔁 superseded · 🧪 provisional
 **Decision.** Verdicts (accept/reject/waive) carry a **scope** (`line|file|pattern-repo|category-repo|category-global`) and reweight the graph. Confirmed novel bugs become `Incident`s → may distill into `Pitfall`s.
 **Consequences.** The system learns from its own discoveries, not just mined history.
 
-## ADR-11 — Mining is outcome-weighted, provenance-mandatory ✅ (deferred build)
-**Decision.** Source unit = `(code-before → review comment → resolving diff)`. Cluster across repos; a cluster (not a singleton) distills into a pitfall; every pitfall links its incidents. *Build deferred (M4 out of scope for now).*
+## ADR-11 — Mining is outcome-weighted, provenance-mandatory ✅ (built, M4)
+**Decision.** Source unit = `(code-before → review comment → outcome)`. Cluster across PRs; a cluster (not a singleton) distills into a pitfall; every substantive comment becomes an `Incident` and pitfalls keep their `incidentIds`. Outcome is pragmatic (merged PR ⇒ accepted/shipped); incremental per-repo cursor skips already-scanned PRs.
 
 ## ADR-12 — Language: TypeScript/Node ✅
 **Decision.** Implement everything in TS/Node. Matches expertise (fastest), single runtime to ship, native TS compiler access. Python reserved only for heavy mining clustering if ever needed.
@@ -89,3 +89,13 @@ Status legend: ✅ accepted · 🔁 superseded · 🧪 provisional
 **Context.** tsx is unstable with the Kùzu addon (ADR-17); node is stable. The codebase uses extensionless (Bundler) imports node can't resolve directly.
 **Decision.** `tsup` bundles the CLI and MCP server (workspace source bundled; native/heavy third-party deps external) to ESM in `dist/`, run via `pnpm start` / `pnpm start:mcp` under node. The FalkorDB child worker is copied beside the output; the external runtime deps are declared in the **root** package.json so they resolve from the root `node_modules`.
 **Consequences.** Stable production runtime; dev still uses tsx for fast iteration (with the open-limit caveat). Source-of-truth for "how to ship."
+
+## ADR-20 — Mining distillation is agent-driven over MCP ✅
+**Context.** Distillation needs generative reasoning. Doing it with a hardcoded API key (ADR-02 "offline batch") doesn't ride the user's Claude/Codex subscription, which is the whole cost motivation.
+**Decision.** Split mining: the MCP server does the mechanical scan (`mine_scan` — fetch new PRs, denoise, record incidents, cluster) and returns clusters; the **connected agent distills them with its own reasoning** and stores results via `add_pitfalls`. The standalone path (`plex mine` / `mine_history`) also distills with an LLM — **by default the local `claude` CLI** (subscription, no key), or `anthropic`/`openai` via key. **There is no heuristic distiller** — a keyword heuristic can't judge whether a cluster is a real, generalizable lesson, so the LLM decides (it can SKIP a cluster). If no LLM is available, mining **errors** rather than storing low-quality pitfalls.
+**Consequences.** Distillation is always intelligent; mining rides the subscription, mirroring the review loop. On-demand, not background — fine because the incremental cursor makes repeat runs cheap. Fits the user's PR-skill ecosystem (the **responder** skill's resolving diffs are the ideal future outcome signal).
+
+## ADR-21 — Knowledge has scope: global vs repo ✅
+**Context.** Mining (and the agent) surface lessons that are specific to one project. Discarding them loses value *for that project*; storing them globally pollutes others.
+**Decision.** Each `Pitfall` carries a `scope`: `global` (applies everywhere) or `repo` (stored, but only retrieved when reviewing its origin `repo`). Undefined = global (back-compat). The LLM classifies scope during distillation; seeded `plex.md` pitfalls are global; mined/agent pitfalls default to `repo`. Retrieval filters: `scope === global || pitfall.repo === currentRepo`.
+**Consequences.** Project-specific knowledge helps within its project without leaking elsewhere; global best-practices apply everywhere. The reviewer accumulates both kinds.

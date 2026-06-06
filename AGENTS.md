@@ -82,11 +82,21 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 6. **RAG, not fine-tuning** (ADR-01). The model stays a frontier model; our value is the retrieved context + feedback loop.
 7. **v1 is TS/JS via the TS compiler API** (ADR-15), not tree-sitter. Other languages plug in behind the same extractor interface later.
 
+## Mining (M4) — populate knowledge from PR history
+
+**Distillation is LLM-only (ADR-20)** — no heuristic; a keyword matcher can't judge what's worth storing, so the LLM decides (it can SKIP a cluster). Two paths:
+- **Agent-driven (rides your subscription):** MCP `mine_scan` (incremental — skips scanned PRs) returns clusters → the connected agent distills them → `add_pitfalls` stores them. No API key.
+- **Standalone:** `plex mine [--reset] [--all]` / MCP `mine_history` — distills via the local `claude` CLI by default (subscription, no key), or `anthropic`/`openai` via `PLEX_LLM_PROVIDER` + key. **Errors** if no LLM is available (never stores low-quality pitfalls).
+
+**Scope (ADR-21):** the LLM marks each pitfall `global` (everywhere) or `repo` (project-specific — still stored, retrieved only for that repo). Project-specific lessons are kept, not discarded.
+
+Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
+
 ## Scope
 
-- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, M5 promotion + viz + build.
-- **Out of scope (by request):** M4 repo mining/distillation, and the multi-repo workspace in M5. If you build mining later, it populates the knowledge base via the same `KnowledgeStore` (ADR-11) — outcome-weighted, provenance-mandatory.
+- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build.
+- **Out of scope (by request):** the multi-repo workspace in M5.
 
 ## Status
 
-All in-scope milestones complete (M0–M3, M5). See `docs/milestones/` for the authoritative per-milestone records and `docs/adr/README.md` for the 19 decisions. `pnpm test` green (28 unit + 7 integration); `pnpm build` produces node-runnable binaries.
+All requested milestones complete (M0–M5). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 20 decisions. `pnpm test` green (34 unit + 7 integration); `pnpm build` produces node-runnable binaries. The MCP server exposes 13 tools.

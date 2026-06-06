@@ -16,6 +16,16 @@ export interface EmbeddingProvider {
   embed(texts: string[]): Promise<number[][]>;
 }
 
+/**
+ * Generative completion, used ONLY by the offline mining/distillation pipeline (ADR-02 —
+ * the interactive review uses the connected agent, never this). Implementations: a
+ * deterministic heuristic (no network), Anthropic, OpenAI.
+ */
+export interface CompletionProvider {
+  readonly name: string;
+  complete(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>;
+}
+
 /** Cosine similarity helper for retrieval over embedding vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
