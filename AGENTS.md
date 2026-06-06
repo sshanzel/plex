@@ -50,15 +50,15 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 ## Local services (must remember)
 
 - **Kùzu** is embedded — no server. The per-repo code graph is a single file at `<repo>/.plex/graph.kuzu`. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
-- **FalkorDB** is optional (ephemeral neighborhood layer + live viz). Run it via Docker Compose (pinned `falkordb/falkordb:v4.18.9`):
+- **FalkorDB** is the per-PR **working-memory brain** and is **required for the review flow** (ADR-22, M6 — supersedes its old "optional" status): it holds rounds/findings/verdicts/comments and powers the round-aware "changed-without-feedback" signal. Run it with AOF via Docker Compose (pinned `falkordb/falkordb:v4.18.9`):
   ```bash
-  pnpm db:up     # plex-falkordb: redis on :56379, Browser on http://localhost:53000
+  pnpm db:up     # plex-falkordb (--appendonly yes): redis on :56379, Browser on http://localhost:53000
   ```
-  Ports are in the rarely-used 5xxxx range (override in `.env`). Set `PLEX_FALKORDB_URL=redis://localhost:56379` to enable the `--falkor` layer (config default is `redis://localhost:6379`). If FalkorDB is unreachable, the neighborhood is computed in-process — **never hard-fail on it**.
+  Ports are in the rarely-used 5xxxx range (override in `.env`). Set `PLEX_FALKORDB_URL=redis://localhost:56379`. The MCP server enables FalkorDB by default and **errors** (clear "run `pnpm db:up`") if it's unreachable — no in-process fallback. The CLI keeps `--falkor` opt-in for quick local checks. **Embeddings are also required for the brain** (semantic attribution, ADR-13): set `PLEX_EMBEDDING_PROVIDER` + key.
 
 ### Native-integration gotchas (hard-won — see ADR-16, ADR-17)
 
-- **Kùzu + FalkorDB SIGSEGV in the same process.** Never `import('falkordb')` in a process that loaded the Kùzu addon. FalkorDB publishing goes through an isolated child (`packages/neighborhood/src/falkor-worker.mjs`). Keep it that way.
+- **Kùzu + FalkorDB SIGSEGV in the same process.** Never `import('falkordb')` in a process that loaded the Kùzu addon. ALL FalkorDB I/O (reads *and* writes since M6) goes through the isolated child (`packages/neighborhood/src/falkor-worker.mjs`, a generic `runFalkor` Cypher executor). Keep it that way. Corollary (M6): a Kùzu-loaded process that *spawns* that worker SIGSEGVs on teardown **under tsx** — so the PR-brain E2E runs the built CLI under **node** (`pnpm test:brain`), not the tsx runner; the long-lived node MCP server is fine.
 - **tsx + Kùzu crashes after ~5 `Database` opens in one process.** Plain `node` is stable (12+). So: integration tests run one scenario per tsx process (`pnpm test:integration`), vitest holds only pure units (`pnpm test:unit`), and the shipped server should run built JS under node — not tsx — and **reuse a `Database` per dir** rather than open/close per request.
 - Always close the Kùzu `Connection` before the `Database` (`CodeGraphDB.close()`).
 - Adding a `.test.ts` that opens Kùzu will crash vitest teardown — put it in `integration.mts` instead.
@@ -94,9 +94,9 @@ Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive 
 
 ## Scope
 
-- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build.
+- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain (round-aware review + changed-without-feedback + audit log)**.
 - **Out of scope (by request):** the multi-repo workspace in M5.
 
 ## Status
 
-All requested milestones complete (M0–M5). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 20 decisions. `pnpm test` green (34 unit + 7 integration); `pnpm build` produces node-runnable binaries. The MCP server exposes 13 tools.
+All milestones complete (M0–M6). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 24 decisions. `pnpm test` green (43 unit + 7 integration); the PR brain is verified E2E under node via `pnpm test:brain`; `pnpm build` produces node-runnable binaries. The MCP server exposes 13 tools (FalkorDB + an embedding provider required for the review flow — M6).
