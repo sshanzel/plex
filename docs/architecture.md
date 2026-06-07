@@ -4,7 +4,7 @@
 
 ## Problem
 
-Copilot review hits usage limits; the Claude solo plan has no review feature; and the agent that *wrote* the code is a biased reviewer of it — especially across rounds, where it anchors on its own prior reasoning. We want an open-source, **local-first, fully embedded** reviewer that is **unbiased**, **rigorous** (catches real/potential bugs, improvements, and nits — not only known patterns), and **learns over time**.
+Copilot review hits usage limits; the Claude solo plan has no review feature; and the agent that *wrote* the code is a biased reviewer of it — especially across rounds, where it anchors on its own prior reasoning. We want a **local-first, fully embedded** reviewer that is **unbiased**, **rigorous** (catches real/potential bugs, improvements, and nits — not only known patterns), and **learns over time**.
 
 ## The core idea
 

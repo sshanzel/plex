@@ -4,7 +4,7 @@ Guide for humans and coding agents continuing work on **reviewer**. Read this fi
 
 ## What this is (in one breath)
 
-`reviewer` is a **local-first, open-source code reviewer**. It is *not* a new LLM — it's an **MCP server + orchestration layer** that any coding agent (Claude Code, Codex) connects to. It makes that agent rigorous and *unbiased* by running review in a fresh process, grounding it in a **blast-radius map** (Kùzu code graph) and **accumulated review knowledge** (knowledge graph), and merging first-principles + knowledge-grounded + deterministic findings into one ranked stream that learns from the user's verdicts.
+`reviewer` is a **local-first code reviewer**. It is *not* a new LLM — it's an **MCP server + orchestration layer** that any coding agent (Claude Code, Codex) connects to. It makes that agent rigorous and *unbiased* by running review in a fresh process, grounding it in a **blast-radius map** (Kùzu code graph) and **accumulated review knowledge** (knowledge graph), and merging first-principles + knowledge-grounded + deterministic findings into one ranked stream that learns from the user's verdicts.
 
 ## Repo layout
 

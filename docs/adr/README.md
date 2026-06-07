@@ -36,7 +36,7 @@ Status legend: ✅ accepted · 🔁 superseded · 🧪 provisional
 **Consequences.** Co-change catches runtime couplings (DI/injected services) that imports and static analysis miss; no single source is trusted alone.
 
 ## ADR-07 — Storage = Kùzu (durable) + FalkorDB (ephemeral); N+1 topology ✅
-**Context.** Local-first, open-source, possibly many repos; want live graph debugging.
+**Context.** Local-first, possibly many repos; want live graph debugging.
 **Decision.** Kùzu (embedded, MIT, disk-backed) holds N per-repo code graphs + 1 global knowledge graph, joined at `Finding`s. FalkorDB (in-memory, multi-graph) holds ephemeral per-PR `pr_<id>` neighborhoods.
 **Consequences.** Durable graph scales past RAM; ephemeral graph is cheap and inspectable in FalkorDB Browser. *Rejected:* memory-first for everything (RAM-bound at scale); Neo4j (JVM weight, GPLv3). ~~FalkorDB optional — degrades to in-process.~~ **Amended by ADR-22 (M6):** FalkorDB is now a *required* working-memory store for the review flow (AOF-persisted), no longer optional.
 
