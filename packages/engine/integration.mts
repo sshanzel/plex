@@ -393,7 +393,7 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
       const regionEmb = changed.map((_, i) => vecs[i]!);
       const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i]!);
 
-      const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb);
+      const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
       assert.equal(accepted, 1, `the addressed finding is auto-accepted (got ${accepted})`);
       assert.equal((await brain.loadRoundState(target)).priorFindings.length, 0, 'finding marked fixed — not re-evaluated (idempotent)');
     } finally {

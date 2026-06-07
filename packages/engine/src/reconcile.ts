@@ -1,6 +1,6 @@
 import path from 'node:path';
-import type { ReviewerConfig } from '@plex/core';
-import { findingAddressed } from '@plex/findings';
+import type { ReviewerConfig, ChangedRegion } from '@plex/core';
+import { findingAddressedAt } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { repoPaths } from './paths';
@@ -22,12 +22,15 @@ export async function recordFixAccepts(
   priorFindings: BrainFinding[],
   findingEmbeddings: number[][],
   regionEmbeddings: number[][],
+  /** The changed regions aligned with `regionEmbeddings` — enables the file/line LOCALITY
+   *  signal (ADR-28), which catches restructuring fixes that embeddings alone miss. Omit
+   *  (default) to fall back to pure semantic matching. */
+  changedRegions: ReadonlyArray<ChangedRegion> = [],
 ): Promise<number> {
   let n = 0;
   for (let i = 0; i < priorFindings.length; i++) {
-    const fv = findingEmbeddings[i];
     const f = priorFindings[i]!;
-    if (fv && findingAddressed(fv, regionEmbeddings)) {
+    if (findingAddressedAt({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings)) {
       await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
       n++;
@@ -50,7 +53,10 @@ export interface ReconcileResult {
  *
  * The cheap, on-demand "did the author fix these?" check: embedded Kùzu brain + git +
  * embeddings, no service. Call it from the responder skill, a CI `on: push` step, or by
- * hand. A no-op without an embedding provider (needed to match) or when nothing moved.
+ * hand. Matches a finding to the pushed changes by EITHER a semantic title match OR
+ * file/line LOCALITY (ADR-28) — the locality signal is what catches a restructuring fix
+ * (try/catch wrap, moved lines) that reads nothing like the finding's title. A no-op without
+ * an embedding provider (the semantic half needs it; locality still works) or when nothing moved.
  */
 export async function reconcileOutcomes(
   repoPath: string,
@@ -59,8 +65,10 @@ export async function reconcileOutcomes(
 ): Promise<ReconcileResult> {
   const repo = path.basename(path.resolve(repoPath));
   const target = reviewTarget(repo, src);
+  // Embeddings power the SEMANTIC half only; the file/line LOCALITY half needs none (git +
+  // anchors). So we no longer bail when no provider is configured (ADR-30 made embeddings
+  // optional) — locality still reconciles restructuring fixes.
   const embedder = createEmbeddingProvider(config.embedding);
-  if (!embedder) return { target, checked: 0, accepted: 0 };
 
   const cwd = repoPaths(repoPath, config.dataDir).repoPath;
   const brain = await Brain.open(repoPath, config);
@@ -75,13 +83,19 @@ export async function reconcileOutcomes(
     const changed = await getChangedFileTexts(cwd, state.lastHeadSha, head);
     if (changed.length === 0) return { target, checked: state.priorFindings.length, accepted: 0 };
 
-    const regionTexts = changed.map((c) => c.text);
-    const findingTexts = state.priorFindings.map((f) => f.title);
-    const vecs = await embedder.embed([...regionTexts, ...findingTexts]);
-    const regionEmb = changed.map((_, i) => vecs[i] ?? []);
-    const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i] ?? []);
+    // Embed only when a provider exists; otherwise empty vectors → semantic never fires and
+    // recordFixAccepts decides purely on locality.
+    let regionEmb: number[][] = changed.map(() => []);
+    let findingEmb: number[][] = state.priorFindings.map(() => []);
+    if (embedder) {
+      const regionTexts = changed.map((c) => c.text);
+      const findingTexts = state.priorFindings.map((f) => f.title);
+      const vecs = await embedder.embed([...regionTexts, ...findingTexts]);
+      regionEmb = changed.map((_, i) => vecs[i] ?? []);
+      findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i] ?? []);
+    }
 
-    const accepted = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb);
+    const accepted = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
     return { target, checked: state.priorFindings.length, accepted };
   } finally {
     await brain.close();

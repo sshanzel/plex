@@ -62,3 +62,42 @@ export function findingAddressed(
 ): boolean {
   return regionEmbeddings.some((r) => cosineSimilarity(findingEmbedding, r) >= threshold);
 }
+
+/**
+ * Was a prior finding **addressed** by the changes since it was raised — combining two
+ * signals so a restructuring fix still counts (ADR-28, refined):
+ *
+ *   1. **Semantic** — a changed region's content is close (cosine ≥ `semanticThreshold`) to the
+ *      finding title. Catches a fix in a DIFFERENT place than the original anchor (code moved
+ *      or extracted), and cross-file fixes.
+ *   2. **Locality** — the finding's *own file* changed and its line falls within a windowed
+ *      changed range. This is the signal pure-embedding matching MISSES: a fix that wraps the
+ *      flagged loop in try/catch, or moves the flagged entity lines, stays in the same file/area
+ *      but reads nothing like the bug's *title* — so the cosine never clears the bar even though
+ *      the code clearly got touched. Anchoring on the finding's location recovers those.
+ *
+ * Either signal suffices (recall-biased on purpose: a missed accept loses the learning signal
+ * entirely and re-surfaces a fixed finding; a rare false accept only mildly over-reinforces a
+ * pitfall). Pure — embeddings/diff computed at the boundary, the decision unit-tested with vectors.
+ */
+export function findingAddressedAt(
+  finding: { file?: string; line?: number },
+  findingEmbedding: number[],
+  regions: ReadonlyArray<ChangedRegion>,
+  regionEmbeddings: number[][],
+  opts: { semanticThreshold?: number; lineWindow?: number } = {},
+): boolean {
+  const semanticThreshold = opts.semanticThreshold ?? 0.6;
+  const lineWindow = opts.lineWindow ?? 30;
+  if (findingEmbedding.length > 0 && findingAddressed(findingEmbedding, regionEmbeddings, semanticThreshold)) {
+    return true;
+  }
+  if (finding.file != null && finding.line != null) {
+    for (const r of regions) {
+      if (r.file === finding.file && finding.line >= r.start - lineWindow && finding.line <= r.end + lineWindow) {
+        return true;
+      }
+    }
+  }
+  return false;
+}

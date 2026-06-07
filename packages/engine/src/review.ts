@@ -350,7 +350,7 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 
         const fBase = regionTexts.length + signals.length;
         const findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
-        inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb);
+        inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
       }
     }
 
