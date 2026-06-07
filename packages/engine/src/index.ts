@@ -6,7 +6,7 @@ export type { HomeConfig } from './home-config';
 export { resolveDiff } from './diff';
 export type { DiffSource } from './diff';
 export { resolveChangeContext } from './change-context';
-export { reviewTarget } from './target';
+export { reviewTarget, reviewTargetFor } from './target';
 export { Brain } from './brain';
 export type { RoundState, RoundSummary, BrainSignal, BrainFinding } from './brain';
 export { logAudit, readAudit, auditFinding } from './audit';

@@ -256,6 +256,7 @@ async function main(): Promise<number> {
         pr: typeof flags.pr === 'string' ? flags.pr : undefined,
       });
       process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
+      process.stdout.write(`  ${res.reason}\n`); // always explain the outcome — esp. why accepted is 0
       return 0;
     }
     case 'blast': {

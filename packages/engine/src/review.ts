@@ -33,7 +33,7 @@ import type { RetrievedPitfall } from '@plex/knowledge';
 import { repoPaths, ensureDataDir } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
-import { reviewTarget } from './target';
+import { reviewTargetFor } from './target';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
@@ -304,7 +304,10 @@ interface BrainContext {
 async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: string): Promise<BrainContext> {
   const config = opts.config;
   const cwd = repoPaths(opts.repoPath, config.dataDir).repoPath;
-  const target = reviewTarget(repo, opts);
+  // Key the brain off the repo PATH (basename), NOT the graph's `repo` meta — otherwise a
+  // worktree seeded from a differently-named base (ADR-32) records rounds under the base name
+  // while findings land under the worktree name, splitting the brain (see reviewTargetFor).
+  const target = reviewTargetFor(opts.repoPath, opts);
   // Embeddings are now OPTIONAL (ADR-30): without a provider the brain still records rounds
   // and findings; only the semantic signals (unexplained changes + fix inference) are skipped.
   const embedder = createEmbeddingProvider(config.embedding);

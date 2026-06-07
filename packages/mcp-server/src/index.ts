@@ -26,7 +26,7 @@ import {
   consolidateKnowledge,
   getPromotions,
   submitVerdict,
-  reviewTarget,
+  reviewTargetFor,
   reconcileOutcomes,
   scanForMining,
   addMinedPitfalls,
@@ -180,7 +180,7 @@ server.tool(
     guard(
       async () => {
         const repoPath = a.repoPath ?? process.cwd();
-        const target = reviewTarget(path.basename(path.resolve(repoPath)), {
+        const target = reviewTargetFor(repoPath, {
           source: a.source,
           mode: a.mode,
           baseRef: a.baseRef,

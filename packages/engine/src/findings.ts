@@ -5,7 +5,7 @@ import { rankFindings } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
-import { reviewTarget } from './target';
+import { reviewTargetFor } from './target';
 import { Brain, type BrainFinding } from './brain';
 import { logAudit, auditFinding } from './audit';
 import { postFindingsToPr } from './pr-comment';
@@ -88,8 +88,9 @@ export async function rankReviewFindings(
   }
   const ranked = rankFindings(all, { waivers, semanticThreshold });
 
-  // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30).
-  const target = reviewTarget(repo, opts);
+  // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30). Key off the repo PATH
+  // (basename), consistent with round recording + reconcile — never the graph meta (reviewTargetFor).
+  const target = reviewTargetFor(repoPath, opts);
   let round = 1;
   let priorFindings: BrainFinding[] = [];
   const brain = await Brain.open(repoPath, config);

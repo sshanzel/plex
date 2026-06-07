@@ -1,11 +1,10 @@
-import path from 'node:path';
 import type { ReviewerConfig, ChangedRegion } from '@plex/core';
 import { findingAddressedAt } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { repoPaths } from './paths';
 import type { DiffSource } from './diff';
-import { reviewTarget } from './target';
+import { reviewTargetFor } from './target';
 import { Brain, type BrainFinding } from './brain';
 import { submitVerdict } from './knowledge';
 
@@ -45,6 +44,18 @@ export interface ReconcileResult {
   checked: number;
   /** Findings auto-accepted because a pushed change addressed them. */
   accepted: number;
+  /**
+   * Human-readable explanation of the outcome — so `accepted: 0` is never a black box. Names the
+   * concrete cause (no open findings / no prior round recorded for this target / no commits since
+   * the last review / N files changed but nothing matched / accepted M of N). The "no prior round"
+   * case is the worktree split-brain tell (reviewTargetFor).
+   */
+  reason: string;
+  /** The "since" window reconcile diffed: last reviewed round's head → current head. */
+  fromSha?: string;
+  toSha?: string;
+  /** Files changed in that window. */
+  changedFiles?: number;
 }
 
 /**
@@ -63,8 +74,7 @@ export async function reconcileOutcomes(
   config: ReviewerConfig,
   src: DiffSource,
 ): Promise<ReconcileResult> {
-  const repo = path.basename(path.resolve(repoPath));
-  const target = reviewTarget(repo, src);
+  const target = reviewTargetFor(repoPath, src);
   // Embeddings power the SEMANTIC half only; the file/line LOCALITY half needs none (git +
   // anchors). So we no longer bail when no provider is configured (ADR-30 made embeddings
   // optional) — locality still reconciles restructuring fixes.
@@ -74,14 +84,29 @@ export async function reconcileOutcomes(
   const brain = await Brain.open(repoPath, config);
   try {
     const state = await brain.loadRoundState(target);
+    const checked = state.priorFindings.length;
     const head =
       src.source === 'pr' && src.pr != null ? await getPrHeadSha({ pr: src.pr, cwd }) : await getHeadSha(cwd);
-    if (state.priorFindings.length === 0 || !state.lastHeadSha || !head || state.lastHeadSha === head) {
-      return { target, checked: state.priorFindings.length, accepted: 0 };
+
+    // Each early exit names WHY (so `accepted: 0` is diagnosable without log spelunking).
+    if (checked === 0) return { target, checked, accepted: 0, reason: 'no open findings for this target — nothing to reconcile' };
+    if (!state.lastHeadSha) {
+      return {
+        target,
+        checked,
+        accepted: 0,
+        reason: `no prior round recorded for target "${target}" — cannot tell what changed since the findings were raised (if this repo is a worktree, the brain may be split across two target names; see reviewTargetFor)`,
+      };
+    }
+    if (!head) return { target, checked, accepted: 0, reason: 'could not resolve the current head sha', fromSha: state.lastHeadSha };
+    if (state.lastHeadSha === head) {
+      return { target, checked, accepted: 0, reason: 'no commits since the last reviewed round (head unchanged) — push fixes, then reconcile', fromSha: state.lastHeadSha, toSha: head };
     }
 
     const changed = await getChangedFileTexts(cwd, state.lastHeadSha, head);
-    if (changed.length === 0) return { target, checked: state.priorFindings.length, accepted: 0 };
+    if (changed.length === 0) {
+      return { target, checked, accepted: 0, reason: 'commits exist since the last round but added no lines to diff against', fromSha: state.lastHeadSha, toSha: head, changedFiles: 0 };
+    }
 
     // Embed only when a provider exists; otherwise empty vectors → semantic never fires and
     // recordFixAccepts decides purely on locality.
@@ -96,7 +121,11 @@ export async function reconcileOutcomes(
     }
 
     const accepted = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
-    return { target, checked: state.priorFindings.length, accepted };
+    const reason =
+      accepted > 0
+        ? `accepted ${accepted} of ${checked} — a pushed change addressed them (semantic or file/line locality)`
+        : `${changed.length} file(s) changed since ${state.lastHeadSha.slice(0, 8)} but none matched an open finding (no semantic match and no change near a finding's file:line)${embedder ? '' : '; no embedding provider, so only locality was tried'}`;
+    return { target, checked, accepted, reason, fromSha: state.lastHeadSha, toSha: head, changedFiles: changed.length };
   } finally {
     await brain.close();
   }

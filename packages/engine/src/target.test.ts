@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { reviewTarget } from './target';
+import path from 'node:path';
+import { reviewTarget, reviewTargetFor } from './target';
 
 // reviewTarget is the correlation key for the PR brain, audit log, and round tracking
 // (ADR-22/23). Re-reviewing the SAME logical target must produce the SAME id — pin the
@@ -39,5 +40,33 @@ describe('reviewTarget', () => {
   it('truncates an overlong repo slug to 40 chars', () => {
     const t = reviewTarget('a'.repeat(80), { source: 'local', mode: 'staged' });
     expect(t).toBe(`${'a'.repeat(40)}__staged`);
+  });
+});
+
+// reviewTargetFor is the CANONICAL entry point: every brain path (rounds, findings, verdicts,
+// reconcile) must derive the target from it so they agree. The split-brain bug it prevents:
+// round-recording keyed off the graph's `repo` meta (which a seeded worktree copies from the
+// BASE), while findings keyed off the directory basename — two targets for one PR.
+describe('reviewTargetFor (path-derived — the single source of truth)', () => {
+  it('derives the target from the resolved directory BASENAME, ignoring graph meta', () => {
+    expect(reviewTargetFor('/home/me/work/dazzling-spinning-harbor', { source: 'pr', pr: 79 }))
+      .toBe('dazzling_spinning_harbor__pr_79');
+  });
+
+  it('equals reviewTarget(basename, src) — the helper is just that, made un-bypassable', () => {
+    const p = '/a/b/playright';
+    expect(reviewTargetFor(p, { source: 'pr', pr: 79 })).toBe(reviewTarget(path.basename(p), { source: 'pr', pr: 79 }));
+  });
+
+  it('two paths whose basenames differ (e.g. a worktree vs its base) get DIFFERENT targets', () => {
+    // Distinct dirs are distinct brains anyway (each has its own data dir) — the invariant is
+    // INTERNAL consistency, which the next test pins.
+    expect(reviewTargetFor('/repos/playright', { source: 'pr', pr: 79 }))
+      .not.toBe(reviewTargetFor('/repos/dazzling-spinning-harbor', { source: 'pr', pr: 79 }));
+  });
+
+  it('is identical regardless of trailing slash / un-normalized path (resolve normalizes)', () => {
+    expect(reviewTargetFor('/repos/playright/', { source: 'pr', pr: 79 }))
+      .toBe(reviewTargetFor('/repos/playright', { source: 'pr', pr: 79 }));
   });
 });
