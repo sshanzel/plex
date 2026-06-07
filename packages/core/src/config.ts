@@ -95,6 +95,22 @@ export interface ReviewerConfig {
    * are never posted regardless. (`PLEX_AUTO_COMMENT_SKIP_NITS=true`.)
    */
   autoCommentSkipNits: boolean;
+  /**
+   * Parallel-review guardrail (docs/design/parallel-review.md): when `get_review_context`
+   * should advise fanning out the review into subagents vs a single reviewer, decided from
+   * the coupling graph. Conservative — defaults to single unless the change is big AND splits
+   * into independent coupled clusters.
+   */
+  reviewPlan: {
+    /** Below this many changed files → single-agent review. */
+    minFiles: number;
+    /** Below this review surface (changed LOC) → single-agent. */
+    minSurface: number;
+    /** Cap on parallel reviewers (smallest clusters merge to fit). */
+    maxAgents: number;
+    /** Clusters smaller than this are folded in, never given their own reviewer. */
+    minClusterFiles: number;
+  };
 }
 
 import os from 'node:os';
@@ -134,6 +150,7 @@ export const defaultConfig: ReviewerConfig = {
   },
   autoComment: false, // opt-in: PLEX_AUTO_COMMENT=true / ~/.plex/config.json
   autoCommentSkipNits: false, // nits have value — posted by default; opt out via PLEX_AUTO_COMMENT_SKIP_NITS
+  reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 },
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
@@ -145,5 +162,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
     llm: { ...defaultConfig.llm, ...overrides.llm },
     mining: { ...defaultConfig.mining, ...overrides.mining },
+    reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
   };
 }

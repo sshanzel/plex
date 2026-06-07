@@ -56,9 +56,11 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP
 .claude/
   settings.json                            # enables the project MCP + a sensible permission allowlist
   agents/plex-reviewer.md                  # the fresh-context, unbiased reviewer subagent
+  skills/pr-parallel-review    -> ../../.agents/skills/pr-parallel-review    (symlink)
   skills/pr-review-responder   -> ../../.agents/skills/pr-review-responder   (symlink)
   skills/pr-review-documenter  -> ../../.agents/skills/pr-review-documenter  (symlink)
 .agents/skills/                            # the REAL skill files (Codex/other agents read these)
+  pr-parallel-review/SKILL.md              # orchestrate a fan-out review when reviewPlan says so
   pr-review-responder/SKILL.md             # resolve PR feedback + close the Plex learning loop
   pr-review-documenter/SKILL.md            # capture durable lessons into AGENTS.md / ADR / milestone
 ```
@@ -68,7 +70,7 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP
 **Crowded MCP sessions — `alwaysLoad`.** With many MCP servers connected, Claude Code **defers** most MCP tools behind tool-search (they aren't listed top-level), and a reviewer agent can waste minutes failing to find `mcp__plex__*` and fall back to a manual git review. The fix: `"alwaysLoad": true` on the plex server entry (`.mcp.json` here; or the per-project `~/.claude.json` registration `plex init` writes) — it exempts plex from deferral so its tools load eagerly. The server also declares `instructions` (helps tool-search), and the `plex-reviewer` agent is told to `ToolSearch("mcp__plex__")` if deferred and **never** fall back to a manual review. (Subagent `tools:` is an allow-list only — it does NOT un-defer.)
 
 **The loop (dogfooding your own PR):**
-1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts).
+1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts). For a **large** change, run the **`pr-parallel-review`** skill instead: it reads the `reviewPlan` Plex returns and, when the change splits into independent coupled clusters, fans out one reviewer per cluster and consolidates into one `submit_findings` (docs/design/parallel-review.md). The guardrail is conservative — small/tightly-coupled changes stay a single pass.
 2. Address feedback with the `pr-review-responder` skill → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
 3. `pr-review-documenter` turns a recurring lesson into a durable doc (AGENTS.md / a new ADR / a milestone record).
 

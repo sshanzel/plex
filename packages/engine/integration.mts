@@ -140,10 +140,50 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
     const ctx = await assembleReviewContext({ repoPath: repo, config, mode: 'staged' });
     assert.ok(ctx.changed.map((c) => c.symbol).includes('extra'));
     assert.ok(ctx.blastRadius.some((n) => String(n.node.props.path) === 'src/db.ts'));
+    assert.ok(ctx.reviewPlan, 'reviewPlan present');
+    assert.equal(ctx.reviewPlan!.strategy, 'single', 'a 1-file change stays single (below minFiles)');
     await recordVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'file' }, config);
     const verdicts = await readVerdicts(repo, config);
     assert.equal(verdicts.length, 1);
     assert.equal(verdicts[0]!.findingId, 'f1');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('review-plan', 'engine: reviewPlan fans out into coupled clusters (parallel-review wiring)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-rp-'));
+  const config = resolveConfig({ dataDir: '.plex' });
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    // Two INDEPENDENT import chains: cluster A (a0<-a1<-a2), cluster B (b0<-b1<-b2). No edge
+    // crosses the two, so changedFileCoupling must partition them into separate review units.
+    writeFileSync(join(repo, 'src/a0.ts'), 'export const a0 = 0;\n');
+    writeFileSync(join(repo, 'src/a1.ts'), "import { a0 } from './a0';\nexport const a1 = a0 + 1;\n");
+    writeFileSync(join(repo, 'src/a2.ts'), "import { a1 } from './a1';\nexport const a2 = a1 + 1;\n");
+    writeFileSync(join(repo, 'src/b0.ts'), 'export const b0 = 0;\n');
+    writeFileSync(join(repo, 'src/b1.ts'), "import { b0 } from './b0';\nexport const b1 = b0 + 1;\n");
+    writeFileSync(join(repo, 'src/b2.ts'), "import { b1 } from './b1';\nexport const b2 = b1 + 1;\n");
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+
+    await indexRepo(repo, config); // import edges are extracted from this committed state
+
+    // Stage a large change across all 6 files so we clear minFiles (6) AND minSurface (150).
+    const filler = (tag: string): string =>
+      '\n' + Array.from({ length: 30 }, (_, i) => `export const ${tag}_${i} = ${i};`).join('\n') + '\n';
+    for (const f of ['a0', 'a1', 'a2', 'b0', 'b1', 'b2']) appendFileSync(join(repo, `src/${f}.ts`), filler(f));
+    git(repo, 'add', '-A'); // staged → HEAD unchanged → graph stays fresh (no re-index)
+
+    const ctx = await assembleReviewContext({ repoPath: repo, config, mode: 'staged' });
+    assert.ok(ctx.reviewPlan, 'reviewPlan present');
+    assert.equal(ctx.reviewPlan!.strategy, 'parallel', 'big multi-cluster change fans out');
+    assert.equal(ctx.reviewPlan!.units.length, 2, 'one review unit per import cluster');
+    const sets = ctx.reviewPlan!.units.map((u) => u.files.map((p) => basename(p, '.ts')).sort().join(',')).sort();
+    assert.deepEqual(sets, ['a0,a1,a2', 'b0,b1,b2'], 'units partition exactly by coupling');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

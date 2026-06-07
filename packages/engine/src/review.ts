@@ -19,11 +19,14 @@ import {
   FullRebuildRequired,
   getMeta,
   commitsBehind,
+  getCoChangeEdges,
+  getImportEdges,
+  getRefEdges,
   type BuildResult,
 } from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
-import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings';
+import { classifyChanges, reviewPlan, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/mining';
 import type { RetrievedPitfall } from '@plex/knowledge';
@@ -221,8 +224,33 @@ export interface ReviewContext {
   openComments?: PrComment[];
   /** Prior findings auto-recorded as fixed this round because a change addressed them (ADR-28). */
   inferredOutcomes?: number;
+  /**
+   * Parallel-review advice (parallel-review.md): `single` (one reviewer) or `parallel` (fan
+   * out one reviewer per coupled cluster — the `units`), decided from the coupling graph. The
+   * orchestrator obeys this; consolidation is one `submit_findings` over all units' findings.
+   */
+  reviewPlan?: ReviewPlan;
   /** Guidance for the reviewing agent. */
   notes: string[];
+}
+
+/** Undirected coupling edges AMONG the changed files (co-change ∪ import ∪ ref) — the input
+ *  to the parallel-review partition. Edges to *unchanged* files are dropped (those are blast
+ *  radius, not review units). Deduped, self-loops removed. */
+async function changedFileCoupling(db: CodeGraphDB, files: string[]): Promise<[string, string][]> {
+  if (files.length < 2) return [];
+  const inDiff = new Set(files);
+  const [cc, imp, ref] = await Promise.all([getCoChangeEdges(db, files), getImportEdges(db, files), getRefEdges(db, files)]);
+  const seen = new Set<string>();
+  const out: [string, string][] = [];
+  for (const e of [...cc, ...imp, ...ref]) {
+    if (e.src === e.dst || !inDiff.has(e.dst)) continue;
+    const key = e.src < e.dst ? `${e.src}\t${e.dst}` : `${e.dst}\t${e.src}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push([e.src, e.dst]);
+  }
+  return out;
 }
 
 /** Read repo-root `plex.md` (the explicit, human-editable steering surface). */
@@ -368,16 +396,28 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     }
   }
 
-  // Query Kùzu fully (now fresh), then close BEFORE any FalkorDB work (ADR-16) — ONE open.
+  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open. We also pull the coupling
+  // AMONG the changed files here (for the parallel-review partition) so it's the same open.
+  const changedPaths = diff.files.map((f) => f.path);
   const db = new CodeGraphDB(p.graphDir);
   let repo: string;
   let nb: ReviewNeighborhood;
+  let coupling: [string, string][] = [];
   try {
     repo = (await getMeta(db, 'repo')) ?? p.repoPath;
     nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
+    coupling = await changedFileCoupling(db, changedPaths);
   } finally {
     await db.close();
   }
+
+  // Parallel-review guardrail (ADR-34/parallel-review): advise single vs fan-out from the
+  // coupling graph alone (zero LLM). `surface` ≈ total changed lines.
+  const surface = diff.files.reduce(
+    (s, f) => s + f.hunks.reduce((h, hk) => h + hk.newRanges.reduce((r, rg) => r + (rg.end - rg.start + 1), 0), 0),
+    0,
+  );
+  const plan = reviewPlan(changedPaths, coupling, { surface, ...opts.config.reviewPlan });
 
   const deterministic = await runDeterministic(p.repoPath, diff, { repoName: repo });
 
@@ -427,9 +467,13 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     unexplainedChanges: brain.unexplainedChanges,
     openComments: brain.openComments,
     inferredOutcomes: brain.inferredOutcomes,
+    reviewPlan: plan,
     notes: [
       ...AGENT_NOTES,
       ...BRAIN_NOTES,
+      plan.strategy === 'parallel'
+        ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the pr-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
+        : `reviewPlan: single — ${plan.reason}. Review in one pass.`,
       ...(brain.inferredOutcomes > 0
         ? [`Plex auto-recorded ${brain.inferredOutcomes} prior finding(s) as fixed (a change since addressed them) — do not re-raise or ask to confirm those.`]
         : []),
