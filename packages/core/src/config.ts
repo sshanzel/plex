@@ -53,7 +53,11 @@ export interface MiningConfig {
 }
 
 export interface ReviewerConfig {
-  /** Per-repo Kùzu data directory (default `.reviewer` under each repo). */
+  /**
+   * Where per-repo data lives. Empty (default) = centralized `~/.plex/repos/<id>` —
+   * NOTHING is written inside the user's repo. A relative value (e.g. `.plex`) opts into
+   * co-locating it in-repo; an absolute value is used as the repos root. See `repoPaths`.
+   */
   dataDir: string;
   /** Global, cross-repo knowledge base directory (ADR-07: knowledge is shared). */
   knowledgeDir: string;
@@ -80,7 +84,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const defaultConfig: ReviewerConfig = {
-  dataDir: '.plex',
+  dataDir: '', // centralized: ~/.plex/repos/<id> — never writes inside the user's repo
   knowledgeDir: path.join(os.homedir(), '.plex', 'knowledge'),
   embedding: {
     // Real operation requires a real provider; knowledge features stay disabled until

@@ -49,7 +49,7 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 
 ## Local services (must remember)
 
-- **Kùzu** is embedded — no server. The per-repo code graph is a single file at `<repo>/.plex/graph.kuzu`. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
+- **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
 - **FalkorDB** is the per-PR **working-memory brain** and is **required for the review flow** (ADR-22, M6 — supersedes its old "optional" status): it holds rounds/findings/verdicts/comments and powers the round-aware "changed-without-feedback" signal. Run it with AOF via Docker Compose (pinned `falkordb/falkordb:v4.18.9`):
   ```bash
   pnpm db:up     # plex-falkordb (--appendonly yes): redis on :56379, Browser on http://localhost:53000

@@ -132,7 +132,7 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
   const repo = makeRepo();
   appendFileSync(join(repo, 'src/user.ts'), '\nexport function extra() {\n  return 1;\n}\n');
   git(repo, 'add', '-A');
-  const config = resolveConfig();
+  const config = resolveConfig({ dataDir: '.plex' });
   try {
     const res = await indexRepo(repo, config);
     assert.equal(res.files, 3);
@@ -259,7 +259,7 @@ test('reconcile', 'engine: reconcile auto-accepts findings a push addressed (ADR
     return;
   }
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-rec-'));
-  const config = resolveConfig({ falkordb: { enabled: true, url: FALKOR_URL }, embedding: { provider: 'fake' } });
+  const config = resolveConfig({ dataDir: '.plex', falkordb: { enabled: true, url: FALKOR_URL }, embedding: { provider: 'fake' } });
   const target = reviewTarget(basename(resolve(repo)), { mode: 'staged' });
   try {
     git(repo, 'init', '-q');
@@ -309,7 +309,7 @@ test('reconcile', 'engine: reconcile auto-accepts findings a push addressed (ADR
 test('semantic-waiver', 'engine: a semantic waiver suppresses the same issue next run (ADR-27)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-sw-'));
   try {
-    const config = resolveConfig({ embedding: { provider: 'fake' } }); // fake = test-only embedder
+    const config = resolveConfig({ dataDir: '.plex', embedding: { provider: 'fake' } }); // fake = test-only embedder
 
     // Waive "this kind of issue" repo-wide — the embedding is stored on the verdict.
     await submitVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'pattern-repo', title: 'venue_opened double-fire' }, config);
@@ -376,7 +376,7 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
     writeFileSync(join(repo, 'src/a.ts'), 'export function f(items: any[]) {\n  debugger;\n  return items;\n}\n');
     git(repo, 'add', '-A');
 
-    const config = resolveConfig();
+    const config = resolveConfig({ dataDir: '.plex' });
     const ranked = await rankReviewFindings(
       repo,
       config,
@@ -417,7 +417,7 @@ test('knowledge', 'engine: seed -> review retrieves pitfalls -> learn on accept'
     );
     git(repo, 'add', '-A');
 
-    const config = resolveConfig({ knowledgeDir, embedding: { provider: 'fake' } }); // fake = test-only
+    const config = resolveConfig({ dataDir: '.plex', knowledgeDir, embedding: { provider: 'fake' } }); // fake = test-only
     const seeded = await seedKnowledge(config, readFileSync(join(repo, 'plex.md'), 'utf8'));
     assert.ok(seeded >= 1, `seeded ${seeded}`);
 

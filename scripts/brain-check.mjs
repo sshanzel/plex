@@ -18,7 +18,9 @@ if (!existsSync(CLI)) {
   process.exit(2);
 }
 
-const env = { ...process.env, PLEX_FALKORDB_URL: URL, PLEX_EMBEDDING_PROVIDER: 'fake' };
+// PLEX_DATA_DIR='.plex' keeps the graph inside the temp repo so cleanup removes it
+// (default is centralized ~/.plex/repos/<id>, which rmSync(repo) wouldn't touch).
+const env = { ...process.env, PLEX_FALKORDB_URL: URL, PLEX_EMBEDDING_PROVIDER: 'fake', PLEX_DATA_DIR: '.plex' };
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' });
 const cli = (args, cwd) =>
   execFileSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });

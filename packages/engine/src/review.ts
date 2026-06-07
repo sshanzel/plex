@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type {
   ReviewerConfig,
@@ -46,9 +47,20 @@ export async function indexRepo(
   opts: { incremental?: boolean } = {},
 ): Promise<BuildResult & { graphDir: string; incremental: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
+  const stamp = async (): Promise<void> => {
+    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16): a second
+    // Kùzu open in a process that also spawns the FalkorDB worker risks SIGSEGV.
+    try {
+      mkdirSync(path.dirname(p.headShaFile), { recursive: true });
+      writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
+    } catch {
+      /* best-effort */
+    }
+  };
   if (opts.incremental && existsSync(p.graphDir)) {
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+      await stamp();
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
       if (!(e instanceof FullRebuildRequired)) throw e;
@@ -56,7 +68,32 @@ export async function indexRepo(
     }
   }
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+  await stamp();
   return { ...res, graphDir: p.graphDir, incremental: false };
+}
+
+/** Read the sidecar indexed HEAD sha (no Kùzu). undefined if not indexed / pre-sidecar. */
+function readIndexedSha(headShaFile: string): string | undefined {
+  try {
+    return existsSync(headShaFile) ? readFileSync(headShaFile, 'utf8').trim() || undefined : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Refresh a drifted graph in an ISOLATED child process (ADR-16/25): an incremental index
+ * opens Kùzu, and doing that in the review process — which then spawns the FalkorDB worker —
+ * SIGSEGVs. Spawning `plex index --incremental` keeps the review process to ONE Kùzu open.
+ * Returns true if it ran (false in dev/tsx where the built CLI isn't beside argv[1]).
+ */
+function refreshGraphIsolated(repoPath: string): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const cli = path.join(path.dirname(entry), 'plex.js');
+  if (!existsSync(cli)) return false;
+  const r = spawnSync(process.execPath, [cli, 'index', repoPath, '--incremental'], { stdio: 'ignore' });
+  return r.status === 0;
 }
 
 /** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */
@@ -242,29 +279,24 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     throw new Error(`No code graph at ${p.graphDir}. Run \`reviewer index\` (or the index_repo tool) first.`);
   }
 
-  // Keep the graph fresh BEFORE computing blast radius (ADR-25): if it has drifted behind
-  // HEAD, auto-refresh it incrementally so the neighborhood is never silently stale. Only a
-  // definite drift (behind > 0) triggers it — an unknown sha (-1) or missing graph is only
-  // reported, since refreshing those would mean a surprise full rebuild mid-review.
+  // Keep the graph fresh BEFORE computing blast radius (ADR-25). Staleness is read from the
+  // SIDECAR sha (no Kùzu), and the refresh runs in an ISOLATED child process — so THIS
+  // process opens Kùzu exactly once (below), which is what keeps it safe to also spawn the
+  // FalkorDB worker (ADR-16). Only a definite drift (behind > 0) auto-refreshes; an unknown
+  // sha (-1) is merely reported (refreshing it could mean a surprise full rebuild).
   let graphStale: GraphStaleness | undefined;
   {
-    const sdb = new CodeGraphDB(p.graphDir);
-    let indexedSha: string | undefined;
-    try {
-      indexedSha = (await getMeta(sdb, 'headSha')) ?? undefined;
-    } finally {
-      await sdb.close();
-    }
+    const indexedSha = readIndexedSha(p.headShaFile);
     const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
-      await indexRepo(p.repoPath, opts.config, { incremental: true });
-      graphStale = { indexedSha, behind, refreshed: true };
+      const refreshed = refreshGraphIsolated(p.repoPath);
+      graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
       graphStale = { indexedSha, behind, refreshed: false };
     }
   }
 
-  // Query Kùzu fully (now fresh), then close BEFORE any FalkorDB work (ADR-16).
+  // Query Kùzu fully (now fresh), then close BEFORE any FalkorDB work (ADR-16) — ONE open.
   const db = new CodeGraphDB(p.graphDir);
   let repo: string;
   let nb: ReviewNeighborhood;
