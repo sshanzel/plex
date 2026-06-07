@@ -47,6 +47,31 @@ pnpm start:mcp          # the server an agent connects to
 
 Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vitest` run TS directly — no build step in dev. Internal imports use `@plex/<pkg>` (aliased in `tsconfig.json` and `vitest.config.ts`).
 
+## Reviewing Plex with Plex — the agent setup (contributors)
+
+Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP registration that downstream users get, so a contributor's own PRs are reviewed by Plex. The setup follows the `.agents/` ↔ `.claude/` symlink convention (mirroring this repo's `CLAUDE.md → AGENTS.md`), so both Claude Code and Codex find it:
+
+```
+.mcp.json                                  # registers the `plex` MCP server (node dist/plex-mcp.js)
+.claude/
+  settings.json                            # enables the project MCP + a sensible permission allowlist
+  agents/plex-reviewer.md                  # the fresh-context, unbiased reviewer subagent
+  skills/pr-review-responder   -> ../../.agents/skills/pr-review-responder   (symlink)
+  skills/pr-review-documenter  -> ../../.agents/skills/pr-review-documenter  (symlink)
+.agents/skills/                            # the REAL skill files (Codex/other agents read these)
+  pr-review-responder/SKILL.md             # resolve PR feedback + close the Plex learning loop
+  pr-review-documenter/SKILL.md            # capture durable lessons into AGENTS.md / ADR / milestone
+```
+
+**One-time:** `pnpm build` (the `.mcp.json` runs the *built* `dist/plex-mcp.js` under node — never tsx, ADR-17/19). Open the repo in Claude Code and approve the `plex` project MCP when prompted (or it's pre-enabled via `.claude/settings.json`).
+
+**The loop (dogfooding your own PR):**
+1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts).
+2. Address feedback with the `pr-review-responder` skill → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
+3. `pr-review-documenter` turns a recurring lesson into a durable doc (AGENTS.md / a new ADR / a milestone record).
+
+Editing skills: change the real file under `.agents/skills/<name>/SKILL.md`; the `.claude/skills/<name>` symlink picks it up.
+
 ## Local services (must remember)
 
 - **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "plex": {
+      "command": "node",
+      "args": ["dist/plex-mcp.js"],
+      "env": {}
+    }
+  }
+}
