@@ -35,6 +35,8 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   // --- environment (overrides home) ---
   if (env.PLEX_DATA_DIR) o.dataDir = env.PLEX_DATA_DIR;
   if (env.PLEX_KNOWLEDGE_DIR) o.knowledgeDir = env.PLEX_KNOWLEDGE_DIR;
+  if (env.PLEX_AUTO_COMMENT) o.autoComment = /^(1|true|yes)$/i.test(env.PLEX_AUTO_COMMENT);
+  if (env.PLEX_AUTO_COMMENT_SKIP_NITS) o.autoCommentSkipNits = /^(1|true|yes)$/i.test(env.PLEX_AUTO_COMMENT_SKIP_NITS);
   if (env.PLEX_EMBEDDING_PROVIDER) {
     o.embedding = { ...(o.embedding ?? {}), provider: env.PLEX_EMBEDDING_PROVIDER as EmbeddingProviderName };
   }

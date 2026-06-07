@@ -6,8 +6,9 @@ import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
 import { reviewTarget } from './target';
-import { Brain } from './brain';
+import { Brain, type BrainFinding } from './brain';
 import { logAudit, auditFinding } from './audit';
+import { postFindingsToPr } from './pr-comment';
 
 /** Cosine ≥ this lets a pattern/category waiver suppress the same issue semantically (ADR-27). */
 const WAIVER_SEMANTIC_THRESHOLD = 0.82;
@@ -90,12 +91,21 @@ export async function rankReviewFindings(
   // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30).
   const target = reviewTarget(repo, opts);
   let round = 1;
+  let priorFindings: BrainFinding[] = [];
   const brain = await Brain.open(repoPath, config);
   try {
-    round = (await brain.loadRoundState(target)).lastN || 1;
+    const state = await brain.loadRoundState(target);
+    round = state.lastN || 1;
+    priorFindings = state.priorFindings; // captured BEFORE the write — i.e. earlier rounds only
     await brain.writeFindings(target, round, ranked);
   } finally {
     await brain.close();
+  }
+
+  // Auto-comment (ADR-34): when reviewing a PR and opted in, post the ranked stream as one
+  // GitHub review — deduped against prior rounds. Best-effort: posting never breaks a review.
+  if (config.autoComment && opts.source === 'pr' && opts.pr != null) {
+    await postFindingsToPr(repoPath, config, opts.pr, ranked, priorFindings, round);
   }
   await logAudit(repoPath, config, {
     type: 'findings_submitted',

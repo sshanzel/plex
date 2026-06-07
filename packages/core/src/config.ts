@@ -82,6 +82,19 @@ export interface ReviewerConfig {
   /** Generative LLM for mining/distillation (offline only). */
   llm: LlmConfig;
   mining: MiningConfig;
+  /**
+   * When reviewing a PR (`source: 'pr'`), post the ranked findings to the GitHub PR as a
+   * single review (summary body + inline comments on changed lines), deduped per round via
+   * the brain. Off by default; opt in via `PLEX_AUTO_COMMENT=true` or `~/.plex/config.json`.
+   * Non-PR reviews never post. (`plex review --pr N --post` posts on demand regardless.)
+   */
+  autoComment: boolean;
+  /**
+   * Skip `nit`-severity findings when auto-commenting. Off by default — nits carry value
+   * (small but real), so they're posted unless a team opts out. Suppressed/waived findings
+   * are never posted regardless. (`PLEX_AUTO_COMMENT_SKIP_NITS=true`.)
+   */
+  autoCommentSkipNits: boolean;
 }
 
 import os from 'node:os';
@@ -119,6 +132,8 @@ export const defaultConfig: ReviewerConfig = {
     clusterThreshold: 0.8, // tuned for code embeddings; <~0.7 sinks everything into one cluster (see MiningConfig)
     minClusterSize: 1,
   },
+  autoComment: false, // opt-in: PLEX_AUTO_COMMENT=true / ~/.plex/config.json
+  autoCommentSkipNits: false, // nits have value — posted by default; opt out via PLEX_AUTO_COMMENT_SKIP_NITS
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {

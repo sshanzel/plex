@@ -7,6 +7,8 @@ description: Fetch PR review comments, classify them, propose actions, apply fix
 
 Use this when the user wants to work through PR review feedback end-to-end. It pairs with the `plex-reviewer` agent: the agent *finds*, this skill *resolves* and feeds the outcome back to Plex so the next round is smarter.
 
+> When auto-comment is on (ADR-34), Plex posts its review **to the PR itself** — those comments (a review whose body says "Posted by Plex") are just regular PR review comments; triage them like any other, and the "Closing the Plex review loop" section below records the outcomes back to Plex.
+
 ## Workflow
 
 1. Detect or receive the PR URL/number.
