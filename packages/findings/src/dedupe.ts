@@ -17,7 +17,7 @@ export interface MergedFinding extends Finding {
   agreedSources: FindingSource[];
 }
 
-const SEVERITY_RANK: Record<Severity, number> = { bug: 3, improvement: 2, nit: 1 };
+const SEVERITY_RANK: Record<Severity, number> = { bug: 3, improvement: 2, nit: 1, awareness: 0 };
 function higherSeverity(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
 }

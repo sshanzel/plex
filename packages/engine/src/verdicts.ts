@@ -51,11 +51,15 @@ export async function readVerdicts(
   }
 }
 
-/** Active suppression rules derived from `waive` verdicts (ADR-10). */
+/**
+ * Active suppression rules. `waive` suppresses a defect (ADR-10); `acknowledge` suppresses
+ * a confirmed-intentional `awareness` flag the same way (ADR-31) — both are matched
+ * semantically when they carry an embedding, so a materially changed instance re-surfaces.
+ */
 export async function loadWaivers(repoPath: string, config: ReviewerConfig): Promise<Waiver[]> {
   const stored = await readVerdicts(repoPath, config);
   return stored
-    .filter((v) => v.kind === 'waive')
+    .filter((v) => v.kind === 'waive' || v.kind === 'acknowledge')
     .map((v) => ({
       scope: v.scope ?? 'file',
       file: v.file,

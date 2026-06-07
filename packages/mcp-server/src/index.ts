@@ -117,7 +117,7 @@ server.tool(
       z.object({
         title: z.string(),
         body: z.string().optional(),
-        severity: z.enum(['bug', 'improvement', 'nit']),
+        severity: z.enum(['bug', 'improvement', 'nit', 'awareness']),
         confidence: z.number(),
         source: z.enum(['first-principles', 'knowledge', 'deterministic']).optional(),
         file: z.string(),
@@ -148,11 +148,11 @@ server.tool(
 
 server.tool(
   'record_outcome',
-  'Record the user\'s verdict on a finding (accept | reject | waive). For waivers, pass the finding identity (file/line/title/pattern/category) so it suppresses matching findings next run. Pass the same diff source (source/pr/mode/baseRef) you reviewed so the verdict lands on the right PR brain.',
+  'Record the user\'s verdict on a finding (accept | reject | waive | acknowledge). `acknowledge` is for an `awareness` flag confirmed intentional — it stops re-surfacing UNLESS the situation materially changes, without down-weighting the reviewer (use this, not reject, for "good catch, intentional"). For waive/acknowledge pass the finding identity (file/line/title/pattern/category). Pass the same diff source (source/pr/mode/baseRef) you reviewed so it lands on the right PR brain.',
   {
     repoPath: z.string().optional(),
     findingId: z.string(),
-    kind: z.enum(['accept', 'reject', 'waive']),
+    kind: z.enum(['accept', 'reject', 'waive', 'acknowledge']),
     scope: z.enum(['line', 'file', 'pattern-repo', 'category-repo', 'category-global']).optional(),
     note: z.string().optional(),
     file: z.string().optional(),

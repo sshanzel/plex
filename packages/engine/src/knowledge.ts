@@ -106,10 +106,10 @@ export async function submitVerdict(
   target?: string,
   sharedBrain?: Brain,
 ): Promise<StoredVerdict> {
-  // For waivers, embed the finding's title so it can be re-matched semantically next round
-  // (ADR-27) — best-effort: only when a real provider is configured.
+  // For waivers AND acknowledgments, embed the finding's title so it can be re-matched
+  // semantically next round (ADR-27/31) — best-effort: only when a real provider is configured.
   let enriched = input;
-  if (input.kind === 'waive' && input.embedding == null) {
+  if ((input.kind === 'waive' || input.kind === 'acknowledge') && input.embedding == null) {
     const text = [input.title, input.note].filter(Boolean).join(' — ').trim();
     if (text) {
       const provider = createEmbeddingProvider(config.embedding);

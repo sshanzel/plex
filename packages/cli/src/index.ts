@@ -69,7 +69,7 @@ Usage:
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
   plex blast [repoPath] --files <a.ts,b.ts>
-  plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
+  plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
   plex mine [repoPath] [--reset] [--all] [--limit <n>]   # mine PR-review history into pitfalls (incremental)
@@ -293,8 +293,8 @@ async function main(): Promise<number> {
     case 'verdict': {
       const findingId = positionals[1];
       const kind = positionals[2] as VerdictKind | undefined;
-      if (!findingId || !kind || !['accept', 'reject', 'waive'].includes(kind)) {
-        process.stderr.write('Usage: plex verdict <findingId> <accept|reject|waive> [--scope <s>]\n');
+      if (!findingId || !kind || !['accept', 'reject', 'waive', 'acknowledge'].includes(kind)) {
+        process.stderr.write('Usage: plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>]\n');
         return 1;
       }
       const repoPath = typeof flags.repo === 'string' ? flags.repo : process.cwd();

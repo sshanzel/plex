@@ -110,7 +110,13 @@ export interface ReviewNeighborhood {
 // Findings (one ranked stream from three sources — ADR-03)
 // ---------------------------------------------------------------------------
 
-export type Severity = 'bug' | 'improvement' | 'nit';
+/**
+ * `bug`/`improvement`/`nit` are the "fix this" axis (ordered by how bad). `awareness` is
+ * a different intent (ADR-31): "noticed, worth confirming" — surfacing it IS the value
+ * even when nothing needs changing (e.g. two emit sites for the same event). It is never
+ * a nit and is surfaced in its own bucket, not buried in the defect ranking.
+ */
+export type Severity = 'bug' | 'improvement' | 'nit' | 'awareness';
 export type FindingSource = 'first-principles' | 'knowledge' | 'deterministic';
 
 export interface Finding {
@@ -141,15 +147,21 @@ export interface RankedFinding extends Finding {
   signal: number;
   /** Sources that independently agreed on this finding (cross-source confidence boost). */
   agreedSources: FindingSource[];
-  /** How it should surface. */
-  triage: 'surface' | 'systemic-migration' | 'convention' | 'suppressed';
+  /** How it should surface. `awareness` = a flag worth confirming (ADR-31), its own bucket. */
+  triage: 'surface' | 'systemic-migration' | 'convention' | 'awareness' | 'suppressed';
 }
 
 // ---------------------------------------------------------------------------
 // Feedback loop (ADR-10) — verdicts reweight knowledge; scope matters
 // ---------------------------------------------------------------------------
 
-export type VerdictKind = 'accept' | 'reject' | 'waive';
+/**
+ * `accept`/`reject`/`waive` are the defect verdicts. `acknowledge` (ADR-31) confirms an
+ * `awareness` flag was a *good* catch but intentional this time: it suppresses the same
+ * flag going forward (like a semantic waiver) WITHOUT down-weighting the knowledge that
+ * raised it — so a *materially changed* instance (e.g. a 3rd site) re-surfaces.
+ */
+export type VerdictKind = 'accept' | 'reject' | 'waive' | 'acknowledge';
 
 /** Where a waiver applies. Broader scope suppresses more aggressively. */
 export type WaiverScope =
