@@ -8,6 +8,12 @@ describe('rangesOverlap', () => {
     expect(rangesOverlap(3, 5, 5, 9)).toBe(true); // touching
     expect(rangesOverlap(1, 2, 3, 4)).toBe(false); // disjoint
   });
+
+  it('handles single-line (point) spans on the boundary', () => {
+    expect(rangesOverlap(5, 5, 5, 5)).toBe(true); // point on point
+    expect(rangesOverlap(1, 2, 2, 3)).toBe(true); // touch at line 2
+    expect(rangesOverlap(1, 2, 3, 3)).toBe(false); // adjacent, no touch
+  });
 });
 
 describe('symbolsTouchedByRanges', () => {
@@ -24,5 +30,19 @@ describe('symbolsTouchedByRanges', () => {
 
   it('returns nothing when ranges miss every symbol', () => {
     expect(symbolsTouchedByRanges(symbols, [{ start: 20, end: 21 }])).toEqual([]);
+  });
+
+  it('returns nothing for an empty range list', () => {
+    expect(symbolsTouchedByRanges(symbols, [])).toEqual([]);
+  });
+
+  it('touches a symbol when a range lands exactly on its boundary line', () => {
+    expect(symbolsTouchedByRanges(symbols, [{ start: 6, end: 6 }]).map((s) => s.name)).toEqual(['UserService']);
+    expect(symbolsTouchedByRanges(symbols, [{ start: 12, end: 12 }]).map((s) => s.name)).toEqual(['helper']);
+  });
+
+  it('does not list a symbol twice when multiple ranges hit it', () => {
+    const touched = symbolsTouchedByRanges(symbols, [{ start: 10, end: 10 }, { start: 11, end: 12 }]);
+    expect(touched.map((s) => s.name)).toEqual(['helper']);
   });
 });
