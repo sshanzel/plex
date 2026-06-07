@@ -22,7 +22,7 @@ import {
 } from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
-import { classifyChanges, findingAddressed, type RegionVec, type SignalVec } from '@plex/findings';
+import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/mining';
 import type { RetrievedPitfall } from '@plex/knowledge';
@@ -30,9 +30,10 @@ import { repoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTarget } from './target';
-import { brainEnabled, loadRoundState, recordRound, markFindingOutcome, type RoundSummary } from './brain';
+import { brainEnabled, loadRoundState, recordRound, type RoundSummary } from './brain';
 import { logAudit } from './audit';
-import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings, submitVerdict } from './knowledge';
+import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings } from './knowledge';
+import { recordFixAccepts } from './reconcile';
 
 /**
  * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
@@ -209,18 +210,11 @@ async function buildBrainContext(
         unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
       }
 
-      // M9 (ADR-28): a prior finding addressed by a change since → autonomous `accept`,
+      // M9 (ADR-28): prior findings addressed by a change since → autonomous `accept`,
       // recorded WITHOUT prompting. Only this explicit fix signal learns; silence does not.
       const fBase = regionTexts.length + signals.length;
-      for (let i = 0; i < state.priorFindings.length; i++) {
-        const fv = vecs[fBase + i];
-        const f = state.priorFindings[i]!;
-        if (fv && findingAddressed(fv, regionEmb)) {
-          await submitVerdict(opts.repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target);
-          await markFindingOutcome(target, f.id, 'fixed', config);
-          inferredOutcomes++;
-        }
-      }
+      const findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
+      inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, state.priorFindings, findingEmb, regionEmb);
     }
   }
 

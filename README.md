@@ -98,11 +98,11 @@ The FalkorDB Browser shows each PR's **brain** graph (`<repo>__<target>`: rounds
 
 ## CLI
 
-`plex index [--incremental] · install-hooks · uninstall-hooks · review · blast · verdict · verdicts · seed · promote · mine`
+`plex index [--incremental] · install-hooks · uninstall-hooks · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
 
-## MCP tools (13)
+## MCP tools (14)
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `get_relevant_knowledge` · `seed_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `seed_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history`
 
 ## Architecture
 

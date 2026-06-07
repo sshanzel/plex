@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename, resolve } from 'node:path';
 import { resolveConfig, type NormalizedDiff } from '@plex/core';
 import {
   buildCodeGraph,
@@ -22,7 +22,7 @@ import {
   getRefEdges,
   getMeta,
 } from '@plex/code-graph';
-import { computeNeighborhood, publishNeighborhood } from '@plex/neighborhood';
+import { computeNeighborhood, publishNeighborhood, runFalkor } from '@plex/neighborhood';
 import {
   indexRepo,
   assembleReviewContext,
@@ -32,6 +32,8 @@ import {
   seedKnowledge,
   submitVerdict,
   knowledgeStore,
+  reconcileOutcomes,
+  reviewTarget,
 } from './src/index';
 
 const FALKOR_URL = process.env.PLEX_FALKORDB_URL ?? 'redis://localhost:6380';
@@ -247,6 +249,60 @@ test('cochange-inc', 'code-graph: incremental co-change merges new commits (ADR-
   } finally {
     rmSync(repo, { recursive: true, force: true });
     rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('reconcile', 'engine: reconcile auto-accepts findings a push addressed (ADR-28)', async () => {
+  const probe = await runFalkor('__plex_probe__', [{ cypher: 'RETURN 1 AS ok' }], { url: FALKOR_URL });
+  if (!probe.ok) {
+    console.log(`  (skipped: FalkorDB not reachable at ${FALKOR_URL} — ${probe.reason})`);
+    return;
+  }
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-rec-'));
+  const config = resolveConfig({ falkordb: { enabled: true, url: FALKOR_URL }, embedding: { provider: 'fake' } });
+  const target = reviewTarget(basename(resolve(repo)), { mode: 'staged' });
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'T');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'src/a.ts'), 'export const x = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+    const sha1 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+
+    // Seed the brain: a round at sha1 + one open finding (no full review needed).
+    await runFalkor(
+      target,
+      [
+        { cypher: 'MERGE (pr:PR {target:$t}) SET pr.repo=$r', params: { t: target, r: 'r' } },
+        {
+          cypher: 'MATCH (pr:PR {target:$t}) MERGE (rd:Round {target:$t, n:1}) SET rd.headSha=$s, rd.baseRef=$b MERGE (pr)-[:HAS_ROUND]->(rd)',
+          params: { t: target, s: sha1, b: 'HEAD' },
+        },
+        {
+          cypher:
+            "MATCH (rd:Round {target:$t, n:1}) MERGE (fi:Finding {id:'rec1'}) " +
+            "SET fi.target=$t, fi.title='alpha beta gamma', fi.file='src/a.ts', fi.line=1 MERGE (fi)-[:IN_ROUND]->(rd)",
+          params: { t: target },
+        },
+      ],
+      { url: FALKOR_URL },
+    );
+
+    // Push a fix whose tokens match the finding (fake embedder is bag-of-tokens).
+    writeFileSync(join(repo, 'src/a.ts'), '// alpha beta gamma\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fix');
+
+    const res = await reconcileOutcomes(repo, config, { mode: 'staged' });
+    assert.equal(res.accepted, 1, `reconcile auto-accepted the addressed finding (got ${res.accepted})`);
+
+    const res2 = await reconcileOutcomes(repo, config, { mode: 'staged' });
+    assert.equal(res2.accepted, 0, 'an already-accepted finding is not re-accepted (idempotent)');
+  } finally {
+    await runFalkor(target, [{ cypher: 'MATCH (n) DETACH DELETE n' }], { url: FALKOR_URL });
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 

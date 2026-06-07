@@ -11,6 +11,7 @@ import {
   uninstallHooks,
   assembleReviewContext,
   blastRadius,
+  reconcileOutcomes,
   submitVerdict,
   readVerdicts,
   seedKnowledge,
@@ -57,6 +58,7 @@ Usage:
   plex install-hooks [repoPath]                          # auto-incremental-index on pull/checkout/rebase
   plex uninstall-hooks [repoPath]
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--falkor] [--json] [--html <file>]
+  plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>] [--falkor]   # auto-accept findings the push fixed (ADR-28)
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
@@ -209,6 +211,18 @@ async function main(): Promise<number> {
       }
       if (flags.json) process.stdout.write(JSON.stringify(ctx, null, 2) + '\n');
       else printReview(ctx);
+      return 0;
+    }
+    case 'reconcile': {
+      const repoPath = positionals[1] ?? process.cwd();
+      if (flags.falkor) config.falkordb.enabled = true;
+      const res = await reconcileOutcomes(repoPath, config, {
+        source: flags.pr ? 'pr' : 'local',
+        mode: flags.staged ? 'staged' : flags.branch ? 'branch' : undefined,
+        baseRef: typeof flags.branch === 'string' ? flags.branch : undefined,
+        pr: typeof flags.pr === 'string' ? flags.pr : undefined,
+      });
+      process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
       return 0;
     }
     case 'blast': {

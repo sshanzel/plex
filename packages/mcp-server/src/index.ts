@@ -27,6 +27,7 @@ import {
   getPromotions,
   submitVerdict,
   reviewTarget,
+  reconcileOutcomes,
   scanForMining,
   addMinedPitfalls,
   mineRepo,
@@ -196,6 +197,17 @@ server.tool(
         };
       },
       'record_outcome',
+    ),
+);
+
+server.tool(
+  'reconcile_outcomes',
+  'Cheap "did the author fix these?" check (no full review): auto-record `accept` for this target\'s open findings that pushed changes have since addressed (ADR-28). Call after a push / on PR-thread resolution. Pass the same diff source (pr/mode/baseRef) you reviewed.',
+  { repoPath: z.string().optional(), ...diffSourceShape },
+  (a) =>
+    guard(
+      () => reconcileOutcomes(a.repoPath ?? process.cwd(), config, { source: a.source, mode: a.mode, baseRef: a.baseRef, pr: a.pr }),
+      'reconcile_outcomes',
     ),
 );
 

@@ -25,6 +25,8 @@ export { installHooks, uninstallHooks } from './hooks';
 export type { HookResult } from './hooks';
 export { getDeterministicFindings, rankReviewFindings } from './findings';
 export type { SubmittedFinding, RankReviewOptions } from './findings';
+export { reconcileOutcomes, recordFixAccepts } from './reconcile';
+export type { ReconcileResult } from './reconcile';
 export {
   knowledgeStore,
   buildKnowledgeQuery,
