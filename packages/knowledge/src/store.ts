@@ -19,12 +19,25 @@ export class KnowledgeStore {
   }
 
   private async readJsonl<T>(file: string): Promise<T[]> {
+    let text: string;
     try {
-      const text = await fs.readFile(file, 'utf8');
-      return text.split('\n').filter(Boolean).map((l) => JSON.parse(l) as T);
+      text = await fs.readFile(file, 'utf8');
     } catch {
-      return [];
+      return []; // no file yet
     }
+    // Parse PER LINE — a single corrupt record (e.g. a truncated final line from an
+    // interrupted append) must not discard the whole store. Dropping all pitfalls here
+    // would make consolidation rewrite an EMPTY log: silent, total data loss.
+    const out: T[] = [];
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      try {
+        out.push(JSON.parse(line) as T);
+      } catch {
+        /* skip the corrupt line, keep the rest */
+      }
+    }
+    return out;
   }
   private async append(file: string, record: unknown): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });

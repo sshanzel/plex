@@ -72,13 +72,23 @@ export async function logAudit(
 }
 
 export async function readAudit(repoPath: string, config: ReviewerConfig): Promise<AuditEvent[]> {
+  let txt: string;
   try {
-    const p = repoPaths(repoPath, config.dataDir);
-    const txt = await readFile(p.logFile, 'utf8');
-    return txt.split('\n').filter(Boolean).map((l) => JSON.parse(l) as AuditEvent);
+    txt = await readFile(repoPaths(repoPath, config.dataDir).logFile, 'utf8');
   } catch {
-    return [];
+    return []; // no log yet
   }
+  // Per-line parse: one corrupt event must not drop the whole audit trail.
+  const out: AuditEvent[] = [];
+  for (const line of txt.split('\n')) {
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line) as AuditEvent);
+    } catch {
+      /* skip the corrupt line */
+    }
+  }
+  return out;
 }
 
 /** Shape a ranked finding for the findings_submitted event. */

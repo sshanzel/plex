@@ -15,10 +15,24 @@ const blockRe = new RegExp(`\\n?${escape(BEGIN)}[\\s\\S]*?${escape(END)}\\n?`);
 export interface HookResult {
   hooksDir: string;
   hooks: string[];
+  /** Hooks left untouched because their interpreter isn't a POSIX shell (install only). */
+  skipped?: string[];
 }
 
 function blockFor(cliPath: string, repoPath: string): string {
   return [BEGIN, `node "${cliPath}" index "${repoPath}" --incremental >/dev/null 2>&1 || true`, END].join('\n');
+}
+
+/**
+ * Our auto-index block is `sh` syntax. A pre-existing hook with a NON-shell shebang
+ * (Husky-with-node, a Python pre-commit hook, …) would execute that line in the wrong
+ * interpreter and break on every `git merge`. Only touch hooks that are sh-compatible:
+ * no shebang (we prepend `#!/bin/sh`) or a shell shebang.
+ */
+function isShCompatible(content: string): boolean {
+  const first = content.split('\n', 1)[0] ?? '';
+  if (!first.startsWith('#!')) return true;
+  return /\b(sh|bash|dash|zsh|ksh)\b/.test(first);
 }
 
 /** Install/refresh the plex auto-index block in this repo's git hooks. */
@@ -30,17 +44,25 @@ export function installHooks(repoPath: string, cliPath: string): HookResult {
   const hooksDir = path.join(repo, '.git', 'hooks');
   mkdirSync(hooksDir, { recursive: true });
   const block = blockFor(path.resolve(cliPath), repo);
+  const installed: string[] = [];
+  const skipped: string[] = [];
   for (const hook of HOOKS) {
     const file = path.join(hooksDir, hook);
-    let content = existsSync(file) ? readFileSync(file, 'utf8') : '#!/bin/sh\n';
+    const existing = existsSync(file) ? readFileSync(file, 'utf8') : null;
+    if (existing !== null && !existing.includes(BEGIN) && !isShCompatible(existing)) {
+      skipped.push(hook); // a non-shell user hook — don't corrupt it
+      continue;
+    }
+    let content = existing ?? '#!/bin/sh\n';
     if (!content.startsWith('#!')) content = '#!/bin/sh\n' + content;
     content = content.includes(BEGIN)
       ? content.replace(blockRe, '\n' + block + '\n')
       : content.replace(/\n*$/, '\n') + block + '\n';
     writeFileSync(file, content, 'utf8');
     chmodSync(file, 0o755);
+    installed.push(hook);
   }
-  return { hooksDir, hooks: [...HOOKS] };
+  return { hooksDir, hooks: installed, ...(skipped.length ? { skipped } : {}) };
 }
 
 /** Remove the plex auto-index block from this repo's git hooks (leaves other content). */

@@ -54,7 +54,10 @@ export function aggregateCoChange(commits: CommitRecord[], opts: AggregateOption
     if (n < 2 || n > opts.maxCommitFiles) continue;
 
     const ageSec = Math.max(0, nowSec - commit.tsSec);
-    const recency = Math.pow(0.5, ageSec / halfLifeSec);
+    // A non-positive half-life means "no recency decay". Guard the divide: halfLifeSec=0
+    // would make 0.5^(0/0)=NaN for a same-instant commit and 0.5^Infinity=0 for any other,
+    // and a NaN weight poisons the edge → squash(NaN)=NaN → the neighbor is silently dropped.
+    const recency = halfLifeSec > 0 ? Math.pow(0.5, ageSec / halfLifeSec) : 1;
     const sizeFactor = 1 / (n - 1);
     const contribution = recency * sizeFactor;
 

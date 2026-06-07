@@ -39,18 +39,24 @@ export function addedTextByFile(diffText: string): ChangedFileText[] {
   const out: ChangedFileText[] = [];
   for (const f of parseDiff(diffText)) {
     const file = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
-    const lines: number[] = [];
+    let min = Infinity;
+    let max = -Infinity;
+    let count = 0;
     const texts: string[] = [];
     for (const c of f.chunks ?? []) {
       for (const ch of c.changes) {
         if (ch.type === 'add' && typeof ch.ln === 'number') {
-          lines.push(ch.ln);
+          // Track min/max incrementally — a spread (`Math.min(...lines)`) overflows the call
+          // stack on a file that adds ~100k+ lines (generated/vendored bundles).
+          if (ch.ln < min) min = ch.ln;
+          if (ch.ln > max) max = ch.ln;
+          count++;
           texts.push(ch.content.replace(/^\+/, ''));
         }
       }
     }
-    if (lines.length === 0) continue;
-    out.push({ file, start: Math.min(...lines), end: Math.max(...lines), text: texts.join('\n').slice(0, 4000) });
+    if (count === 0) continue;
+    out.push({ file, start: min, end: max, text: texts.join('\n').slice(0, 4000) });
   }
   return out;
 }

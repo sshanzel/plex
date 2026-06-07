@@ -37,4 +37,43 @@ describe('aggregateCoChange', () => {
     const pairs = aggregateCoChange(commits, { ...opts, minPairCount: 2 });
     expect(pairs.map((p) => `${p.a}-${p.b}`)).toEqual(['a-b']);
   });
+
+  it('includes a commit touching EXACTLY maxCommitFiles (strict > boundary)', () => {
+    const exactly = Array.from({ length: opts.maxCommitFiles }, (_, i) => `f${i}`);
+    const pairs = aggregateCoChange([{ tsSec: opts.nowSec, files: exactly }], opts);
+    expect(pairs.length).toBeGreaterThan(0); // 25-file commit is kept; 26 would be dropped
+  });
+
+  it('skips single-file and empty commits, and dedups files within a commit before the <2 check', () => {
+    expect(aggregateCoChange([{ tsSec: opts.nowSec, files: ['a'] }], opts)).toEqual([]);
+    expect(aggregateCoChange([{ tsSec: opts.nowSec, files: [] }], opts)).toEqual([]);
+    expect(aggregateCoChange([{ tsSec: opts.nowSec, files: ['a', 'a'] }], opts)).toEqual([]); // dedup → 1 file → skip
+  });
+
+  it('accumulates weight and count additively for a pair seen across commits', () => {
+    const pairs = aggregateCoChange(
+      [
+        { tsSec: opts.nowSec, files: ['a', 'b'] },
+        { tsSec: opts.nowSec, files: ['a', 'b'] },
+      ],
+      opts,
+    );
+    expect(pairs[0]!.count).toBe(2);
+    expect(pairs[0]!.weight).toBeCloseTo(2, 5); // 1 + 1
+  });
+
+  it('clamps recency for future-dated commits (clock skew → weight 1, never >1)', () => {
+    const pairs = aggregateCoChange([{ tsSec: opts.nowSec + 99 * 86400, files: ['a', 'b'] }], opts);
+    expect(pairs[0]!.weight).toBeCloseTo(1, 5);
+  });
+
+  it('treats halfLifeDays <= 0 as NO recency decay (weight 1), not NaN', () => {
+    // Regression: 0.5^(0/0)=NaN for a same-instant commit poisons the edge and silently
+    // drops the neighbor downstream. A non-positive half-life must mean "no decay".
+    const today = aggregateCoChange([{ tsSec: opts.nowSec, files: ['a', 'b'] }], { ...opts, halfLifeDays: 0 });
+    expect(Number.isNaN(today[0]!.weight)).toBe(false);
+    expect(today[0]!.weight).toBeCloseTo(1, 5);
+    const old = aggregateCoChange([{ tsSec: opts.nowSec - 9999 * 86400, files: ['a', 'b'] }], { ...opts, halfLifeDays: 0 });
+    expect(old[0]!.weight).toBeCloseTo(1, 5); // no decay regardless of age
+  });
 });

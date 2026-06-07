@@ -231,7 +231,10 @@ async function main(): Promise<number> {
       const cliPath = process.argv[1] ?? path.resolve('dist/plex.js');
       const res = installHooks(repoPath, cliPath);
       process.stdout.write(
-        `Installed auto-index git hooks (${res.hooks.join(', ')}) in ${res.hooksDir}.\n` +
+        `Installed auto-index git hooks (${res.hooks.join(', ') || 'none'}) in ${res.hooksDir}.\n` +
+          (res.skipped?.length
+            ? `Skipped (non-shell hook — left untouched): ${res.skipped.join(', ')}.\n`
+            : '') +
           `The graph now refreshes incrementally on pull / checkout / rebase.\n`,
       );
       return 0;
