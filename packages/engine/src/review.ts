@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type {
@@ -46,7 +46,7 @@ export async function indexRepo(
   repoPath: string,
   config: ReviewerConfig,
   opts: { incremental?: boolean } = {},
-): Promise<BuildResult & { graphDir: string; incremental: boolean; added?: number; modified?: number; deleted?: number }> {
+): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
   const stamp = async (): Promise<void> => {
     // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16): a second
@@ -65,12 +65,50 @@ export async function indexRepo(
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
       if (!(e instanceof FullRebuildRequired)) throw e;
-      // fall through to a full rebuild
+      // fall through to a (possibly seeded) full build
     }
   }
+
+  // No graph yet → if this is a git worktree whose BASE (main) checkout is already indexed,
+  // COPY the base graph and incrementally apply only this branch's diff (ADR-32). The base
+  // is never modified (the copy is independent), so N worktrees can't affect it — and a
+  // fresh worktree is seconds, not a full re-parse.
+  if (!existsSync(p.graphDir)) {
+    const base = baseGraphDir(p.repoPath, config);
+    if (base && base !== p.graphDir) {
+      try {
+        mkdirSync(path.dirname(p.graphDir), { recursive: true });
+        cpSync(base, p.graphDir, { recursive: true });
+        const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+        await stamp();
+        return { ...res, graphDir: p.graphDir, seeded: true };
+      } catch {
+        rmSync(p.graphDir, { recursive: true, force: true }); // partial/corrupt copy → full build
+      }
+    }
+  }
+
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
   await stamp();
   return { ...res, graphDir: p.graphDir, incremental: false };
+}
+
+/**
+ * If `repoPath` is a secondary git worktree whose MAIN worktree's code graph already exists,
+ * return that base graph dir (to seed from). `undefined` when this is the main worktree, not
+ * a worktree, or the base isn't indexed. The main worktree is the first `git worktree list`.
+ */
+function baseGraphDir(repoPath: string, config: ReviewerConfig): string | undefined {
+  try {
+    const out = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath, encoding: 'utf8' });
+    if (out.status !== 0) return undefined;
+    const main = /^worktree (.+)$/m.exec(out.stdout)?.[1];
+    if (!main || path.resolve(main) === path.resolve(repoPath)) return undefined; // we ARE main
+    const baseGraph = repoPaths(main, config.dataDir).graphDir;
+    return existsSync(baseGraph) ? baseGraph : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Read the sidecar indexed HEAD sha (no Kùzu). undefined if not indexed / pre-sidecar. */

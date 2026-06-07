@@ -212,7 +212,8 @@ async function main(): Promise<number> {
       const res = await indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) });
       if (res.incremental) {
         process.stdout.write(
-          `Incrementally updated ${res.files} file(s) (+${res.added ?? 0} ~${res.modified ?? 0} -${res.deleted ?? 0}): ` +
+          `${res.seeded ? 'Seeded from base worktree + applied' : 'Incrementally updated'} ${res.files} file(s) ` +
+            `(+${res.added ?? 0} ~${res.modified ?? 0} -${res.deleted ?? 0}): ` +
             `${res.symbols} symbols re-extracted, co-change recomputed (${res.coChangePairs} pairs).\n` +
             `Graph: ${res.graphDir}\n`,
         );
