@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
 export interface RepoPaths {
   repoPath: string;
@@ -55,4 +56,18 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),
     headShaFile: path.join(reviewerDir, 'head.sha'),
   };
+}
+
+/**
+ * Create the reviewer data dir and make it **self-ignoring** — drop a `.gitignore` of `*`
+ * inside it. The default data dir lives outside the repo (`~/.plex/repos/<id>`), but the
+ * in-repo opt-in (`PLEX_DATA_DIR=.plex`) would otherwise leave a `.plex/` a user has to know
+ * to gitignore. With a `*` rule inside, git treats the whole dir as ignored (the `.gitignore`
+ * ignores itself too) — so an in-repo data dir is invisible to git with zero user action.
+ * Idempotent and harmless for the centralized/absolute locations (they just aren't in a repo).
+ */
+export function ensureDataDir(reviewerDir: string): void {
+  mkdirSync(reviewerDir, { recursive: true });
+  const gitignore = path.join(reviewerDir, '.gitignore');
+  if (!existsSync(gitignore)) writeFileSync(gitignore, '*\n', 'utf8');
 }

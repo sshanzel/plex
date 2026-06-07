@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { repoId, repoPaths } from './paths';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { repoId, repoPaths, ensureDataDir } from './paths';
 
 // repoId + repoPaths are the foundation of centralized storage (ADR-30) AND of worktree
 // isolation (ADR-32): distinct absolute paths MUST map to distinct data dirs, and the
@@ -83,5 +84,35 @@ describe('repoPaths', () => {
     const a = repoPaths('/a/wt1/plex', '').reviewerDir;
     const b = repoPaths('/a/wt2/plex', '').reviewerDir;
     expect(a).not.toBe(b);
+  });
+});
+
+describe('ensureDataDir', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(path.join(os.tmpdir(), 'plex-edd-'));
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it('creates the dir and a self-ignoring .gitignore (`*`)', () => {
+    const dir = path.join(tmp, '.plex');
+    ensureDataDir(dir);
+    expect(existsSync(dir)).toBe(true);
+    expect(readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe('*\n');
+  });
+
+  it('is idempotent — a second call neither throws nor rewrites', () => {
+    const dir = path.join(tmp, 'd');
+    ensureDataDir(dir);
+    expect(() => ensureDataDir(dir)).not.toThrow();
+    expect(readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe('*\n');
+  });
+
+  it('does not clobber a pre-existing .gitignore', () => {
+    const dir = path.join(tmp, 'd');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, '.gitignore'), 'custom\n');
+    ensureDataDir(dir);
+    expect(readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe('custom\n');
   });
 });

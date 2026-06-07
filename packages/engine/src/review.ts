@@ -27,7 +27,7 @@ import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings'
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/mining';
 import type { RetrievedPitfall } from '@plex/knowledge';
-import { repoPaths } from './paths';
+import { repoPaths, ensureDataDir } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTarget } from './target';
@@ -48,6 +48,7 @@ export async function indexRepo(
   opts: { incremental?: boolean } = {},
 ): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
+  ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
   const stamp = async (): Promise<void> => {
     // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16): a second
     // Kùzu open in a process that also spawns the FalkorDB worker risks SIGSEGV.

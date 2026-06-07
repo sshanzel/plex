@@ -74,7 +74,7 @@ Editing skills: change the real file under `.agents/skills/<name>/SKILL.md`; the
 
 ## Local services (must remember)
 
-- **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
+- **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage; the data dir is **self-ignoring** (`ensureDataDir` drops a `.gitignore` of `*` in it), so even the in-repo opt-in never needs hand-gitignoring. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
 - **The PR brain is embedded Kùzu** (`<repo-data>/brain.kuzu`) — rounds/findings/verdicts/comments + the round-aware "changed-without-feedback" signal. **No FalkorDB, no Docker, no service** (ADR-30, M11 — supersedes ADR-07/22). A review needs nothing running. **Embeddings are optional** (ADR-30): without a provider the brain still records rounds/findings; only the semantic signals (unexplained changes + fix inference) are skipped. Set a provider once via `plex init` (→ `~/.plex/config.json`) or `PLEX_EMBEDDING_PROVIDER` + key.
 
 ### Native-integration gotchas (hard-won — see ADR-16, ADR-17)
