@@ -8,7 +8,7 @@ It does that by:
 - grounding the review in a **blast-radius map** of your codebase (git co-change + imports + precise TS edges) so it sees what *else* a change can break;
 - focusing it with **accumulated review knowledge** that compounds **globally** (across all your repos) and **per-project** (tailored to one codebase);
 - merging the agent's first-principles reasoning, learned pitfalls, and deterministic checks into **one severity- and confidence-ranked stream**;
-- **learning** from your accept/reject/waive verdicts and from mining your PR-review history.
+- **learning** from your accept / reject / waive / acknowledge verdicts and from mining your PR-review history.
 
 The reasoning stays the frontier model's; Plex's job is to feed it the right context and remember what it learns. (RAG, not fine-tuning.)
 
@@ -28,9 +28,11 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
    your agent reasons (first-principles + grounded)
         │
         ▼  submit_findings  →  merge · dedup · rank · triage (severity × confidence × blast − waivers)
-        │
-        ▼  record_outcome (accept / reject / waive)  →  knowledge sharpens; confirmed bugs → incidents
+        │                       └─ (PR + opt-in) post the stream back as ONE GitHub review
+        ▼  record_outcome (accept / reject / waive / acknowledge)  →  knowledge sharpens; confirmed bugs → incidents
 ```
+
+**Close the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review — inline comments on changed lines + a summary for coupled/awareness findings, deduped across rounds — which the `pr-review-responder` skill then triages (you decide) and reconciles back into the knowledge (ADR-34).
 
 **Three finding sources, one stream:** first-principles (the agent), knowledge-grounded (retrieved pitfalls), and deterministic (built-in TS-AST checks + optional Semgrep/ast-grep). Prevalence is read by severity — a common *style* is a convention (demoted); a common *bug* is systemic (escalated as a migration).
 
@@ -64,6 +66,7 @@ node dist/plex.js install-hooks /path/to/repo
 export PLEX_EMBEDDING_PROVIDER=voyage              # voyage | openai | gemini | ollama
 export VOYAGE_API_KEY=...                           # or OPENAI_API_KEY / GEMINI_API_KEY; ollama needs none
 node dist/plex.js mine /path/to/repo                # build knowledge from PR history (rides your claude sub)
+#   --oldest = chronological (PR #1 up) · --limit N = N PRs/run · --threshold 0..1 = cluster tightness
 node dist/plex.js seed /path/to/repo               # seed from <repo>/plex.md
 ```
 
@@ -108,12 +111,13 @@ Set once via `plex init` (→ `~/.plex/config.json`), or as process env (which o
 | `PLEX_EMBEDDING_PROVIDER` | **optional** — semantic knowledge + brain signals: `voyage` \| `openai` \| `gemini` \| `ollama` (`none` = off; `fake` is test-only) |
 | *(provider key)* | `VOYAGE_API_KEY` \| `OPENAI_API_KEY` \| `GEMINI_API_KEY` (Ollama needs none) |
 | `PLEX_LLM_PROVIDER` | mining distiller: `claude-cli` (default) \| `anthropic` \| `openai` |
-| `PLEX_DATA_DIR` | per-repo data dir (default `''` = centralized `~/.plex/repos/<id>`; `.plex` = in-repo) |
+| `PLEX_DATA_DIR` | per-repo data dir (default `''` = centralized `~/.plex/repos/<id>`; `.plex` = in-repo, self-ignored) |
 | `PLEX_KNOWLEDGE_DIR` | global knowledge base (default `~/.plex/knowledge`) |
+| `PLEX_AUTO_COMMENT` | post a PR review's findings back to the GitHub PR (off by default; `PLEX_AUTO_COMMENT_SKIP_NITS=true` to drop nits — nits post otherwise) |
 
 ## Status
 
-All milestones complete (M0–M11). `pnpm test` runs the unit (vitest, 51) + integration (tsx, 11) suites; `pnpm test:brain` verifies the PR brain end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces, fully embedded (Kùzu — no services). See [`docs/milestones/`](docs/milestones/) and the [30-entry decision log](docs/adr/README.md).
+All milestones complete (M0–M12). `pnpm test` runs the unit (vitest, 213) + integration (tsx, 13) suites; `pnpm test:brain` + `pnpm test:worktree` verify the PR brain and worktree-seeding end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces, fully embedded (Kùzu — no Docker, no services). See [`docs/milestones/`](docs/milestones/) and the [decision log (through ADR-34)](docs/adr/README.md).
 
 ## License
 
