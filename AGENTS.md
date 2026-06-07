@@ -113,6 +113,8 @@ Editing skills: change the real file under `.agents/skills/<name>/SKILL.md`; the
 
 Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
 
+**Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so `fixed`/`reverted` (and the `reverted: 1.5` weight) are unrealized. Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
+
 ## Scope
 
 - **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain**, **M7 incremental indexing + staleness + hooks**, **M8 incremental co-change + semantic waivers**, **M9 autonomous review**, **M10 one-command setup + centralized storage**, **M11 brain on Kùzu (FalkorDB removed; embeddings optional; auto-index)**.

@@ -26,7 +26,10 @@ pnpm-debug.log*
 !.vscode/extensions.json
 !.vscode/settings.json
 
-# reviewer runtime data (per-repo code graph + verdict log)
+# Plex runtime data. By default this lives OUTSIDE the repo (~/.plex/repos/<id>), so
+# nothing is written into the tree — these patterns only matter for the in-repo opt-in
+# (PLEX_DATA_DIR=.plex) and as belt-and-suspenders. `.reviewer/` is the legacy name.
+.plex/
 .reviewer/
 *.kuzu
 *.kuzu/
