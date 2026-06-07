@@ -64,11 +64,6 @@ export interface ReviewerConfig {
   /** Global, cross-repo knowledge base directory (ADR-07: knowledge is shared). */
   knowledgeDir: string;
   embedding: EmbeddingConfig;
-  /** Ephemeral graph layer; optional — falls back to in-process if unreachable. */
-  falkordb: {
-    enabled: boolean;
-    url: string;
-  };
   coChange: CoChangeConfig;
   /** Blast-radius expansion controls. */
   neighborhood: {
@@ -92,10 +87,6 @@ export const defaultConfig: ReviewerConfig = {
     // Real operation requires a real provider; knowledge features stay disabled until
     // one is set (PLEX_EMBEDDING_PROVIDER). Never defaults to the test-only fake embedder.
     provider: 'none',
-  },
-  falkordb: {
-    enabled: false,
-    url: 'redis://localhost:6379',
   },
   coChange: {
     maxCommitFiles: 25,
@@ -128,7 +119,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     ...defaultConfig,
     ...overrides,
     embedding: { ...defaultConfig.embedding, ...overrides.embedding },
-    falkordb: { ...defaultConfig.falkordb, ...overrides.falkordb },
     coChange: { ...defaultConfig.coChange, ...overrides.coChange },
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
     llm: { ...defaultConfig.llm, ...overrides.llm },

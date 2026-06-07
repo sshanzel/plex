@@ -13,7 +13,7 @@ import {
   type Promotions,
 } from '@plex/knowledge';
 import { recordVerdict, type VerdictInput, type StoredVerdict } from './verdicts';
-import { brainEnabled, loadRoundState, writeVerdict } from './brain';
+import { Brain } from './brain';
 import { logAudit } from './audit';
 
 export function knowledgeStore(config: ReviewerConfig): KnowledgeStore {
@@ -104,6 +104,7 @@ export async function submitVerdict(
   input: VerdictInput,
   config: ReviewerConfig,
   target?: string,
+  sharedBrain?: Brain,
 ): Promise<StoredVerdict> {
   // For waivers, embed the finding's title so it can be re-matched semantically next round
   // (ADR-27) — best-effort: only when a real provider is configured.
@@ -126,16 +127,16 @@ export async function submitVerdict(
   }
 
   if (target) {
+    const brain = sharedBrain ?? (await Brain.open(repoPath, config));
     let round = 1;
-    if (brainEnabled(config)) {
-      const state = await loadRoundState(target, config);
-      round = state.lastN || 1;
-      await writeVerdict(
-        target,
-        round,
-        { findingId: input.findingId, kind: input.kind, scope: input.scope, title: input.title, file: input.file, line: input.line, ts: stored.ts },
-        config,
-      );
+    try {
+      round = (await brain.loadRoundState(target)).lastN || 1;
+      await brain.writeVerdict(target, {
+        findingId: input.findingId, kind: input.kind, scope: input.scope,
+        title: input.title, file: input.file, line: input.line, ts: stored.ts,
+      });
+    } finally {
+      if (!sharedBrain) await brain.close();
     }
     await logAudit(repoPath, config, {
       type: 'outcome_recorded',

@@ -13,7 +13,6 @@ import { readHomeConfig } from './home-config';
  *
  *   PLEX_DATA_DIR             per-repo data dir ('' = centralized ~/.plex/repos/<id>)
  *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)
- *   PLEX_FALKORDB_URL         FalkorDB for the review brain, e.g. redis://localhost:56379
  *   PLEX_EMBEDDING_PROVIDER   voyage | openai | gemini | ollama | none (default none)
  *   PLEX_LLM_PROVIDER         mining distiller: claude-cli | anthropic | openai
  *   PLEX_LLM_MODEL            model id for the mining distiller
@@ -24,7 +23,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   const o: Partial<ReviewerConfig> = {};
 
   // --- home config (~/.plex/config.json) ---
-  if (home.falkordb?.url) o.falkordb = { enabled: true, url: home.falkordb.url };
   if (home.embedding?.provider) {
     o.embedding = {
       provider: home.embedding.provider,
@@ -37,7 +35,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   // --- environment (overrides home) ---
   if (env.PLEX_DATA_DIR) o.dataDir = env.PLEX_DATA_DIR;
   if (env.PLEX_KNOWLEDGE_DIR) o.knowledgeDir = env.PLEX_KNOWLEDGE_DIR;
-  if (env.PLEX_FALKORDB_URL) o.falkordb = { enabled: true, url: env.PLEX_FALKORDB_URL };
   if (env.PLEX_EMBEDDING_PROVIDER) {
     o.embedding = { ...(o.embedding ?? {}), provider: env.PLEX_EMBEDDING_PROVIDER as EmbeddingProviderName };
   }

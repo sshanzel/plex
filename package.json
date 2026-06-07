@@ -15,12 +15,10 @@
     "build": "tsup",
     "start:mcp": "node dist/plex-mcp.js",
     "start": "node dist/plex.js",
-    "db:up": "docker compose up -d falkordb",
-    "db:down": "docker compose down",
     "ui:kuzu": "docker compose --profile kuzu up -d kuzu-explorer",
     "test": "vitest run && pnpm test:integration",
     "test:unit": "vitest run",
-    "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts incremental && tsx packages/engine/integration.mts cochange-inc && tsx packages/engine/integration.mts semantic-waiver && tsx packages/engine/integration.mts reconcile && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts falkor",
+    "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts incremental && tsx packages/engine/integration.mts cochange-inc && tsx packages/engine/integration.mts semantic-waiver && tsx packages/engine/integration.mts reconcile && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts brain",
     "test:watch": "vitest",
     "test:brain": "pnpm build && node scripts/brain-check.mjs",
     "mcp": "tsx packages/mcp-server/src/index.ts",
@@ -28,7 +26,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "falkordb": "^6.6.2",
     "kuzu": "^0.11.3",
     "parse-diff": "^0.11.1",
     "zod": "^3.23.8"

@@ -12,7 +12,6 @@ import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
  */
 export interface HomeConfig {
   embedding?: { provider?: EmbeddingProviderName; apiKey?: string; model?: string };
-  falkordb?: { url?: string };
   llm?: { provider?: LlmProviderName; model?: string };
 }
 
@@ -34,7 +33,6 @@ export function writeHomeConfig(patch: HomeConfig): HomeConfig {
     ...current,
     ...patch,
     embedding: { ...current.embedding, ...patch.embedding },
-    falkordb: { ...current.falkordb, ...patch.falkordb },
     llm: { ...current.llm, ...patch.llm },
   };
   const f = homeConfigPath();

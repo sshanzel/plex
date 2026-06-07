@@ -22,7 +22,9 @@ import {
   getRefEdges,
   getMeta,
 } from '@plex/code-graph';
-import { computeNeighborhood, publishNeighborhood, runFalkor } from '@plex/neighborhood';
+import { computeNeighborhood } from '@plex/neighborhood';
+import { getChangedFileTexts } from '@plex/ingest';
+import { createEmbeddingProvider } from '@plex/knowledge';
 import {
   indexRepo,
   assembleReviewContext,
@@ -32,11 +34,10 @@ import {
   seedKnowledge,
   submitVerdict,
   knowledgeStore,
-  reconcileOutcomes,
+  recordFixAccepts,
   reviewTarget,
+  Brain,
 } from './src/index';
-
-const FALKOR_URL = process.env.PLEX_FALKORDB_URL ?? 'redis://localhost:6380';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'pipe' });
@@ -148,17 +149,35 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
   }
 });
 
-test('falkor', 'neighborhood: FalkorDB publish (best-effort)', async () => {
-  const nb = {
-    repo: 'r',
-    changed: [{ repo: 'r', file: 'src/user.ts', startLine: 1, endLine: 2, symbol: 'X' }],
-    neighbors: [
-      { node: { id: 'src/db.ts', label: 'File' as const, props: { path: 'src/db.ts' } }, score: 1, via: ['co-change' as const], distance: 1 },
-    ],
-  };
-  const res = await publishNeighborhood('pr_integration_test', nb, { url: FALKOR_URL });
-  if (!res.published) {
-    console.log(`  (skipped: FalkorDB not reachable at ${FALKOR_URL} — ${res.reason})`);
+test('brain', 'engine: Kùzu PR brain — rounds, findings, comments, outcome (ADR-30)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-brain-'));
+  const config = resolveConfig({ dataDir: '.plex' });
+  const target = 'r__staged';
+  try {
+    const brain = await Brain.open(repo, config);
+    try {
+      assert.equal((await brain.loadRoundState(target)).lastN, 0, 'fresh target');
+      await brain.recordRound(target, { target, n: 1, ts: 'now', headSha: 'sha1', baseRef: 'main' }, [
+        { id: 'c1', file: 'a.ts', line: 1, body: 'this fires twice' },
+      ]);
+      await brain.writeFindings(target, 1, [
+        { id: 'agent:0', title: 'venue_opened double-fire', body: '', severity: 'bug', confidence: 0.6, source: 'first-principles', location: { repo: 'r', file: 'a.ts', startLine: 1, endLine: 1 }, signal: 0.4, agreedSources: ['first-principles'], triage: 'surface' },
+      ]);
+
+      let st = await brain.loadRoundState(target);
+      assert.equal(st.lastN, 1);
+      assert.equal(st.lastHeadSha, 'sha1');
+      assert.equal(st.priorFindings.length, 1, 'one un-outcomed finding');
+      assert.ok(st.signals.some((s) => s.label.startsWith('finding:')) && st.signals.some((s) => s.label.startsWith('comment:')), 'finding + comment signals');
+
+      await brain.markFindingOutcome(st.priorFindings[0]!.id, 'fixed');
+      st = await brain.loadRoundState(target);
+      assert.equal(st.priorFindings.length, 0, 'outcome resolves the finding');
+    } finally {
+      await brain.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
@@ -252,14 +271,9 @@ test('cochange-inc', 'code-graph: incremental co-change merges new commits (ADR-
   }
 });
 
-test('reconcile', 'engine: reconcile auto-accepts findings a push addressed (ADR-28)', async () => {
-  const probe = await runFalkor('__plex_probe__', [{ cypher: 'RETURN 1 AS ok' }], { url: FALKOR_URL });
-  if (!probe.ok) {
-    console.log(`  (skipped: FalkorDB not reachable at ${FALKOR_URL} — ${probe.reason})`);
-    return;
-  }
+test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-28/30)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-rec-'));
-  const config = resolveConfig({ dataDir: '.plex', falkordb: { enabled: true, url: FALKOR_URL }, embedding: { provider: 'fake' } });
+  const config = resolveConfig({ dataDir: '.plex', knowledgeDir: join(repo, 'k'), embedding: { provider: 'fake' } });
   const target = reviewTarget(basename(resolve(repo)), { mode: 'staged' });
   try {
     git(repo, 'init', '-q');
@@ -271,37 +285,38 @@ test('reconcile', 'engine: reconcile auto-accepts findings a push addressed (ADR
     git(repo, 'commit', '-q', '-m', 'init');
     const sha1 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
 
-    // Seed the brain: a round at sha1 + one open finding (no full review needed).
-    await runFalkor(
-      target,
-      [
-        { cypher: 'MERGE (pr:PR {target:$t}) SET pr.repo=$r', params: { t: target, r: 'r' } },
-        {
-          cypher: 'MATCH (pr:PR {target:$t}) MERGE (rd:Round {target:$t, n:1}) SET rd.headSha=$s, rd.baseRef=$b MERGE (pr)-[:HAS_ROUND]->(rd)',
-          params: { t: target, s: sha1, b: 'HEAD' },
-        },
-        {
-          cypher:
-            "MATCH (rd:Round {target:$t, n:1}) MERGE (fi:Finding {id:'rec1'}) " +
-            "SET fi.target=$t, fi.title='alpha beta gamma', fi.file='src/a.ts', fi.line=1 MERGE (fi)-[:IN_ROUND]->(rd)",
-          params: { t: target },
-        },
-      ],
-      { url: FALKOR_URL },
-    );
+    // Everything in ONE Kùzu brain open (ADR-17 keeps tsx scenarios to ≤2 opens): seed a
+    // round + finding, then run the real fix-accept inference (what reconcileOutcomes wraps).
+    const brain = await Brain.open(repo, config);
+    try {
+      await brain.recordRound(target, { target, n: 1, ts: 'now', headSha: sha1, baseRef: 'HEAD' }, []);
+      await brain.writeFindings(target, 1, [
+        { id: 'agent:0', title: 'alpha beta gamma', body: '', severity: 'bug', confidence: 0.6, source: 'first-principles', location: { repo: 'r', file: 'src/a.ts', startLine: 1, endLine: 1 }, signal: 0.4, agreedSources: ['first-principles'], triage: 'surface' },
+      ]);
 
-    // Push a fix whose tokens match the finding (fake embedder is bag-of-tokens).
-    writeFileSync(join(repo, 'src/a.ts'), '// alpha beta gamma\n');
-    git(repo, 'add', '-A');
-    git(repo, 'commit', '-q', '-m', 'fix');
+      // Push a fix whose tokens match the finding (fake embedder is bag-of-tokens).
+      writeFileSync(join(repo, 'src/a.ts'), '// alpha beta gamma\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', 'fix');
+      const sha2 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
 
-    const res = await reconcileOutcomes(repo, config, { mode: 'staged' });
-    assert.equal(res.accepted, 1, `reconcile auto-accepted the addressed finding (got ${res.accepted})`);
+      const state = await brain.loadRoundState(target);
+      assert.equal(state.priorFindings.length, 1, 'one open finding before the fix');
+      const changed = await getChangedFileTexts(repo, sha1, sha2);
+      const embedder = createEmbeddingProvider(config.embedding)!;
+      const regionTexts = changed.map((c) => c.text);
+      const findingTexts = state.priorFindings.map((f) => f.title);
+      const vecs = await embedder.embed([...regionTexts, ...findingTexts]);
+      const regionEmb = changed.map((_, i) => vecs[i]!);
+      const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i]!);
 
-    const res2 = await reconcileOutcomes(repo, config, { mode: 'staged' });
-    assert.equal(res2.accepted, 0, 'an already-accepted finding is not re-accepted (idempotent)');
+      const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb);
+      assert.equal(accepted, 1, `the addressed finding is auto-accepted (got ${accepted})`);
+      assert.equal((await brain.loadRoundState(target)).priorFindings.length, 0, 'finding marked fixed — not re-evaluated (idempotent)');
+    } finally {
+      await brain.close();
+    }
   } finally {
-    await runFalkor(target, [{ cypher: 'MATCH (n) DETACH DELETE n' }], { url: FALKOR_URL });
     rmSync(repo, { recursive: true, force: true });
   }
 });

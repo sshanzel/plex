@@ -36,10 +36,6 @@ import {
 } from '@plex/engine';
 
 const config = loadConfig();
-// The PR brain is part of the product (ADR-22): FalkorDB is REQUIRED for the MCP review
-// flow. Enable it by default (respecting PLEX_FALKORDB_URL); reviews error with a clear
-// "run `pnpm db:up`" if it is unreachable, rather than silently degrading.
-config.falkordb.enabled = true;
 const server = new McpServer({ name: 'plex', version: '0.2.0' });
 
 const json = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] });
@@ -68,8 +64,8 @@ server.tool(
 
 server.tool(
   'get_review_context',
-  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, plex.md, and guidance. Requires the repo to be indexed.',
-  { repoPath: z.string().optional(), publishFalkor: z.boolean().optional(), ...diffSourceShape },
+  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, and guidance. Auto-indexes the repo on first use.',
+  { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
       () =>
@@ -80,7 +76,6 @@ server.tool(
           mode: a.mode,
           baseRef: a.baseRef,
           pr: a.pr,
-          publishFalkor: a.publishFalkor,
         }),
       'get_review_context',
     ),

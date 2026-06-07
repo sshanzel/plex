@@ -7,6 +7,8 @@ export interface RepoPaths {
   reviewerDir: string;
   /** Kùzu code-graph DB directory for this repo. */
   graphDir: string;
+  /** Kùzu per-repo PR-brain DB (rounds/findings/verdicts/comments — ADR-30). */
+  brainDir: string;
   /** Append-only verdict log (feedback-loop seed). */
   verdictsFile: string;
   /** Incremental mining cursor (which PRs have been scanned). */
@@ -47,6 +49,7 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     repoPath: abs,
     reviewerDir,
     graphDir: path.join(reviewerDir, 'graph.kuzu'),
+    brainDir: path.join(reviewerDir, 'brain.kuzu'),
     verdictsFile: path.join(reviewerDir, 'verdicts.jsonl'),
     miningStateFile: path.join(reviewerDir, 'mining-state.json'),
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),

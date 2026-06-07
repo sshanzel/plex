@@ -26,10 +26,6 @@ import {
   readHomeConfig,
   writeHomeConfig,
   homeConfigPath,
-  dockerAvailable,
-  falkorUp,
-  falkorDown,
-  falkorReachable,
   type ReviewContext,
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
@@ -65,14 +61,13 @@ function parse(argv: string[]): Parsed {
 const USAGE = `plex — local-first code review context
 
 Usage:
-  plex init [repoPath]                                   # one-command setup: FalkorDB + key + MCP + index
-  plex doctor [repoPath]                                 # check FalkorDB / embeddings / graph
-  plex up | down                                         # start / stop the FalkorDB container
+  plex init [repoPath]                                   # one-command setup: embedding key + MCP + index
+  plex doctor [repoPath]                                 # check embeddings + graph
   plex index [repoPath] [--incremental]                  # --incremental: refresh only changed files (ADR-25)
   plex install-hooks [repoPath]                          # auto-incremental-index on pull/checkout/rebase
   plex uninstall-hooks [repoPath]
-  plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--falkor] [--json] [--html <file>]
-  plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>] [--falkor]   # auto-accept findings the push fixed (ADR-28)
+  plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
+  plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
@@ -147,10 +142,6 @@ function printReview(ctx: ReviewContext): void {
       out.push('  No unexplained changes since last round.');
     }
   }
-  if (ctx.ephemeralGraph) {
-    out.push('');
-    out.push(`FalkorDB brain: ${ctx.ephemeralGraph} (inspect in FalkorDB Browser)`);
-  }
   out.push('');
   out.push('Notes for the reviewing agent:');
   for (const note of ctx.notes) out.push(`  • ${note}`);
@@ -162,32 +153,22 @@ function ask(question: string): Promise<string> {
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a.trim()); }));
 }
 
-/** One-command setup (ADR-29): FalkorDB up, prompt provider+key → config, register MCP, index. */
+/** One-command setup (ADR-29/30): optional embedding key → config, register MCP, index. */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
-  out.write('Plex setup\n\n');
+  out.write('Plex setup — embedded (no Docker, no services).\n\n');
 
-  // 1. FalkorDB (auto-manage via Docker, else prompt for a remote URL).
-  let url = process.env.PLEX_FALKORDB_URL ?? readHomeConfig().falkordb?.url ?? 'redis://localhost:56379';
-  if (dockerAvailable()) {
-    const port = Number((/:(\d+)\b/.exec(url) ?? [])[1] ?? 56379);
-    const r = falkorUp(port);
-    if (r.ok) { url = r.url; out.write(`✓ FalkorDB ${r.detail} at ${url}\n`); }
-    else out.write(`! FalkorDB via Docker failed (${r.detail}).\n`);
-  } else {
-    out.write('! Docker not found — Plex needs FalkorDB for the review brain.\n');
-    const remote = await ask(`  FalkorDB URL (or install Docker and re-run) [${url}]: `);
-    if (remote) url = remote;
+  // 1. Embedding provider + key (optional — enables semantic knowledge + brain signals).
+  //    Stored once in ~/.plex/config.json; the MCP server reads it (no secrets in the registration).
+  out.write('An embedding provider powers knowledge retrieval + the semantic review signals (optional).\n');
+  const provider = (await ask('Embedding provider [voyage/openai/gemini/ollama/none] (voyage): ')) || 'voyage';
+  if (provider !== 'none') {
+    const apiKey = provider === 'ollama' ? undefined : await ask(`API key for ${provider} (Enter to skip): `);
+    writeHomeConfig({ embedding: { provider: provider as never, ...(apiKey ? { apiKey } : {}) } });
+    out.write(`✓ Saved config to ${homeConfigPath()}\n`);
   }
-  out.write((await falkorReachable(url)) ? '✓ FalkorDB reachable\n\n' : `! not reachable at ${url} — continuing\n\n`);
 
-  // 2. Embedding provider + key (stored once in ~/.plex/config.json).
-  const provider = (await ask('Embedding provider [voyage/openai/gemini/ollama] (voyage): ')) || 'voyage';
-  const apiKey = provider === 'ollama' ? undefined : await ask(`API key for ${provider}: `);
-  writeHomeConfig({ falkordb: { url }, embedding: { provider: provider as never, ...(apiKey ? { apiKey } : {}) } });
-  out.write(`✓ Saved config to ${homeConfigPath()}\n`);
-
-  // 3. Register the MCP with Claude Code (reads the config file — no secrets in the registration).
+  // 2. Register the MCP with Claude Code (reads the config file).
   const mcpEntry = path.join(path.dirname(process.argv[1] ?? ''), 'plex-mcp.js');
   if (existsSync(mcpEntry)) {
     spawnSync('claude', ['mcp', 'remove', 'plex'], { stdio: 'ignore' });
@@ -197,7 +178,7 @@ async function runInit(repoPath: string): Promise<number> {
     out.write('! MCP entry not found beside the CLI — register it manually.\n');
   }
 
-  // 4. Index this repo + auto-refresh hooks.
+  // 3. Index this repo + auto-refresh hooks (optional — reviews also auto-index on first use).
   if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
     await indexRepo(repoPath, loadConfig());
     try { installHooks(repoPath, process.argv[1] ?? 'plex'); } catch { /* not a git repo */ }
@@ -215,28 +196,16 @@ async function main(): Promise<number> {
   switch (command) {
     case 'init':
       return runInit(positionals[1] ?? process.cwd());
-    case 'up': {
-      const r = falkorUp();
-      process.stdout.write(r.ok ? `✓ FalkorDB ${r.detail} at ${r.url}\n` : `! FalkorDB: ${r.detail}\n`);
-      return r.ok ? 0 : 1;
-    }
-    case 'down': {
-      process.stdout.write(falkorDown() ? '✓ FalkorDB stopped\n' : '! could not stop FalkorDB (not running?)\n');
-      return 0;
-    }
     case 'doctor': {
       const repoPath = positionals[1] ?? process.cwd();
-      const reachable = await falkorReachable(config.falkordb.url);
       const emb = embeddingReady(config);
       const graphed = existsSync(repoPaths(repoPath, config.dataDir).graphDir);
       const line = (ok: boolean, label: string, detail: string) =>
-        process.stdout.write(`  ${ok ? '✓' : '✗'} ${label.padEnd(12)} ${detail}\n`);
-      process.stdout.write('plex doctor\n');
-      line(dockerAvailable(), 'docker', dockerAvailable() ? 'available' : 'not found (needed to auto-manage FalkorDB)');
-      line(reachable, 'falkordb', reachable ? config.falkordb.url : `unreachable at ${config.falkordb.url} — run \`plex up\``);
-      line(emb, 'embeddings', emb ? `provider: ${config.embedding.provider}` : 'not configured — run `plex init`');
-      line(graphed, 'graph', graphed ? 'indexed' : 'not indexed — run `plex index`');
-      return reachable && emb && graphed ? 0 : 1;
+        process.stdout.write(`  ${ok ? '✓' : '○'} ${label.padEnd(12)} ${detail}\n`);
+      process.stdout.write('plex doctor (embedded — no services)\n');
+      line(emb, 'embeddings', emb ? `provider: ${config.embedding.provider}` : 'not configured (optional) — run `plex init`');
+      line(graphed, 'graph', graphed ? 'indexed' : 'not indexed — run `plex index` (reviews also auto-index)');
+      return 0;
     }
     case 'index': {
       const repoPath = positionals[1] ?? process.cwd();
@@ -283,8 +252,6 @@ async function main(): Promise<number> {
         : flags.branch
           ? 'branch'
           : undefined;
-      const useFalkor = Boolean(flags.falkor);
-      if (useFalkor) config.falkordb.enabled = true;
       const ctx = await assembleReviewContext({
         repoPath,
         config,
@@ -292,7 +259,6 @@ async function main(): Promise<number> {
         mode,
         baseRef: typeof flags.branch === 'string' ? flags.branch : undefined,
         pr: typeof flags.pr === 'string' ? flags.pr : undefined,
-        publishFalkor: useFalkor,
       });
       if (typeof flags.html === 'string') {
         writeFileSync(flags.html, reviewContextToHtml(ctx));
@@ -304,7 +270,6 @@ async function main(): Promise<number> {
     }
     case 'reconcile': {
       const repoPath = positionals[1] ?? process.cwd();
-      if (flags.falkor) config.falkordb.enabled = true;
       const res = await reconcileOutcomes(repoPath, config, {
         source: flags.pr ? 'pr' : 'local',
         mode: flags.staged ? 'staged' : flags.branch ? 'branch' : undefined,

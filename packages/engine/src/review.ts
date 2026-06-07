@@ -31,9 +31,10 @@ import { repoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTarget } from './target';
-import { brainEnabled, loadRoundState, recordRound, type RoundSummary } from './brain';
+import { createEmbeddingProvider } from '@plex/knowledge';
+import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
-import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings } from './knowledge';
+import { buildKnowledgeQuery, getRelevantKnowledge } from './knowledge';
 import { recordFixAccepts } from './reconcile';
 
 /**
@@ -87,12 +88,13 @@ function readIndexedSha(headShaFile: string): string | undefined {
  * SIGSEGVs. Spawning `plex index --incremental` keeps the review process to ONE Kùzu open.
  * Returns true if it ran (false in dev/tsx where the built CLI isn't beside argv[1]).
  */
-function refreshGraphIsolated(repoPath: string): boolean {
+function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   const cli = path.join(path.dirname(entry), 'plex.js');
   if (!existsSync(cli)) return false;
-  const r = spawnSync(process.execPath, [cli, 'index', repoPath, '--incremental'], { stdio: 'ignore' });
+  const args = incremental ? [cli, 'index', repoPath, '--incremental'] : [cli, 'index', repoPath];
+  const r = spawnSync(process.execPath, args, { stdio: 'ignore' });
   return r.status === 0;
 }
 
@@ -140,8 +142,6 @@ export interface ReviewContext {
   openComments?: PrComment[];
   /** Prior findings auto-recorded as fixed this round because a change addressed them (ADR-28). */
   inferredOutcomes?: number;
-  /** FalkorDB graph name if the brain/ephemeral layer was published. */
-  ephemeralGraph?: string;
   /** Guidance for the reviewing agent. */
   notes: string[];
 }
@@ -159,8 +159,6 @@ function loadReviewerMd(repoPath: string): string | undefined {
 export interface AssembleOptions extends DiffSource {
   repoPath: string;
   config: ReviewerConfig;
-  /** Mirror the neighborhood into FalkorDB for live viz (requires falkordb.enabled). */
-  publishFalkor?: boolean;
   /** Auto-refresh the graph (incremental) when it has drifted behind HEAD. Default true (ADR-25). */
   autoIndex?: boolean;
 }
@@ -196,75 +194,65 @@ interface BrainContext {
  * heuristic; ADR-13), and persist the round to FalkorDB. Throws if FalkorDB/embeddings are
  * unavailable — the brain has no fallback.
  */
-async function buildBrainContext(
-  opts: AssembleOptions,
-  repo: string,
-  nb: ReviewNeighborhood,
-  baseRef: string,
-): Promise<BrainContext> {
+async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: string): Promise<BrainContext> {
   const config = opts.config;
   const cwd = repoPaths(opts.repoPath, config.dataDir).repoPath;
   const target = reviewTarget(repo, opts);
-  const embedder = requireEmbeddings(config); // brain matching needs real embeddings (ADR-13)
+  // Embeddings are now OPTIONAL (ADR-30): without a provider the brain still records rounds
+  // and findings; only the semantic signals (unexplained changes + fix inference) are skipped.
+  const embedder = createEmbeddingProvider(config.embedding);
 
   const headSha =
     opts.source === 'pr' && opts.pr != null ? await getPrHeadSha({ pr: opts.pr, cwd }) : await getHeadSha(cwd);
 
-  // requireFalkor: throws a clear "run pnpm db:up" if FalkorDB is unreachable.
-  const state = await loadRoundState(target, config);
-  const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
-  const round = sameRound ? state.lastN : state.lastN + 1;
+  const brain = await Brain.open(opts.repoPath, config);
+  try {
+    const state = await brain.loadRoundState(target);
+    const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
+    const round = sameRound ? state.lastN : state.lastN + 1;
 
-  let comments: PrComment[] = [];
-  if (opts.source === 'pr' && opts.pr != null) {
-    const raw = await fetchCommentsForPr(cwd, { number: Number(opts.pr), mergedAt: null });
-    comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
-  }
-
-  // Attribute changes since the previous round (ADR-23) AND infer fixes (ADR-28) — both
-  // from the same embeddings (regions, prior findings+comments as signals, prior findings).
-  let unexplainedChanges: AttributedChange[] = [];
-  let inferredOutcomes = 0;
-  if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
-    const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
-    if (changed.length > 0) {
-      const signals = [
-        ...state.signals,
-        ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
-      ].filter((s) => s.text.trim());
-      const regionTexts = changed.map((c) => c.text);
-      const signalTexts = signals.map((s) => s.text);
-      const findingTexts = state.priorFindings.map((f) => f.title);
-      const vecs = await embedder.embed([...regionTexts, ...signalTexts, ...findingTexts]);
-      const regionEmb = changed.map((_, i) => vecs[i] ?? []);
-
-      // unexplained-change classification
-      if (signals.length > 0) {
-        const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
-        const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
-        unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
-      } else {
-        unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
-      }
-
-      // M9 (ADR-28): prior findings addressed by a change since → autonomous `accept`,
-      // recorded WITHOUT prompting. Only this explicit fix signal learns; silence does not.
-      const fBase = regionTexts.length + signals.length;
-      const findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
-      inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, state.priorFindings, findingEmb, regionEmb);
+    let comments: PrComment[] = [];
+    if (opts.source === 'pr' && opts.pr != null) {
+      const raw = await fetchCommentsForPr(cwd, { number: Number(opts.pr), mergedAt: null });
+      comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
     }
+
+    // Attribute changes since the previous round (ADR-23) + infer fixes (ADR-28) — needs an
+    // embedder; both run off one batch of embeddings (regions, signals, prior findings).
+    let unexplainedChanges: AttributedChange[] = [];
+    let inferredOutcomes = 0;
+    if (embedder && state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
+      const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
+      if (changed.length > 0) {
+        const signals = [
+          ...state.signals,
+          ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
+        ].filter((s) => s.text.trim());
+        const regionTexts = changed.map((c) => c.text);
+        const findingTexts = state.priorFindings.map((f) => f.title);
+        const vecs = await embedder.embed([...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
+        const regionEmb = changed.map((_, i) => vecs[i] ?? []);
+
+        if (signals.length > 0) {
+          const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
+          const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
+          unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
+        } else {
+          unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+        }
+
+        const fBase = regionTexts.length + signals.length;
+        const findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
+        inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb);
+      }
+    }
+
+    await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef }, comments);
+
+    return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredOutcomes };
+  } finally {
+    await brain.close();
   }
-
-  await recordRound(
-    target,
-    repo,
-    { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef },
-    nb,
-    comments,
-    config,
-  );
-
-  return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredOutcomes };
 }
 
 /** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
@@ -275,21 +263,26 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     resolveChangeContext(opts.repoPath, opts.config, opts),
   ]);
 
+  // Auto-index on first use (ADR-30): if the repo was never indexed, build the graph in an
+  // ISOLATED child process so THIS process opens Kùzu only for the neighborhood + brain. The
+  // user never has to run `plex index` first.
   if (!existsSync(p.graphDir)) {
-    throw new Error(`No code graph at ${p.graphDir}. Run \`reviewer index\` (or the index_repo tool) first.`);
+    if (opts.autoIndex !== false) indexIsolated(p.repoPath, false);
+    if (!existsSync(p.graphDir)) {
+      throw new Error(`No code graph at ${p.graphDir}, and auto-index could not run. Run \`plex index\` first.`);
+    }
   }
 
   // Keep the graph fresh BEFORE computing blast radius (ADR-25). Staleness is read from the
-  // SIDECAR sha (no Kùzu), and the refresh runs in an ISOLATED child process — so THIS
-  // process opens Kùzu exactly once (below), which is what keeps it safe to also spawn the
-  // FalkorDB worker (ADR-16). Only a definite drift (behind > 0) auto-refreshes; an unknown
-  // sha (-1) is merely reported (refreshing it could mean a surprise full rebuild).
+  // SIDECAR sha (no Kùzu), and any refresh runs in an ISOLATED child process — so THIS process
+  // opens Kùzu only for the neighborhood + brain below. Only a definite drift (behind > 0)
+  // auto-refreshes; an unknown sha (-1) is merely reported.
   let graphStale: GraphStaleness | undefined;
   {
     const indexedSha = readIndexedSha(p.headShaFile);
     const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
-      const refreshed = refreshGraphIsolated(p.repoPath);
+      const refreshed = indexIsolated(p.repoPath, true);
       graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
       graphStale = { indexedSha, behind, refreshed: false };
@@ -312,11 +305,12 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
   const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);
 
-  // PR brain (ADR-22/23): required when FalkorDB is enabled — rounds, comments, and the
-  // semantic "changed-without-feedback" signal. No in-process fallback.
-  const brain = brainEnabled(opts.config) ? await buildBrainContext(opts, repo, nb, diff.baseRef) : undefined;
-  const target = brain?.target ?? reviewTarget(repo, opts);
-  const round = brain?.round ?? 1;
+  // PR brain (ADR-22/23/30): embedded Kùzu, always on — rounds, comments, findings, and the
+  // semantic "changed-without-feedback" + fix-inference signals (the latter when embeddings
+  // are configured). No service, no Docker.
+  const brain = await buildBrainContext(opts, repo, diff.baseRef);
+  const target = brain.target;
+  const round = brain.round;
 
   // Attribution audit log (ADR-24) — graph-independent; logs what was PROVIDED, not reasoning.
   await logAudit(opts.repoPath, opts.config, {
@@ -330,7 +324,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     blastRadius: nb.neighbors.map((n) => ({ path: String(n.node.props.path), score: n.score, via: n.via })),
     knowledge: knowledge.map((k) => ({ id: k.pitfall.id, score: k.score })),
     changeContext: changeContext != null,
-    unexplainedChanges: brain?.unexplainedChanges.length ?? 0,
+    unexplainedChanges: brain.unexplainedChanges.length,
   });
 
   return {
@@ -349,16 +343,15 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     reviewerMd: loadReviewerMd(p.repoPath),
     graphStale,
     target,
-    round: brain ? brain.round : undefined,
-    priorRounds: brain?.priorRounds,
-    unexplainedChanges: brain?.unexplainedChanges,
-    openComments: brain?.openComments,
-    inferredOutcomes: brain?.inferredOutcomes,
-    ephemeralGraph: brain?.target,
+    round: brain.round,
+    priorRounds: brain.priorRounds,
+    unexplainedChanges: brain.unexplainedChanges,
+    openComments: brain.openComments,
+    inferredOutcomes: brain.inferredOutcomes,
     notes: [
       ...AGENT_NOTES,
-      ...(brain ? BRAIN_NOTES : []),
-      ...(brain && brain.inferredOutcomes > 0
+      ...BRAIN_NOTES,
+      ...(brain.inferredOutcomes > 0
         ? [`Plex auto-recorded ${brain.inferredOutcomes} prior finding(s) as fixed (a change since addressed them) — do not re-raise or ask to confirm those.`]
         : []),
       ...(graphStale?.refreshed

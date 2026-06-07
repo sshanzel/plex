@@ -6,7 +6,7 @@ import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
 import { reviewTarget } from './target';
-import { brainEnabled, loadRoundState, writeFindings } from './brain';
+import { Brain } from './brain';
 import { logAudit, auditFinding } from './audit';
 
 /** Cosine ≥ this lets a pattern/category waiver suppress the same issue semantically (ADR-27). */
@@ -87,13 +87,15 @@ export async function rankReviewFindings(
   }
   const ranked = rankFindings(all, { waivers, semanticThreshold });
 
-  // Persist into the PR brain (round-tagged) + audit log (ADR-22/24).
+  // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30).
   const target = reviewTarget(repo, opts);
   let round = 1;
-  if (brainEnabled(config)) {
-    const state = await loadRoundState(target, config);
-    round = state.lastN || 1;
-    await writeFindings(target, round, ranked, config);
+  const brain = await Brain.open(repoPath, config);
+  try {
+    round = (await brain.loadRoundState(target)).lastN || 1;
+    await brain.writeFindings(target, round, ranked);
+  } finally {
+    await brain.close();
   }
   await logAudit(repoPath, config, {
     type: 'findings_submitted',

@@ -3,20 +3,12 @@ export type { RepoPaths } from './paths';
 export { loadConfig } from './config-load';
 export { readHomeConfig, writeHomeConfig, homeConfigPath } from './home-config';
 export type { HomeConfig } from './home-config';
-export { dockerAvailable, falkorUp, falkorDown, falkorReachable, FALKOR_IMAGE } from './setup';
-export type { FalkorUpResult } from './setup';
 export { resolveDiff } from './diff';
 export type { DiffSource } from './diff';
 export { resolveChangeContext } from './change-context';
 export { reviewTarget } from './target';
-export {
-  brainEnabled,
-  loadRoundState,
-  recordRound,
-  writeFindings,
-  writeVerdict,
-} from './brain';
-export type { RoundState, RoundSummary, BrainSignal } from './brain';
+export { Brain } from './brain';
+export type { RoundState, RoundSummary, BrainSignal, BrainFinding } from './brain';
 export { logAudit, readAudit, auditFinding } from './audit';
 export type { AuditEvent } from './audit';
 export {
