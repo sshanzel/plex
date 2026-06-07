@@ -33,7 +33,9 @@ Use this when the user wants to work through PR review feedback end-to-end. It p
 
 ## Closing the Plex review loop (if Plex reviewed the PR)
 
-If the `plex` MCP server is connected and Plex reviewed this PR, close its learning loop after fixes land — Plex learns from what the team actually *did*, never from a prompt. This runs as part of the post-`go` loop; do **not** ask the user about Plex verdicts. If the `plex` MCP is not connected, skip this section.
+If the `plex` MCP server is **configured** (in `.mcp.json` / `~/.claude.json`) and Plex reviewed this PR, close its learning loop after fixes land — Plex learns from what the team actually *did*, never from a prompt. This runs as part of the post-`go` loop; do **not** ask the user about Plex verdicts.
+
+> **"Plex MCP is disconnected" is NOT a reason to skip.** A stdio MCP server is idle-dropped after a few seconds and **re-spawns on the next tool call** (~400ms) — and Plex is stateless per call (it reads the PR brain from disk), so reconnecting loses nothing. If the tools are configured, **just call `reconcile_outcomes`** — the call itself reconnects the server. If they're deferred behind tool-search, load them with `ToolSearch("mcp__plex__")` first. Only treat Plex as unavailable when the *call itself* errors (then say so and note that the next `plex-reviewer` pass will reconcile from the pushed commits). Skip this section **only** when the `plex` server isn't configured at all.
 
 - **After pushing fixes**, call `mcp__plex__reconcile_outcomes` with `{ source: "pr", pr: <n> }`. Plex compares its open findings for this PR against the commits you just pushed and auto-records `accept` for the ones you addressed — one call covers the whole batch. Nothing to confirm.
 - **For an item you dismissed as wrong/noise** (the reviewer was off — replied with rationale, no change), call `mcp__plex__record_outcome` with `kind: "reject"`, `scope: "pattern-repo"`, the same `{ source: "pr", pr: <n> }`, and the finding's `file` / `line` / `title`. This suppresses it AND tells Plex the flag was noise (down-weights it).
