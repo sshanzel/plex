@@ -3,7 +3,8 @@
     "plex": {
       "command": "node",
       "args": ["dist/plex-mcp.js"],
-      "env": {}
+      "env": {},
+      "alwaysLoad": true
     }
   }
 }

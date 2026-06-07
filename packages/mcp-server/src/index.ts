@@ -36,7 +36,21 @@ import {
 } from '@plex/engine';
 
 const config = loadConfig();
-const server = new McpServer({ name: 'plex', version: '0.2.0' });
+const server = new McpServer(
+  { name: 'plex', version: '0.2.0' },
+  {
+    // Surfaced to the client so tool-search can discover Plex even when MCP tools are
+    // deferred behind search in a crowded multi-server session (keywords: review, PR,
+    // blast radius, findings). With `.mcp.json` "alwaysLoad": true these load eagerly.
+    instructions:
+      'Plex — code-review orchestration for a diff or GitHub PR. Flow: index_repo (once) → ' +
+      'get_review_context (blast radius + deterministic checks + relevant pitfalls + the PR brain + plex.md) → ' +
+      'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
+      'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
+      'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / seed_knowledge / ' +
+      'consolidate_knowledge / propose_promotions. Prefer these tools over reviewing a diff by hand.',
+  },
+);
 
 const json = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] });
 const fail = (m: string) => ({ content: [{ type: 'text' as const, text: m }], isError: true });

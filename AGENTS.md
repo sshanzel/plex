@@ -65,6 +65,8 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP
 
 **One-time:** `pnpm build` (the `.mcp.json` runs the *built* `dist/plex-mcp.js` under node — never tsx, ADR-17/19). Open the repo in Claude Code and approve the `plex` project MCP when prompted (or it's pre-enabled via `.claude/settings.json`).
 
+**Crowded MCP sessions — `alwaysLoad`.** With many MCP servers connected, Claude Code **defers** most MCP tools behind tool-search (they aren't listed top-level), and a reviewer agent can waste minutes failing to find `mcp__plex__*` and fall back to a manual git review. The fix: `"alwaysLoad": true` on the plex server entry (`.mcp.json` here; or the per-project `~/.claude.json` registration `plex init` writes) — it exempts plex from deferral so its tools load eagerly. The server also declares `instructions` (helps tool-search), and the `plex-reviewer` agent is told to `ToolSearch("mcp__plex__")` if deferred and **never** fall back to a manual review. (Subagent `tools:` is an allow-list only — it does NOT un-defer.)
+
 **The loop (dogfooding your own PR):**
 1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts).
 2. Address feedback with the `pr-review-responder` skill → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
