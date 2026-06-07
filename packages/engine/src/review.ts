@@ -69,16 +69,22 @@ export async function indexRepo(
     }
   }
 
-  // No graph yet → if this is a git worktree whose BASE (main) checkout is already indexed,
-  // COPY the base graph and incrementally apply only this branch's diff (ADR-32). The base
-  // is never modified (the copy is independent), so N worktrees can't affect it — and a
-  // fresh worktree is seconds, not a full re-parse.
+  // No graph yet → if this is a secondary git worktree whose BASE (the default-branch
+  // checkout) is already indexed, refresh that base to ITS OWN head, then COPY it and
+  // incrementally apply only this branch's diff (ADR-32). Only main's state ever lands in
+  // the base (a worktree's branch data never does), and the copy is independent — so N
+  // worktrees can't pollute the base, and a fresh worktree is seconds, not a full re-parse.
   if (!existsSync(p.graphDir)) {
-    const base = baseGraphDir(p.repoPath, config);
-    if (base && base !== p.graphDir) {
+    const base = baseWorktree(p.repoPath, config);
+    if (base) {
+      // Refresh the base to ITS OWN head in an ISOLATED child (ADR-17): opening the base's
+      // Kùzu in *this* process and then opening the copied graph below is two opens in one
+      // process — a SIGSEGV. The child keeps us to a single open here. Best-effort: in dev/tsx
+      // (no built CLI beside argv[1]) it no-ops and the incremental below reconciles any drift.
+      indexIsolated(base.path, true);
       try {
         mkdirSync(path.dirname(p.graphDir), { recursive: true });
-        cpSync(base, p.graphDir, { recursive: true });
+        cpSync(base.graphDir, p.graphDir, { recursive: true });
         const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
         await stamp();
         return { ...res, graphDir: p.graphDir, seeded: true };
@@ -93,19 +99,46 @@ export async function indexRepo(
   return { ...res, graphDir: p.graphDir, incremental: false };
 }
 
+/** The repo's default branch (`origin/HEAD`, else `main`/`master`). undefined if unknown. */
+function defaultBranch(repoPath: string): string | undefined {
+  const r = spawnSync('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { cwd: repoPath, encoding: 'utf8' });
+  if (r.status === 0 && r.stdout.trim()) return r.stdout.trim().replace(/^origin\//, '');
+  for (const b of ['main', 'master']) {
+    if (spawnSync('git', ['show-ref', '--verify', '--quiet', `refs/heads/${b}`], { cwd: repoPath }).status === 0) return b;
+  }
+  return undefined;
+}
+
 /**
- * If `repoPath` is a secondary git worktree whose MAIN worktree's code graph already exists,
- * return that base graph dir (to seed from). `undefined` when this is the main worktree, not
- * a worktree, or the base isn't indexed. The main worktree is the first `git worktree list`.
+ * If `repoPath` is a secondary git worktree, return the worktree to seed from — preferring
+ * the one on the **default branch** (the canonical base), else the primary worktree — when
+ * its code graph already exists. `undefined` when this *is* the primary worktree, it isn't a
+ * worktree, or no base is indexed. We never auto-checkout the default branch (that would
+ * disrupt the user's worktrees); if it isn't checked out anywhere we fall back to primary.
  */
-function baseGraphDir(repoPath: string, config: ReviewerConfig): string | undefined {
+function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string; graphDir: string } | undefined {
   try {
     const out = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath, encoding: 'utf8' });
     if (out.status !== 0) return undefined;
-    const main = /^worktree (.+)$/m.exec(out.stdout)?.[1];
-    if (!main || path.resolve(main) === path.resolve(repoPath)) return undefined; // we ARE main
-    const baseGraph = repoPaths(main, config.dataDir).graphDir;
-    return existsSync(baseGraph) ? baseGraph : undefined;
+    const wts: { path: string; branch?: string }[] = [];
+    let cur: { path: string; branch?: string } | null = null;
+    for (const line of out.stdout.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        cur = { path: line.slice('worktree '.length) };
+        wts.push(cur);
+      } else if (line.startsWith('branch ') && cur) {
+        cur.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+      }
+    }
+    const self = path.resolve(repoPath);
+    const primary = wts[0];
+    if (!primary || path.resolve(primary.path) === self) return undefined; // we ARE the primary/base
+
+    const def = defaultBranch(repoPath);
+    const onDefault = def ? wts.find((w) => w.branch === def && path.resolve(w.path) !== self) : undefined;
+    const chosen = onDefault ?? primary;
+    const graphDir = repoPaths(chosen.path, config.dataDir).graphDir;
+    return existsSync(graphDir) ? { path: chosen.path, graphDir } : undefined;
   } catch {
     return undefined;
   }
@@ -121,10 +154,15 @@ function readIndexedSha(headShaFile: string): string | undefined {
 }
 
 /**
- * Refresh a drifted graph in an ISOLATED child process (ADR-16/25): an incremental index
- * opens Kùzu, and doing that in the review process — which then spawns the FalkorDB worker —
- * SIGSEGVs. Spawning `plex index --incremental` keeps the review process to ONE Kùzu open.
+ * Refresh / build a graph in an ISOLATED child process (ADR-16/25): indexing opens Kùzu, and
+ * doing that in the review process — which also opens Kùzu for the neighborhood + brain —
+ * risks the native SIGSEGV. Spawning `plex index` keeps the review process to ONE Kùzu open.
  * Returns true if it ran (false in dev/tsx where the built CLI isn't beside argv[1]).
+ *
+ * Retries once on failure. A rare native Kùzu crash (ADR-17) can fail a single index — most
+ * relevantly the worktree-seed full build, which opens the copied base graph. The retry of a
+ * full build self-heals: a partial graph from the crashed attempt makes the next `plex index`
+ * skip the seed and fall to `buildCodeGraph`, which clears the dir first and rebuilds clean.
  */
 function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const entry = process.argv[1];
@@ -132,8 +170,10 @@ function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const cli = path.join(path.dirname(entry), 'plex.js');
   if (!existsSync(cli)) return false;
   const args = incremental ? [cli, 'index', repoPath, '--incremental'] : [cli, 'index', repoPath];
-  const r = spawnSync(process.execPath, args, { stdio: 'ignore' });
-  return r.status === 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (spawnSync(process.execPath, args, { stdio: 'ignore' }).status === 0) return true;
+  }
+  return false;
 }
 
 /** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */

@@ -321,6 +321,57 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
   }
 });
 
+test('worktree-seed', 'engine: a secondary worktree seeds its graph from the base + stays isolated (ADR-32)', async () => {
+  // Exactly TWO Kùzu opens (ADR-17 budget): buildCodeGraph(base) + updateCodeGraph(copy).
+  // `indexIsolated` no-ops under tsx (no built CLI beside argv[1]) so the base self-refresh
+  // is NOT exercised here — that needs the shipped runtime (`pnpm test:worktree`). What this
+  // pins is the seed MECHANIC: a separate graph at the worktree path, only the branch diff
+  // applied, and the base left untouched.
+  const root = mkdtempSync(join(tmpdir(), 'reviewer-wt-'));
+  const base = join(root, 'main');
+  const wt = join(root, 'wt');
+  const config = resolveConfig({ dataDir: '.plex', embedding: { provider: 'none' } });
+  const headSha = (cwd: string): string =>
+    readFileSync(join(cwd, '.plex', 'head.sha'), 'utf8').trim();
+  try {
+    mkdirSync(base);
+    git(base, 'init', '-q');
+    git(base, 'config', 'user.email', 't@t.dev');
+    git(base, 'config', 'user.name', 'T');
+    mkdirSync(join(base, 'src'));
+    writeFileSync(join(base, 'src/a.ts'), 'export function a() {\n  return 1;\n}\n');
+    writeFileSync(join(base, 'src/b.ts'), "import { a } from './a';\nexport function b() {\n  return a() + 1;\n}\n");
+    git(base, 'add', '-A');
+    git(base, 'commit', '-q', '-m', 'init');
+    git(base, 'worktree', 'add', '-q', '-b', 'feat', wt);
+    writeFileSync(join(wt, 'src/c.ts'), 'export function c() {\n  return 2;\n}\n');
+    git(wt, 'add', '-A');
+    git(wt, 'commit', '-q', '-m', 'add c');
+    const baseHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: base }).toString().trim();
+    const featHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: wt }).toString().trim();
+
+    const ib = await indexRepo(base, config); // open #1 — full build of the base
+    assert.equal(ib.seeded, undefined, 'the base itself is a full build, not seeded');
+    assert.equal(headSha(base), baseHead, 'base graph stamped at its own HEAD');
+
+    const iw = await indexRepo(wt, config); // open #2 — seed: cpSync(base) + updateCodeGraph(copy)
+    assert.equal(iw.seeded, true, 'the worktree graph is seeded from the base, not full-built');
+    assert.equal(iw.added, 1, 'only the worktree-added file (c.ts) is applied (+1)');
+    assert.equal(iw.deleted, 0, 'nothing deleted relative to base');
+    assert.equal(iw.modified ?? 0, 0, 'nothing modified relative to base');
+
+    // Isolation: separate graph dir at the worktree path; the base is left untouched.
+    assert.ok(iw.graphDir.startsWith(resolve(wt)), `worktree graph at the worktree (${iw.graphDir})`);
+    assert.ok(!iw.graphDir.startsWith(resolve(base)), 'worktree graph is NOT under the base path');
+    assert.notEqual(iw.graphDir, ib.graphDir, 'base and worktree have distinct graphs');
+    assert.equal(headSha(base), baseHead, 'seeding the worktree did NOT re-stamp the base');
+    assert.equal(headSha(wt), featHead, 'worktree graph stamped at the feat HEAD');
+  } finally {
+    try { git(base, 'worktree', 'remove', '--force', wt); } catch { /* best-effort */ }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('semantic-waiver', 'engine: a semantic waiver suppresses the same issue next run (ADR-27)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-sw-'));
   try {
