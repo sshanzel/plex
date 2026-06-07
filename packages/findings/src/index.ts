@@ -5,5 +5,5 @@ export type { MergedFinding } from './dedupe';
 export { computeSignal, severityWeight, defaultWeights } from './signal';
 export type { SignalWeights } from './signal';
 export { waiverMatches, isWaived } from './waivers';
-export { classifyChanges } from './rounds';
+export { classifyChanges, findingAddressed } from './rounds';
 export type { RegionVec, SignalVec, ClassifyOptions } from './rounds';

@@ -50,6 +50,14 @@ export interface BrainSignal {
   file?: string;
 }
 
+/** A prior-round finding with identity, for autonomous outcome inference (ADR-28). */
+export interface BrainFinding {
+  id: string;
+  file?: string;
+  line?: number;
+  title: string;
+}
+
 export interface RoundState {
   /** Highest round number recorded for this target (0 = none yet). */
   lastN: number;
@@ -58,6 +66,8 @@ export interface RoundState {
   rounds: RoundSummary[];
   /** Prior findings + comments as signals for change attribution (embedded by the engine). */
   signals: BrainSignal[];
+  /** Prior-round findings that have no recorded outcome yet — candidates for fix inference. */
+  priorFindings: BrainFinding[];
 }
 
 type Row = Record<string, unknown>;
@@ -77,6 +87,12 @@ export async function loadRoundState(target: string, config: ReviewerConfig): Pr
       { cypher: 'MATCH (r:Round {target:$t}) RETURN r.n AS n, r.ts AS ts, r.headSha AS headSha ORDER BY r.n', params: { t: target } },
       { cypher: 'MATCH (fi:Finding {target:$t}) RETURN fi.file AS file, fi.line AS line, fi.title AS title', params: { t: target } },
       { cypher: 'MATCH (c:Comment {target:$t}) RETURN c.file AS file, c.line AS line, c.body AS body', params: { t: target } },
+      {
+        cypher:
+          'MATCH (fi:Finding {target:$t}) WHERE fi.outcome IS NULL ' +
+          'RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title',
+        params: { t: target },
+      },
     ],
     { url },
   );
@@ -95,7 +111,27 @@ export async function loadRoundState(target: string, config: ReviewerConfig): Pr
       .filter((s) => s.text),
   ];
 
-  return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals };
+  const priorFindings: BrainFinding[] = rows(res.results?.[4])
+    .map((r) => ({ id: str(r.id) ?? '', file: str(r.file), line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '' }))
+    .filter((f) => f.id && f.title);
+
+  return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
+}
+
+/** Mark a brain finding with an inferred outcome so it isn't re-evaluated (ADR-28). */
+export async function markFindingOutcome(
+  target: string,
+  findingId: string,
+  outcome: string,
+  config: ReviewerConfig,
+): Promise<void> {
+  const url = config.falkordb.url;
+  const res = await runFalkor(
+    target,
+    [{ cypher: 'MATCH (fi:Finding {id:$id}) SET fi.outcome = $o', params: { id: findingId, o: outcome } }],
+    { url },
+  );
+  if (!res.ok) throw falkorDown(res.reason, url);
 }
 
 /** Write the PR hub + this round + its changed/blast edges + ingested comments. */

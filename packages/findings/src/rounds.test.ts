@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { classifyChanges, type RegionVec, type SignalVec } from './rounds';
+import { classifyChanges, findingAddressed, type RegionVec, type SignalVec } from './rounds';
+
+describe('findingAddressed (ADR-28 — autonomous accept)', () => {
+  it('a prior finding semantically matched by a since-change is addressed', () => {
+    expect(findingAddressed([1, 0, 0], [[0, 1, 0], [0.95, 0.05, 0]], 0.6)).toBe(true);
+  });
+  it('a finding with no close change is not addressed', () => {
+    expect(findingAddressed([1, 0, 0], [[0, 1, 0], [0, 0, 1]], 0.6)).toBe(false);
+  });
+  it('respects the threshold', () => {
+    expect(findingAddressed([0.7, 0.7, 0], [[1, 0, 0]], 0.6)).toBe(true); // cos 0.707
+    expect(findingAddressed([0.7, 0.7, 0], [[1, 0, 0]], 0.9)).toBe(false);
+  });
+});
 
 // Literal vectors — exercising the pure decision without any embedding provider.
 const signals: SignalVec[] = [

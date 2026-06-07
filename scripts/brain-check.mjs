@@ -69,7 +69,26 @@ try {
   assert((r2.priorRounds ?? []).length >= 1, 'sees the prior round');
   assert((r2.unexplainedChanges ?? []).length >= 1, 'committed change with no feedback flagged unexplained');
 
-  console.log('✓ brain: rounds + changed-without-feedback (node / built CLI)');
+  // Round 3: autonomous fix inference (ADR-28). Inject a finding into round 2, then make
+  // a commit whose content matches it — the next review must auto-accept it (no prompt).
+  // (Fake embedder is bag-of-tokens, so identical tokens ⇒ cosine 1.0 ⇒ addressed.)
+  const FT = 'alpha beta gamma';
+  const gq = (cypher) => execFileSync('redis-cli', ['-u', URL, 'GRAPH.QUERY', target, cypher], { encoding: 'utf8' });
+  gq(
+    `MATCH (r:Round {target:'${target}', n:2}) MERGE (fi:Finding {id:'injm9'}) ` +
+      `SET fi.target='${target}', fi.title='${FT}', fi.file='src/a.ts', fi.line=1 MERGE (fi)-[:IN_ROUND]->(r)`,
+  );
+  writeFileSync(join(repo, 'src/a.ts'), `// ${FT}\n`);
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'addresses injm9');
+  appendFileSync(join(repo, 'src/a.ts'), 'export const q = 9;\n');
+  git(repo, 'add', '-A');
+  const r3 = JSON.parse(cli(['review', repo, '--staged', '--falkor', '--json'], repo));
+  assert(r3.round === 3, `third review is round 3 (got ${r3.round})`);
+  assert((r3.inferredOutcomes ?? 0) >= 1, `addressed finding auto-accepted (inferredOutcomes ${r3.inferredOutcomes})`);
+  assert(/fixed/.test(gq("MATCH (fi:Finding {id:'injm9'}) RETURN fi.outcome")), 'finding marked fixed in the brain');
+
+  console.log('✓ brain: rounds + changed-without-feedback + autonomous fix-accept (node / built CLI)');
 } finally {
   if (target) {
     try {

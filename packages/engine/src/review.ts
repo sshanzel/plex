@@ -22,7 +22,7 @@ import {
 } from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
-import { classifyChanges, type RegionVec, type SignalVec } from '@plex/findings';
+import { classifyChanges, findingAddressed, type RegionVec, type SignalVec } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/mining';
 import type { RetrievedPitfall } from '@plex/knowledge';
@@ -30,9 +30,9 @@ import { repoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTarget } from './target';
-import { brainEnabled, loadRoundState, recordRound, type RoundSummary } from './brain';
+import { brainEnabled, loadRoundState, recordRound, markFindingOutcome, type RoundSummary } from './brain';
 import { logAudit } from './audit';
-import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings } from './knowledge';
+import { buildKnowledgeQuery, getRelevantKnowledge, requireEmbeddings, submitVerdict } from './knowledge';
 
 /**
  * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
@@ -100,6 +100,8 @@ export interface ReviewContext {
   unexplainedChanges?: AttributedChange[];
   /** PR-thread comments ingested this round (facts). */
   openComments?: PrComment[];
+  /** Prior findings auto-recorded as fixed this round because a change addressed them (ADR-28). */
+  inferredOutcomes?: number;
   /** FalkorDB graph name if the brain/ephemeral layer was published. */
   ephemeralGraph?: string;
   /** Guidance for the reviewing agent. */
@@ -132,7 +134,7 @@ const AGENT_NOTES = [
   '`deterministic` findings are already computed — incorporate them, do not re-derive them.',
   '`changeContext` is the author\'s STATED intent (PR title/description or commit subjects) — NOT ground truth. Check the code against it: flag where the diff does less than it claims, does something the description omits, or contradicts the stated motivation.',
   'A pattern repeated across many files is likely a convention (demote) — unless it is a bug, in which case it is systemic (escalate as a migration).',
-  'Submit findings via `submit_findings` (merged & ranked with deterministic ones); log the user\'s decision via `record_outcome`.',
+  'Submit findings via `submit_findings` (merged & ranked with deterministic ones), then STOP — do NOT ask the user whether to accept/reject/waive. Plex records outcomes autonomously: a finding addressed by a later change is auto-accepted. `record_outcome` is for an EXPLICIT dismissal only (e.g. the responder skill when the author pushes back on a thread).',
 ];
 
 const BRAIN_NOTES = [
@@ -146,6 +148,8 @@ interface BrainContext {
   priorRounds: RoundSummary[];
   unexplainedChanges: AttributedChange[];
   openComments: PrComment[];
+  /** Prior findings auto-accepted this round because a change addressed them (ADR-28). */
+  inferredOutcomes: number;
 }
 
 /**
@@ -179,24 +183,44 @@ async function buildBrainContext(
     comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
   }
 
-  // Attribute changes since the previous round: feedback-driven vs unexplained (ADR-23).
+  // Attribute changes since the previous round (ADR-23) AND infer fixes (ADR-28) — both
+  // from the same embeddings (regions, prior findings+comments as signals, prior findings).
   let unexplainedChanges: AttributedChange[] = [];
+  let inferredOutcomes = 0;
   if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
     const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
-    const signals = [
-      ...state.signals,
-      ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
-    ].filter((s) => s.text.trim());
-    if (changed.length > 0 && signals.length > 0) {
+    if (changed.length > 0) {
+      const signals = [
+        ...state.signals,
+        ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
+      ].filter((s) => s.text.trim());
       const regionTexts = changed.map((c) => c.text);
       const signalTexts = signals.map((s) => s.text);
-      const vecs = await embedder.embed([...regionTexts, ...signalTexts]);
-      const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: vecs[i] ?? [] }));
-      const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
-      unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
-    } else if (changed.length > 0) {
-      // No prior findings/comments to explain anything → everything that moved is unexplained.
-      unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+      const findingTexts = state.priorFindings.map((f) => f.title);
+      const vecs = await embedder.embed([...regionTexts, ...signalTexts, ...findingTexts]);
+      const regionEmb = changed.map((_, i) => vecs[i] ?? []);
+
+      // unexplained-change classification
+      if (signals.length > 0) {
+        const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
+        const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
+        unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
+      } else {
+        unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+      }
+
+      // M9 (ADR-28): a prior finding addressed by a change since → autonomous `accept`,
+      // recorded WITHOUT prompting. Only this explicit fix signal learns; silence does not.
+      const fBase = regionTexts.length + signals.length;
+      for (let i = 0; i < state.priorFindings.length; i++) {
+        const fv = vecs[fBase + i];
+        const f = state.priorFindings[i]!;
+        if (fv && findingAddressed(fv, regionEmb)) {
+          await submitVerdict(opts.repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target);
+          await markFindingOutcome(target, f.id, 'fixed', config);
+          inferredOutcomes++;
+        }
+      }
     }
   }
 
@@ -209,7 +233,7 @@ async function buildBrainContext(
     config,
   );
 
-  return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments };
+  return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredOutcomes };
 }
 
 /** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
@@ -303,10 +327,14 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     priorRounds: brain?.priorRounds,
     unexplainedChanges: brain?.unexplainedChanges,
     openComments: brain?.openComments,
+    inferredOutcomes: brain?.inferredOutcomes,
     ephemeralGraph: brain?.target,
     notes: [
       ...AGENT_NOTES,
       ...(brain ? BRAIN_NOTES : []),
+      ...(brain && brain.inferredOutcomes > 0
+        ? [`Plex auto-recorded ${brain.inferredOutcomes} prior finding(s) as fixed (a change since addressed them) — do not re-raise or ask to confirm those.`]
+        : []),
       ...(graphStale?.refreshed
         ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
         : graphStale

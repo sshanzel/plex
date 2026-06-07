@@ -48,3 +48,17 @@ export function classifyChanges(
       : { ...region, attribution: 'unexplained' as const };
   });
 }
+
+/**
+ * Was a prior-round finding **addressed** by one of the changes since? True when any
+ * changed region's content is semantically close (cosine ≥ threshold) to the finding —
+ * the autonomous "this got fixed" signal that records an `accept` without asking (ADR-28).
+ * Pure: embeddings computed at the boundary, the decision unit-tested with vectors.
+ */
+export function findingAddressed(
+  findingEmbedding: number[],
+  regionEmbeddings: number[][],
+  threshold = 0.6,
+): boolean {
+  return regionEmbeddings.some((r) => cosineSimilarity(findingEmbedding, r) >= threshold);
+}
