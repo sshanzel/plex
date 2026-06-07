@@ -7,3 +7,5 @@ export type { SignalWeights } from './signal';
 export { waiverMatches, isWaived } from './waivers';
 export { classifyChanges, findingAddressed } from './rounds';
 export type { RegionVec, SignalVec, ClassifyOptions } from './rounds';
+export { partitionByCoupling, reviewPlan } from './review-plan';
+export type { ReviewPlan, ReviewUnit, ReviewPlanOptions } from './review-plan';
