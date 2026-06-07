@@ -47,7 +47,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
-  plex mine [repoPath] [--reset] [--all] [--limit <n>]   # mine PR-review history into pitfalls (incremental)
+  plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>]  # mine PR history into pitfalls (incremental; --oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
 
@@ -303,10 +303,15 @@ async function main(): Promise<number> {
     }
     case 'mine': {
       const repoPath = positionals[1] ?? process.cwd();
-      if (typeof flags.limit === 'string') config.mining.maxPrs = Number(flags.limit);
+      const oldest = Boolean(flags.oldest);
+      // `--oldest` needs the full PR list to find the chronological start, not just the
+      // recent `maxPrs` window — raise the fetch ceiling so the oldest PRs are in view.
+      if (oldest) config.mining.maxPrs = Math.max(config.mining.maxPrs, 1000);
       const res = await mineRepo(repoPath, config, {
         reset: Boolean(flags.reset),
         state: flags.all ? 'all' : 'merged',
+        order: oldest ? 'oldest' : undefined,
+        limit: typeof flags.limit === 'string' ? Number(flags.limit) : undefined,
       });
       process.stdout.write(
         `Mined ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +

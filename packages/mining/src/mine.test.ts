@@ -76,6 +76,29 @@ describe('mineHistory (offline, LLM-only)', () => {
     expect(second.result.pitfalls).toBe(0);
   });
 
+  it('scans by order + limit and advances the cursor (chronological mining)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mine-ord-'));
+    const store = new KnowledgeStore(dir);
+    const embed = new FakeEmbeddingProvider();
+    // gh returns newest-first; mining sorts per `order`.
+    const threePrs = {
+      listPrs: async (): Promise<PrRef[]> => [
+        { number: 3, mergedAt: '2026-01-03' },
+        { number: 2, mergedAt: '2026-01-02' },
+        { number: 1, mergedAt: '2026-01-01' },
+      ],
+      fetchCommentsForPr: async (_cwd: string, pr: PrRef): Promise<RawComment[]> => [comment(pr.number, `${pr.number}1`, 'x')],
+    };
+    const run = (o: { order?: 'newest' | 'oldest'; limit?: number; alreadyScanned?: number[] }) =>
+      mineHistory(store, embed, config, { cwd: '.', repoName: 'r', fetch: threePrs, llm: fakeLlm, ...o });
+
+    expect((await run({ order: 'oldest', limit: 2 })).scannedPrs).toEqual([1, 2]); // chronological first 2
+    expect((await run({ limit: 2 })).scannedPrs).toEqual([2, 3]); // newest-first (default), sorted for storage
+    const next = await run({ order: 'oldest', limit: 2, alreadyScanned: [1, 2] });
+    expect(next.result.prsScanned).toBe(1); // only PR 3 left
+    expect(next.scannedPrs).toEqual([1, 2, 3]); // cursor advances
+  });
+
   it('requires an LLM distiller (no silent heuristic)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mine2-'));
     const store = new KnowledgeStore(dir);

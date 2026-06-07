@@ -34,6 +34,10 @@ export interface MineRepoOptions {
   /** Re-scan from scratch, ignoring the saved cursor. */
   reset?: boolean;
   state?: 'merged' | 'all';
+  /** `oldest` = chronological (PR #1 up); default newest-first. */
+  order?: 'newest' | 'oldest';
+  /** Max fresh PRs to scan this run (the cursor advances for the next run). */
+  limit?: number;
 }
 
 /**
@@ -56,6 +60,8 @@ export async function mineRepo(
     repoName: repo,
     alreadyScanned: prior.scannedPrs,
     state: opts.state,
+    order: opts.order,
+    limit: opts.limit,
   });
 
   await saveMiningState(repoPath, config, { repo, scannedPrs, lastRun: new Date().toISOString() });

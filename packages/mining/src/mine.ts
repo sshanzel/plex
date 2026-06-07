@@ -14,6 +14,11 @@ export interface MineOptions {
   /** PR numbers already scanned in a previous run — skipped to make mining incremental. */
   alreadyScanned?: number[];
   state?: 'merged' | 'all';
+  /** PR order to scan: `oldest` (chronological, lowest number first) or `newest` (default). */
+  order?: 'newest' | 'oldest';
+  /** Max number of fresh (unscanned) PRs to scan THIS run; the cursor advances so the next
+   *  run continues from where this left off. Unset = scan all fresh PRs. */
+  limit?: number;
   /** Injectable GitHub layer (defaults to the real `gh` CLI) — lets tests run offline. */
   fetch?: {
     listPrs: typeof listPrs;
@@ -47,8 +52,12 @@ export async function scanHistory(
 ): Promise<ScanResult> {
   const api = opts.fetch ?? { listPrs, fetchCommentsForPr };
   const skip = new Set(opts.alreadyScanned ?? []);
-  const prs = await api.listPrs({ cwd: opts.cwd, maxPrs: config.mining.maxPrs, state: opts.state });
-  const fresh = prs.filter((p) => !skip.has(p.number));
+  const all = await api.listPrs({ cwd: opts.cwd, maxPrs: config.mining.maxPrs, state: opts.state });
+  // Order by PR number — oldest-first for chronological mining, else newest-first (default).
+  const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
+  const unscanned = ordered.filter((p) => !skip.has(p.number));
+  // `limit` caps how many fresh PRs this run scans; the cursor advances, so the next run continues.
+  const fresh = opts.limit != null ? unscanned.slice(0, opts.limit) : unscanned;
 
   const raw: RawComment[] = [];
   for (const pr of fresh) raw.push(...(await api.fetchCommentsForPr(opts.cwd, pr)));
