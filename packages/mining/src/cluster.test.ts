@@ -52,6 +52,37 @@ describe('greedyCluster', () => {
   });
 });
 
+describe('greedyCluster — anisotropic embeddings (the threshold/centroid-sink finding)', () => {
+  // Synthetic embeddings shaped like REAL ones (voyage-code-3): a shared "common" component
+  // (dim 0) gives even unrelated vectors a non-trivial baseline cosine, on top of a per-group
+  // direction and a tiny per-member wiggle. Tuned so within-group cosine ≈ 0.999 and
+  // cross-group ≈ 0.65 — the anisotropy that makes the running-mean centroid a SINK at a low
+  // threshold (the running mean drifts toward the common direction and over-attracts). Clean
+  // orthogonal fixtures (the other tests here) can't surface this; this is what was missing
+  // when `clusterThreshold: 0.6` collapsed 325 real comments into one cluster → 0 pitfalls.
+  const NG = 3, NM = 4, C = 1.363, G = 1, e = 0.05;
+  const dim = 1 + NG + NG * NM;
+  const vec = (g: number, m: number): number[] => {
+    const v = new Array<number>(dim).fill(0);
+    v[0] = C; // shared common component (anisotropy)
+    v[1 + g] = G; // per-group direction
+    v[1 + NG + g * NM + m] = e; // tiny unique per-member wiggle (within-group cosine < 1)
+    return v;
+  };
+  // Interleave groups so a cross-group vector is adjacent early — the worst case for the sink.
+  const vectors: number[][] = [];
+  for (let m = 0; m < NM; m++) for (let g = 0; g < NG; g++) vectors.push(vec(g, m));
+
+  it('collapses into ONE cluster at the old 0.6 threshold (reproduces the sink)', () => {
+    expect(greedyCluster(vectors, 0.6)).toHaveLength(1);
+  });
+
+  it('separates into the real groups at the 0.8 default (the fix)', () => {
+    const sizes = greedyCluster(vectors, 0.8).map((c) => c.length).sort((a, b) => b - a);
+    expect(sizes).toEqual([NM, NM, NM]); // 3 groups of 4 — no sink
+  });
+});
+
 describe('centroid', () => {
   it('is the arithmetic mean of the rows', () => {
     expect(centroid([[1, 1], [3, 3], [5, 5]])).toEqual([3, 3]);

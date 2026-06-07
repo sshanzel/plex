@@ -47,4 +47,10 @@ describe('resolveConfig', () => {
     resolveConfig({ coChange: { maxCommitFiles: 1 } as never });
     expect(defaultConfig.coChange.maxCommitFiles).toBe(25);
   });
+
+  it('defaults clusterThreshold to 0.8 (tuned for real embeddings — guards the sink fix)', () => {
+    // <~0.7 turns the running-mean centroid into a sink on anisotropic embeddings; see
+    // cluster.test.ts and MiningConfig. Pinned so a revert to 0.6 is caught.
+    expect(resolveConfig().mining.clusterThreshold).toBe(0.8);
+  });
 });
