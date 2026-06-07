@@ -14,10 +14,9 @@ coverage/
 npm-debug.log*
 pnpm-debug.log*
 
-# env / secrets
+# env / secrets (Plex has no .env; ignored as a generic safety net)
 .env
 .env.*
-!.env.example
 
 # editor / OS
 .DS_Store

@@ -77,12 +77,9 @@ claude mcp add plex -- node /abs/path/to/dist/plex-mcp.js
 ```
 The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent is at [`.claude/agents/`](.). (Verify end-to-end any time with `pnpm test:brain`.)
 
-## Inspecting the graphs (optional)
+## Inspecting a review (optional)
 
-```bash
-pnpm ui:kuzu             # Kùzu Explorer → http://localhost:58000 (set KUZU_DB_DIR/KUZU_FILE in .env)
-```
-Kùzu Explorer browses a repo's durable code graph + PR brain; `review --html` writes a self-contained Cytoscape view of the blast radius.
+`plex review --html` writes a single self-contained Cytoscape file — the changed symbols and their blast-radius neighbors. No services, nothing to run.
 
 ## CLI
 
