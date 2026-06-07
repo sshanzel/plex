@@ -13,7 +13,7 @@ packages/
   core/          shared types, config, provider interfaces (no deps)
   ingest/        diff adapters: local git + gh PR → NormalizedDiff
   code-graph/    Kùzu per-repo graph: TS symbols/imports + git co-change   [M1]
-  neighborhood/  diff→symbols→blast radius; optional FalkorDB ephemeral graph [M1]
+  neighborhood/  diff→symbols→blast radius (Kùzu) [M1]
   findings/      merge / dedup / rank / triage                            [M2]
   deterministic/ Semgrep / ast-grep runner                                [M2]
   knowledge/     knowledge graph + retrieval + plex.md                [M3]
@@ -50,15 +50,11 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 ## Local services (must remember)
 
 - **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage. The knowledge base is a separate JSON store (ADR-18). Pinned image: `kuzudb/explorer:0.11.3` (matches `kuzu@0.11.3`).
-- **FalkorDB** is the per-PR **working-memory brain** and is **required for the review flow** (ADR-22, M6 — supersedes its old "optional" status): it holds rounds/findings/verdicts/comments and powers the round-aware "changed-without-feedback" signal. Run it with AOF via Docker Compose (pinned `falkordb/falkordb:v4.18.9`):
-  ```bash
-  pnpm db:up     # plex-falkordb (--appendonly yes): redis on :56379, Browser on http://localhost:53000
-  ```
-  Ports are in the rarely-used 5xxxx range (override in `.env`). Set `PLEX_FALKORDB_URL=redis://localhost:56379`. The MCP server enables FalkorDB by default and **errors** (clear "run `pnpm db:up`") if it's unreachable — no in-process fallback. The CLI keeps `--falkor` opt-in for quick local checks. **Embeddings are also required for the brain** (semantic attribution, ADR-13): set `PLEX_EMBEDDING_PROVIDER` + key.
+- **The PR brain is embedded Kùzu** (`<repo-data>/brain.kuzu`) — rounds/findings/verdicts/comments + the round-aware "changed-without-feedback" signal. **No FalkorDB, no Docker, no service** (ADR-30, M11 — supersedes ADR-07/22). A review needs nothing running. **Embeddings are optional** (ADR-30): without a provider the brain still records rounds/findings; only the semantic signals (unexplained changes + fix inference) are skipped. Set a provider once via `plex init` (→ `~/.plex/config.json`) or `PLEX_EMBEDDING_PROVIDER` + key.
 
 ### Native-integration gotchas (hard-won — see ADR-16, ADR-17)
 
-- **Kùzu + FalkorDB SIGSEGV in the same process.** Never `import('falkordb')` in a process that loaded the Kùzu addon. ALL FalkorDB I/O (reads *and* writes since M6) goes through the isolated child (`packages/neighborhood/src/falkor-worker.mjs`, a generic `runFalkor` Cypher executor). Keep it that way. Corollary (M6): a Kùzu-loaded process that *spawns* that worker SIGSEGVs on teardown **under tsx** — so the PR-brain E2E runs the built CLI under **node** (`pnpm test:brain`), not the tsx runner; the long-lived node MCP server is fine.
+- **FalkorDB is gone (M11/ADR-30)** — the brain is Kùzu now, so the Kùzu+FalkorDB SIGSEGV class and the isolated worker are retired. Kùzu+Kùzu share a process fine. The **tsx Kùzu open-limit (ADR-17) still applies**: keep tsx integration scenarios to **≤2 Kùzu opens**, and the full-review E2E stays a **node** check (`pnpm test:brain`). A review opens Kùzu once for the neighborhood + once for the brain; any auto-index/refresh runs in an **isolated child** so the review process never exceeds that.
 - **tsx + Kùzu crashes after ~5 `Database` opens in one process.** Plain `node` is stable (12+). So: integration tests run one scenario per tsx process (`pnpm test:integration`), vitest holds only pure units (`pnpm test:unit`), and the shipped server should run built JS under node — not tsx — and **reuse a `Database` per dir** rather than open/close per request.
 - Always close the Kùzu `Connection` before the `Database` (`CodeGraphDB.close()`).
 - Adding a `.test.ts` that opens Kùzu will crash vitest teardown — put it in `integration.mts` instead.
@@ -67,7 +63,7 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 
 - **Verify against reality, not memory.** Both DB clients were validated by smoke tests; when using a new API, check the package's `.d.ts` first (we did this for `kuzu@0.11.3`).
 - **Kùzu queries:** use *prepared statements with named `$params`* for anything containing file paths/user data — never string-concatenate. Undirected traversal `-[r:Rel]-` works; frontier expansion uses `WHERE x.id IN $ids`.
-- **Pure core, impure edges:** keep scoring/ranking/co-change math as pure functions (unit-tested without I/O); isolate git/Kùzu/FalkorDB calls at the boundaries.
+- **Pure core, impure edges:** keep scoring/ranking/co-change math as pure functions (unit-tested without I/O); isolate git/Kùzu calls at the boundaries.
 - **Tests prefer real fixtures:** diff/graph tests build a throwaway git repo + in-memory/temp Kùzu DB rather than synthetic strings (a hand-written multi-file diff already fooled `parse-diff` once — see M0 notes).
 - **Provenance is mandatory** on knowledge: every Pitfall links its source Incidents; every graph edge carries `provenance` + `weight`.
 - **Document as you go:** each milestone gets a `docs/milestones/MN.md` (intent → acceptance criteria → what was built → verification). New decisions/deviations get an ADR. This is the user's explicit "always check we did what we intended" requirement — honor it.
@@ -94,9 +90,9 @@ Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive 
 
 ## Scope
 
-- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain (round-aware review + changed-without-feedback + audit log)**, **M7 incremental indexing + graph staleness + git hooks**, **M8 truly-incremental co-change + semantic waiver suppression**, **M9 autonomous review (outcomes inferred from response, no verdict prompts)**.
+- **Done:** M0 scaffolding, M1 review loop, M2 precision/determinism, M3 knowledge, **M4 mining**, M5 promotion + viz + build, **M6 PR brain**, **M7 incremental indexing + staleness + hooks**, **M8 incremental co-change + semantic waivers**, **M9 autonomous review**, **M10 one-command setup + centralized storage**, **M11 brain on Kùzu (FalkorDB removed; embeddings optional; auto-index)**.
 - **Out of scope (by request):** the multi-repo workspace in M5.
 
 ## Status
 
-All milestones complete (M0–M9). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 28 decisions. `pnpm test` green (51 unit + 10 integration); the PR brain is verified E2E under node via `pnpm test:brain`; `pnpm build` produces node-runnable binaries. Keep the graph fresh with `plex index --incremental` (TS *and* co-change are now incremental — or `plex install-hooks`); a review **auto-refreshes** the graph incrementally if it has drifted behind HEAD (opt out with `autoIndex:false`). Reviews are **autonomous** — submit findings and stop; a finding addressed by a later change is auto-`accept`ed on the next round (ADR-28), reject stays agent/responder-driven, silence infers nothing. Waivers suppress the same issue across rounds by meaning (semantic). `reconcile` (MCP `reconcile_outcomes` / `plex reconcile`) is the cheap, Kùzu-free "did the author fix these?" check to call after a push / on thread-resolution — not a pre-push git hook (which would run DB/network on every push). The MCP server exposes 14 tools (FalkorDB + an embedding provider required for the review flow — M6).
+All milestones complete (M0–M11). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the 30 decisions. **Fully embedded (Kùzu) — no services, no Docker (ADR-30).** `pnpm test` green (51 unit + 11 integration); the PR brain is verified E2E under node via `pnpm test:brain`; `pnpm build` produces node-runnable binaries. Install: `plex init` (optional — asks for a key, registers the MCP, indexes) or just review — the **first review auto-indexes** the repo, and reviews auto-refresh the graph on drift. Reviews are **autonomous** — submit findings and stop; a finding addressed by a later change is auto-`accept`ed (ADR-28), reject stays agent/responder-driven, silence infers nothing. Waivers suppress the same issue across rounds by meaning (semantic). `reconcile` (MCP `reconcile_outcomes` / `plex reconcile`) is the cheap "did the author fix these?" check for after a push. The MCP server exposes 14 tools; per-repo data lives outside the repo (`~/.plex/repos/<id>`).

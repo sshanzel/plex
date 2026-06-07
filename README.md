@@ -43,62 +43,50 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
 
 ## Quick start
 
-A full (brain-backed) review needs the built binaries, **FalkorDB**, and a real **embedding provider**. A code-graph `index` needs none of these — embeddings + FalkorDB power the *review*, not the index.
+Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run. A review works against any git repo with zero setup; an embedding provider is **optional** (it adds semantic knowledge + the semantic review signals).
 
 ```bash
 pnpm install
 pnpm build                         # → dist/plex.js, dist/plex-mcp.js  (run under node; ADR-19)
 
-# 1. start FalkorDB — the per-PR review brain (required; AOF-persisted)
-cp .env.example .env               # ports/paths (FalkorDB on :56379 by default)
-pnpm db:up                         # Browser → http://localhost:53000
+# Optional: one-command setup (asks for an embedding key, registers the MCP, indexes this repo)
+node dist/plex.js init
 
-# 2. choose a real embedding provider + key (the brain + knowledge need it)
-export PLEX_FALKORDB_URL=redis://localhost:56379
-export PLEX_EMBEDDING_PROVIDER=voyage          # voyage | openai | gemini | ollama
-export VOYAGE_API_KEY=...                       # or OPENAI_API_KEY / GEMINI_API_KEY; ollama needs none
+# …or just review — the first review AUTO-INDEXES the repo, no prior step needed:
+node dist/plex.js review /path/to/repo --staged     # or --branch main / --pr 123 / --html nb.html
 
-# 3. index a repo (full build), and auto-refresh it on pull/checkout/rebase
-node dist/plex.js index /path/to/repo
+# Optional: keep the graph fresh automatically on pull/checkout/rebase
 node dist/plex.js install-hooks /path/to/repo
-#   later refreshes are O(changed files):  node dist/plex.js index /path/to/repo --incremental
+#   manual refresh is O(changed files):  node dist/plex.js index /path/to/repo --incremental
 
-# 4. review changes (brain on with --falkor; auto-refreshes the graph if it drifted)
-node dist/plex.js review /path/to/repo --pr 123 --falkor    # or --staged / --branch main / --html nb.html
-
-# build knowledge from PR history (distilled via your claude subscription); seed from <repo>/plex.md
-node dist/plex.js mine /path/to/repo
-node dist/plex.js seed /path/to/repo
+# Optional: an embedding provider (semantic knowledge + brain signals). Set once in
+# ~/.plex/config.json via `init`, or export:
+export PLEX_EMBEDDING_PROVIDER=voyage              # voyage | openai | gemini | ollama
+export VOYAGE_API_KEY=...                           # or OPENAI_API_KEY / GEMINI_API_KEY; ollama needs none
+node dist/plex.js mine /path/to/repo                # build knowledge from PR history (rides your claude sub)
+node dist/plex.js seed /path/to/repo               # seed from <repo>/plex.md
 ```
 
-> **Heads up:** the plex binaries don't read `.env` (only Docker Compose does) — `export` the vars above, or pass them to the MCP server with `-e` (below). Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine.
+> Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` (nothing to `.gitignore`). Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
 
 ### Use it from Claude Code (MCP)
 
-The MCP review flow **requires** FalkorDB + an embedding key, so register them with the server:
+```bash
+node dist/plex.js init          # registers the MCP for you, …or do it manually:
+claude mcp add plex -- node /abs/path/to/dist/plex-mcp.js
+```
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent is at [`.claude/agents/`](.). (Verify end-to-end any time with `pnpm test:brain`.)
+
+## Inspecting the graphs (optional)
 
 ```bash
-claude mcp add plex \
-  -e PLEX_FALKORDB_URL=redis://localhost:56379 \
-  -e PLEX_EMBEDDING_PROVIDER=voyage \
-  -e VOYAGE_API_KEY=... \
-  -- node /abs/path/to/dist/plex-mcp.js
+pnpm ui:kuzu             # Kùzu Explorer → http://localhost:58000 (set KUZU_DB_DIR/KUZU_FILE in .env)
 ```
-Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent is included at [`.claude/agents/`](.) — drop one into any repo. (Verify the brain end-to-end any time with `pnpm test:brain`.)
-
-## Supporting services (Docker Compose)
-
-```bash
-pnpm db:up               # FalkorDB (required) + Browser → http://localhost:53000  (redis on :56379)
-pnpm ui:kuzu             # optional: Kùzu Explorer → http://localhost:58000 (set KUZU_DB_DIR/KUZU_FILE)
-pnpm db:down             # add -v to wipe the brain volume for a clean slate
-```
-
-The FalkorDB Browser shows each PR's **brain** graph (`<repo>__<target>`: rounds, findings, verdicts, comments, blast radius); Kùzu Explorer browses a repo's durable code graph. `review --html` writes a self-contained Cytoscape view of the blast radius.
+Kùzu Explorer browses a repo's durable code graph + PR brain; `review --html` writes a self-contained Cytoscape view of the blast radius.
 
 ## CLI
 
-`plex index [--incremental] · install-hooks · uninstall-hooks · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
+`plex init · doctor · index [--incremental] · install-hooks · uninstall-hooks · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
 
 ## MCP tools (14)
 
@@ -107,9 +95,8 @@ The FalkorDB Browser shows each PR's **brain** graph (`<repo>__<target>`: rounds
 ## Architecture
 
 - **MCP server + CLI** — the integration seam; the agent brings the LLM, Plex brings grounding + memory.
-- **Kùzu** (embedded, MIT) — one durable code graph per repo (symbols, imports, co-change, precise alias edges). Built once, refreshed incrementally (TS + co-change); reviews auto-refresh it when it has drifted behind HEAD.
-- **Knowledge base** — JSON-backed pitfalls + incidents with embeddings; pluggable embedding provider (Voyage / OpenAI / Gemini / Ollama). Waivers suppress the same issue across rounds *by meaning* (semantic), surviving line drift / rewording.
-- **FalkorDB** (required for the review brain, in-memory + AOF) — the per-PR "brain": rounds, findings, verdicts, PR comments, blast radius, and the embedding-based *changed-without-feedback* signal. Inspectable live in the Browser.
+- **Kùzu** (embedded, MIT) — durable per-repo code graph (symbols, imports, co-change, precise alias edges) **and** the per-PR brain (rounds, findings, verdicts, comments, the *changed-without-feedback* signal). One embedded engine, no service (ADR-30). Built once, refreshed incrementally; reviews auto-index/auto-refresh on first use / drift.
+- **Knowledge base** — JSON-backed pitfalls + incidents with embeddings; pluggable, **optional** embedding provider (Voyage / OpenAI / Gemini / Ollama). Waivers suppress the same issue across rounds *by meaning* (semantic), surviving line drift / rewording.
 
 See [`docs/architecture.md`](docs/architecture.md) and the decision log in [`docs/adr/README.md`](docs/adr/README.md).
 
@@ -117,20 +104,19 @@ See [`docs/architecture.md`](docs/architecture.md) and the decision log in [`doc
 
 Environment variables (all optional):
 
-The plex binaries read these from the **process env** (not `.env` — export them, or pass via `claude mcp add -e`):
+Set once via `plex init` (→ `~/.plex/config.json`), or as process env (which overrides the file):
 
 | Var | Purpose |
 |---|---|
-| `PLEX_FALKORDB_URL` | FalkorDB for the review brain — **required** for `review --falkor` / the MCP flow (e.g. `redis://localhost:56379`) |
-| `PLEX_EMBEDDING_PROVIDER` | **required** for the brain + knowledge: `voyage` \| `openai` \| `gemini` \| `ollama` (`none` disables; `fake` is test-only) |
+| `PLEX_EMBEDDING_PROVIDER` | **optional** — semantic knowledge + brain signals: `voyage` \| `openai` \| `gemini` \| `ollama` (`none` = off; `fake` is test-only) |
 | *(provider key)* | `VOYAGE_API_KEY` \| `OPENAI_API_KEY` \| `GEMINI_API_KEY` (Ollama needs none) |
 | `PLEX_LLM_PROVIDER` | mining distiller: `claude-cli` (default) \| `anthropic` \| `openai` |
-| `PLEX_DATA_DIR` | per-repo data dir (default `.plex`) |
+| `PLEX_DATA_DIR` | per-repo data dir (default `''` = centralized `~/.plex/repos/<id>`; `.plex` = in-repo) |
 | `PLEX_KNOWLEDGE_DIR` | global knowledge base (default `~/.plex/knowledge`) |
 
 ## Status
 
-All milestones complete (M0–M8). `pnpm test` runs the unit (vitest, 48) + integration (tsx, 10) suites; `pnpm test:brain` verifies the PR brain end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces. See [`docs/milestones/`](docs/milestones/) and the [27-entry decision log](docs/adr/README.md).
+All milestones complete (M0–M11). `pnpm test` runs the unit (vitest, 51) + integration (tsx, 11) suites; `pnpm test:brain` verifies the PR brain end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces, fully embedded (Kùzu — no services). See [`docs/milestones/`](docs/milestones/) and the [30-entry decision log](docs/adr/README.md).
 
 ## License
 
