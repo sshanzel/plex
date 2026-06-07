@@ -44,7 +44,14 @@ export interface LlmConfig {
 export interface MiningConfig {
   /** Merged PRs to scan, most recent first (0 = as many as gh returns). */
   maxPrs: number;
-  /** Cosine threshold to group review comments into one pitfall cluster. */
+  /**
+   * Cosine threshold to group review comments into one pitfall cluster. Tuned for
+   * code-specialized embeddings (voyage-code-3): related comments sit ~0.86, unrelated
+   * ~0.40, but the running-mean centroid concentrates the embeddings' anisotropic common
+   * component, so a *too-low* threshold makes the first cluster a SINK that swallows
+   * everything (0.6 collapsed 325 real comments into 1 cluster → 0 pitfalls). ~0.8 keeps
+   * clusters tight. Override per-model with `plex mine --threshold`.
+   */
   clusterThreshold: number;
   /**
    * Minimum cluster size sent to the distiller. Default 1: since the LLM is the quality
@@ -109,7 +116,7 @@ export const defaultConfig: ReviewerConfig = {
   },
   mining: {
     maxPrs: 100,
-    clusterThreshold: 0.6,
+    clusterThreshold: 0.8, // tuned for code embeddings; <~0.7 sinks everything into one cluster (see MiningConfig)
     minClusterSize: 1,
   },
 };

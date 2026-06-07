@@ -47,7 +47,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
-  plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>]  # mine PR history into pitfalls (incremental; --oldest = chronological)
+  plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
 
@@ -307,6 +307,8 @@ async function main(): Promise<number> {
       // `--oldest` needs the full PR list to find the chronological start, not just the
       // recent `maxPrs` window — raise the fetch ceiling so the oldest PRs are in view.
       if (oldest) config.mining.maxPrs = Math.max(config.mining.maxPrs, 1000);
+      if (typeof flags.threshold === 'string') config.mining.clusterThreshold = Number(flags.threshold);
+      if (typeof flags['min-cluster'] === 'string') config.mining.minClusterSize = Number(flags['min-cluster']);
       const res = await mineRepo(repoPath, config, {
         reset: Boolean(flags.reset),
         state: flags.all ? 'all' : 'merged',
