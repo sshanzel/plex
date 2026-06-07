@@ -18,7 +18,7 @@
     "ui:kuzu": "docker compose --profile kuzu up -d kuzu-explorer",
     "test": "vitest run && pnpm test:integration",
     "test:unit": "vitest run",
-    "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts incremental && tsx packages/engine/integration.mts cochange-inc && tsx packages/engine/integration.mts semantic-waiver && tsx packages/engine/integration.mts reconcile && tsx packages/engine/integration.mts worktree-seed && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts brain",
+    "test:integration": "tsx packages/engine/integration.mts build && tsx packages/engine/integration.mts incremental && tsx packages/engine/integration.mts cochange-inc && tsx packages/engine/integration.mts cochange-weak && tsx packages/engine/integration.mts semantic-waiver && tsx packages/engine/integration.mts reconcile && tsx packages/engine/integration.mts worktree-seed && tsx packages/engine/integration.mts neighborhood && tsx packages/engine/integration.mts precise && tsx packages/engine/integration.mts engine && tsx packages/engine/integration.mts ranking && tsx packages/engine/integration.mts knowledge && tsx packages/engine/integration.mts brain",
     "test:watch": "vitest",
     "test:brain": "pnpm build && node scripts/brain-check.mjs",
     "test:worktree": "pnpm build && node scripts/worktree-seed-check.mjs",

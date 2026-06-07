@@ -271,6 +271,49 @@ test('cochange-inc', 'code-graph: incremental co-change merges new commits (ADR-
   }
 });
 
+test('cochange-weak', 'code-graph: incremental never CREATES a singleton pair (ADR-26 weak path)', async () => {
+  // The denoising invariant (build.ts weak path): a pair that reaches minPairCount in no
+  // single window must stay pruned — incremental accumulates into stored pairs but never
+  // creates a new under-threshold one. cochange-inc covers the strong/accumulate side.
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-ccw-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-ccwdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'T');
+    mkdirSync(join(repo, 'src'));
+    for (const f of ['a', 'b', 'c', 'd']) writeFileSync(join(repo, `src/${f}.ts`), `export const ${f} = 1;\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init'); // couples every pair ONCE (incl. c-d) — all below minPairCount=2
+    for (let i = 0; i < 2; i++) {
+      appendFileSync(join(repo, 'src/a.ts'), `// ${i}\n`);
+      appendFileSync(join(repo, 'src/b.ts'), `// ${i}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', `couple ab ${i}`); // a-b reaches count 3
+    }
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }); // a-b edge; c-d pruned (cnt 1)
+
+    // One incremental commit couples c-d a SECOND time — but only once in THIS window (cnt 1).
+    appendFileSync(join(repo, 'src/c.ts'), '// x\n');
+    appendFileSync(join(repo, 'src/d.ts'), '// x\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'touch cd');
+    await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const ab = (await getCoChangeEdges(db, ['src/a.ts'])).find((e) => e.dst === 'src/b.ts');
+      assert.ok(ab, 'the strong a-b pair still exists (sanity)');
+      const cd = (await getCoChangeEdges(db, ['src/c.ts'])).find((e) => e.dst === 'src/d.ts');
+      assert.equal(cd, undefined, 'the under-threshold c-d singleton was NOT created by the incremental');
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-28/30)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-rec-'));
   const config = resolveConfig({ dataDir: '.plex', knowledgeDir: join(repo, 'k'), embedding: { provider: 'fake' } });
