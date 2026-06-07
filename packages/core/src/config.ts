@@ -10,8 +10,10 @@ export interface EmbeddingConfig {
   provider: EmbeddingProviderName;
   /** Model id, provider-specific (e.g. `voyage-code-3`, `text-embedding-3-small`). */
   model?: string;
-  /** Env var holding the API key (kept out of config so secrets never get serialized). */
+  /** Env var holding the API key (preferred — keeps secrets out of serialized config). */
   apiKeyEnv?: string;
+  /** Direct API key from `~/.plex/config.json` (ADR-29). Used if no env key is present. */
+  apiKey?: string;
   /** Override base URL (e.g. Ollama at http://localhost:11434). */
   baseUrl?: string;
 }

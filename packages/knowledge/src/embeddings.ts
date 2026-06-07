@@ -103,17 +103,19 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
  */
 export function createEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider | null {
   const env = process.env;
+  // Prefer an env key; else the key stored in ~/.plex/config.json (ADR-29).
+  const keyFor = (envVar: string): string | undefined => env[cfg.apiKeyEnv ?? envVar] ?? cfg.apiKey;
   switch (cfg.provider) {
     case 'voyage': {
-      const key = env[cfg.apiKeyEnv ?? 'VOYAGE_API_KEY'];
+      const key = keyFor('VOYAGE_API_KEY');
       return key ? new VoyageEmbeddingProvider(cfg.model ?? 'voyage-code-3', key, cfg.baseUrl) : null;
     }
     case 'openai': {
-      const key = env[cfg.apiKeyEnv ?? 'OPENAI_API_KEY'];
+      const key = keyFor('OPENAI_API_KEY');
       return key ? new OpenAIEmbeddingProvider(cfg.model ?? 'text-embedding-3-small', key, cfg.baseUrl) : null;
     }
     case 'gemini': {
-      const key = env[cfg.apiKeyEnv ?? 'GEMINI_API_KEY'];
+      const key = keyFor('GEMINI_API_KEY');
       return key ? new GeminiEmbeddingProvider(cfg.model ?? 'gemini-embedding-001', key, cfg.baseUrl) : null;
     }
     case 'ollama':

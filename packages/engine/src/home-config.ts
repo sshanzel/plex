@@ -1,0 +1,49 @@
+import os from 'node:os';
+import path from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
+
+/**
+ * Persistent global config at `~/.plex/config.json` — written by `plex init`, read by the
+ * MCP server and CLI, so a user enters their FalkorDB URL + embedding key **once** instead
+ * of per-MCP-registration. Env vars still override it. The file is chmod 600 (it can hold
+ * an API key); the key never enters `ReviewerConfig` serialization paths beyond the
+ * embedding provider that needs it.
+ */
+export interface HomeConfig {
+  embedding?: { provider?: EmbeddingProviderName; apiKey?: string; model?: string };
+  falkordb?: { url?: string };
+  llm?: { provider?: LlmProviderName; model?: string };
+}
+
+export const homeConfigPath = (): string => path.join(os.homedir(), '.plex', 'config.json');
+
+export function readHomeConfig(): HomeConfig {
+  try {
+    const f = homeConfigPath();
+    return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as HomeConfig) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Merge `patch` into `~/.plex/config.json` (chmod 600). Returns the merged config. */
+export function writeHomeConfig(patch: HomeConfig): HomeConfig {
+  const current = readHomeConfig();
+  const merged: HomeConfig = {
+    ...current,
+    ...patch,
+    embedding: { ...current.embedding, ...patch.embedding },
+    falkordb: { ...current.falkordb, ...patch.falkordb },
+    llm: { ...current.llm, ...patch.llm },
+  };
+  const f = homeConfigPath();
+  mkdirSync(path.dirname(f), { recursive: true });
+  writeFileSync(f, JSON.stringify(merged, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  try {
+    chmodSync(f, 0o600);
+  } catch {
+    /* best-effort on platforms without chmod */
+  }
+  return merged;
+}

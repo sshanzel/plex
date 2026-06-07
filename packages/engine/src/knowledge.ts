@@ -41,6 +41,11 @@ export function requireEmbeddings(config: ReviewerConfig) {
   return p;
 }
 
+/** Is a real embedding provider (with its key) configured? — for `plex doctor`. */
+export function embeddingReady(config: ReviewerConfig): boolean {
+  return config.embedding.provider !== 'fake' && createEmbeddingProvider(config.embedding) != null;
+}
+
 /**
  * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
  * Degrades gracefully: with no embedding provider configured, returns nothing (review
