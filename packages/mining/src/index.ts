@@ -4,7 +4,7 @@ export type { PrRef } from './github';
 export { isSubstantive, categorize } from './classify';
 export { outcomeFor, outcomeWeight } from './outcome';
 export { greedyCluster, centroid } from './cluster';
-export { llmDistill } from './distill';
+export { llmDistill, minedPitfallId } from './distill';
 export type { ClusterInput } from './distill';
 export {
   ClaudeCliCompletionProvider,

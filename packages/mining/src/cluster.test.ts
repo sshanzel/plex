@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { greedyCluster, centroid } from './cluster';
+import { minedPitfallId } from './distill';
+
+// Mined-pitfall ids must be collision-free: titles differing only in punctuation, or
+// emoji/CJK-only titles (which slug to ''), used to produce identical ids and silently
+// overwrite each other in the knowledge base.
+describe('minedPitfallId', () => {
+  it('disambiguates titles that share a slug (punctuation-only difference)', () => {
+    expect(minedPitfallId('Fix the bug!')).not.toBe(minedPitfallId('Fix the bug?'));
+  });
+  it('produces distinct, non-empty ids for emoji/CJK-only titles', () => {
+    const a = minedPitfallId('🚀🚀');
+    const b = minedPitfallId('💯');
+    expect(a).not.toBe(b);
+    expect(a).not.toMatch(/:-?$/); // never ends in an empty slug segment
+  });
+  it('is stable for the same title and stamps the repo when given', () => {
+    expect(minedPitfallId('Validate tenant id', 'plex')).toBe(minedPitfallId('Validate tenant id', 'plex'));
+    expect(minedPitfallId('Validate tenant id', 'plex')).toContain('pf:mined:plex:');
+  });
+});
 
 // Greedy embedding clustering groups review comments into pitfall candidates. Pure, only
 // lightly covered before. Pin the degenerate inputs, the inclusive threshold boundary, the
@@ -24,12 +44,11 @@ describe('greedyCluster', () => {
     expect(out[0]).toHaveLength(3);
   });
 
-  it('DOCUMENTS the threshold<=0 hazard: orthogonal/zero vectors merge (cosine 0 >= 0)', () => {
-    // cosineSimilarity returns 0 for orthogonal/zero vectors, so a non-positive threshold
-    // lumps unrelated comments together. Default config uses 0.4, so production is safe;
-    // this pins the current behavior as a known sharp edge, not a recommendation.
-    expect(greedyCluster([[1, 0], [0, 1]], 0)).toEqual([[0, 1]]);
-    expect(greedyCluster([[1, 0], [0, 0]], 0)).toEqual([[0, 1]]);
+  it('never merges on non-positive similarity, even at threshold 0', () => {
+    // Guard against the threshold<=0 footgun: orthogonal/zero vectors (cosine 0) must stay
+    // in separate clusters rather than being lumped together.
+    expect(greedyCluster([[1, 0], [0, 1]], 0)).toEqual([[0], [1]]);
+    expect(greedyCluster([[1, 0], [0, 0]], 0)).toEqual([[0], [1]]);
   });
 });
 

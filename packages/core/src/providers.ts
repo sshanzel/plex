@@ -8,6 +8,8 @@
  * NOTE: generative LLMs (Opus/GPT/Gemini-chat) are NOT embedding models — an embedding
  * provider must wrap an actual embedding endpoint.
  */
+import { createHash } from 'node:crypto';
+
 export interface EmbeddingProvider {
   readonly name: string;
   /** Vector dimensionality this provider returns. */
@@ -24,6 +26,24 @@ export interface EmbeddingProvider {
 export interface CompletionProvider {
   readonly name: string;
   complete(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>;
+}
+
+/** URL/id-safe slug: lowercase, non-alphanumerics → '-', trimmed, capped. */
+export function slugify(s: string, maxLen = 48): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, maxLen);
+}
+
+/**
+ * Short, stable content hash for disambiguating ids whose slugs would collide or be
+ * empty (e.g. two titles sharing a 48-char prefix, or a non-ASCII/emoji-only title that
+ * slugs to ''). Distinct input → distinct suffix; same input → same suffix (idempotent).
+ */
+export function hashId(s: string, len = 8): string {
+  return createHash('sha1').update(s).digest('hex').slice(0, len);
 }
 
 /** Cosine similarity helper for retrieval over embedding vectors. */

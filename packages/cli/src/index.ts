@@ -29,34 +29,9 @@ import {
   type ReviewContext,
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
+import { parse } from './parse';
 
 type LocalDiffMode = 'working' | 'staged' | 'branch';
-
-interface Parsed {
-  positionals: string[];
-  flags: Record<string, string | boolean>;
-}
-
-function parse(argv: string[]): Parsed {
-  const positionals: string[] = [];
-  const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a.startsWith('--')) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith('--')) {
-        flags[key] = next;
-        i++;
-      } else {
-        flags[key] = true;
-      }
-    } else {
-      positionals.push(a);
-    }
-  }
-  return { positionals, flags };
-}
 
 const USAGE = `plex — local-first code review context
 

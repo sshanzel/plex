@@ -1,4 +1,4 @@
-import type { Pitfall, PitfallTier, CompletionProvider } from '@plex/core';
+import { slugify, hashId, type Pitfall, type PitfallTier, type CompletionProvider } from '@plex/core';
 import type { RawComment } from './types';
 
 export interface ClusterInput {
@@ -8,8 +8,9 @@ export interface ClusterInput {
   repo?: string;
 }
 
-function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 56);
+/** Collision-free mined-pitfall id: optional repo + readable title slug + title hash. */
+export function minedPitfallId(title: string, repo?: string): string {
+  return `pf:mined:${repo ? slugify(repo) + ':' : ''}${slugify(title, 56) || 'p'}-${hashId(title)}`;
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -62,7 +63,7 @@ export async function llmDistill(input: ClusterInput, llm: CompletionProvider): 
   const scope: 'global' | 'repo' = json.scope === 'global' ? 'global' : 'repo';
   const title = json.title;
   return {
-    id: `pf:mined:${input.repo ? slug(input.repo) + ':' : ''}${slug(title)}`,
+    id: minedPitfallId(title, input.repo),
     title,
     trigger: title,
     why: typeof json.why === 'string' ? json.why : title,

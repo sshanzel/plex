@@ -126,7 +126,9 @@ export async function computeNeighborhood(
 
   const neighbors: NeighborEntry[] = [...score.entries()]
     .filter(([, s]) => s >= opts.minScore)
-    .sort((a, b) => b[1] - a[1])
+    // Sort by score, then by id — a stable secondary key makes the maxNeighbors cutoff
+    // deterministic when scores tie (otherwise it depended on Kùzu row/iteration order).
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .slice(0, opts.maxNeighbors)
     .map(([id, s]) => ({
       node: { id, label: 'File' as const, props: { path: id } },

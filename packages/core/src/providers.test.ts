@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity } from './providers';
+import { cosineSimilarity, slugify, hashId } from './providers';
+
+// slugify + hashId build collision-free ids for pitfalls/incidents. The hash is what
+// rescues distinct-but-same-slug (or empty-slug) titles from colliding.
+describe('slugify', () => {
+  it('lowercases, collapses non-alphanumerics to dashes, trims, and caps length', () => {
+    expect(slugify('Always validate Tenant ID!')).toBe('always-validate-tenant-id');
+    expect(slugify('  --weird__name--  ')).toBe('weird-name');
+    expect(slugify('a'.repeat(80))).toHaveLength(48);
+    expect(slugify('a'.repeat(80), 56)).toHaveLength(56);
+  });
+  it('returns empty string for non-ASCII / symbol-only text', () => {
+    expect(slugify('🚀🚀🚀')).toBe('');
+    expect(slugify('验证租户')).toBe('');
+  });
+});
+
+describe('hashId', () => {
+  it('is stable for the same input and distinct for different inputs', () => {
+    expect(hashId('Fix the bug!')).toBe(hashId('Fix the bug!'));
+    expect(hashId('Fix the bug!')).not.toBe(hashId('Fix the bug?')); // punctuation-only diff
+    expect(hashId('🚀')).not.toBe(hashId('💯')); // distinct even when both slugify to ''
+    expect(hashId('x')).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
 
 // cosineSimilarity is the backbone of EVERY semantic feature — knowledge retrieval,
 // mining clusters, semantic waivers (≥0.82), and round attribution. Pin its contract.

@@ -1,9 +1,8 @@
-import type { EmbeddingProvider, Pitfall, Incident, IncidentSource } from '@plex/core';
+import { slugify, hashId, type EmbeddingProvider, type Pitfall, type Incident, type IncidentSource } from '@plex/core';
 import type { KnowledgeStore } from './store';
 
-function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
-}
+/** A collision-free pitfall id: a readable slug + a content hash of the full title. */
+const pitfallId = (title: string): string => `pf:${slugify(title) || 'p'}-${hashId(title)}`;
 
 export interface ParsedPitfall {
   title: string;
@@ -21,7 +20,7 @@ export function parseMarkdownPitfalls(md: string): ParsedPitfall[] {
     const line = raw.trim();
     const heading = line.match(/^#{1,6}\s+(.*)/);
     if (heading) {
-      category = slug(heading[1]!) || 'general';
+      category = slugify(heading[1]!) || 'general';
       continue;
     }
     const bullet = line.match(/^[-*]\s+(.*)/);
@@ -42,7 +41,7 @@ export async function seedFromMarkdown(
     if (await store.hasPitfallTitled(it.title)) continue;
     const [embedding] = await provider.embed([`${it.category}: ${it.title}`]);
     const pitfall: Pitfall = {
-      id: `pf:${slug(it.title)}`,
+      id: pitfallId(it.title),
       title: it.title,
       trigger: it.title,
       why: it.title,
@@ -67,7 +66,9 @@ export async function recordIncident(
   store: KnowledgeStore,
   input: { source?: IncidentSource; repo?: string; file?: string; snippet?: string; outcome?: Incident['outcome']; pitfallId?: string; ts: string },
 ): Promise<string> {
-  const id = `inc:${slug(input.file ?? 'x')}:${slug(input.snippet ?? '')}:${input.ts}`;
+  // file (readable) + a content hash of the snippet (so distinct snippets never collide,
+  // and a non-ASCII/empty snippet doesn't degrade to an empty, colliding segment).
+  const id = `inc:${slugify(input.file ?? 'x') || 'x'}:${hashId(input.snippet ?? '')}:${input.ts}`;
   const incident: Incident = {
     id,
     pitfallId: input.pitfallId,

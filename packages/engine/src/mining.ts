@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
-import { mineHistory, scanHistory, categorize, type MineResult } from '@plex/mining';
+import { mineHistory, scanHistory, categorize, minedPitfallId, type MineResult } from '@plex/mining';
 import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
 
@@ -142,9 +142,6 @@ export interface AgentPitfall {
   incidentIds?: string[];
 }
 
-const slug = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 56);
-
 /**
  * Store agent-distilled pitfalls (embedding computed here). Dedups by title. Pitfalls
  * default to `repo` scope (mined from a specific project) unless the agent marks them
@@ -163,7 +160,7 @@ export async function addMinedPitfalls(
     const [embedding] = await embed.embed([`${p.category}: ${p.title}\n${p.why}`]);
     const scope = p.scope ?? 'repo';
     const pitfall: Pitfall = {
-      id: `pf:mined:${repo ? slug(repo) + ':' : ''}${slug(p.title)}`,
+      id: minedPitfallId(p.title, repo),
       title: p.title,
       trigger: p.title,
       why: p.why,

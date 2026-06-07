@@ -66,10 +66,15 @@ export async function proposePromotions(
   threshold = 0.7,
 ): Promise<Promotions> {
   const pitfalls = await store.pitfalls();
+  // Suppress a promotion only when the title ALREADY appears as its own markdown line — a
+  // raw substring match wrongly suppressed e.g. "validate id" when an unrelated line read
+  // "never validate id-tokens client-side".
+  const existingLines = new Set(existingMarkdown.split('\n').map((l) => l.trim()));
+  const present = (title: string): boolean => existingLines.has(title) || existingLines.has(`- ${title}`);
   const markdown: string[] = [];
   const rules: string[] = [];
   for (const p of pitfalls) {
-    if (p.confidence >= threshold && !existingMarkdown.includes(p.title)) markdown.push(`- ${p.title}`);
+    if (p.confidence >= threshold && !present(p.title)) markdown.push(`- ${p.title}`);
     if (p.tier === 'codifiable') rules.push(astGrepStub(p));
   }
   return { markdown, rules };

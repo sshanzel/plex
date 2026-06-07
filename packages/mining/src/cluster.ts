@@ -15,7 +15,10 @@ export function greedyCluster(vectors: number[][], threshold: number): number[][
     let bestSim = threshold;
     for (let c = 0; c < clusters.length; c++) {
       const sim = cosineSimilarity(v, clusters[c]!.centroid);
-      if (sim >= bestSim) {
+      // Never merge on non-positive similarity: orthogonal/anti-correlated (or zero) vectors
+      // must not be lumped together even if `threshold <= 0`. No effect for any positive
+      // threshold (the default is 0.6), where `sim >= threshold` already implies `sim > 0`.
+      if (sim > 0 && sim >= bestSim) {
         bestSim = sim;
         best = c;
       }
