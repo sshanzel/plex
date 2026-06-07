@@ -43,10 +43,12 @@ A naive "per comment, fetch the commits after it and diff" over historical minin
 
 ## Required paired change (else it's a no-op)
 
-Deriving richer outcomes only matters if the math uses them:
+Deriving richer outcomes only matters if the math uses them. Two facts about the math today:
 
-- `outcomeWeight`: make `fixed` > `accepted` (e.g. 1.2 vs 1.0) and actually apply `reverted` = 1.5.
-- `consolidatePitfalls`: let `fixed`/`reverted` strengthen *more* than a bare `accepted`; decide how `reverted` (currently neutral) should count.
+- **`outcomeWeight` (the 1.5/1.0/0 function) is never called** — it's exported and tested but wired into nothing. The 1.5 `reverted` bonus is purely aspirational.
+- The real feedback math is in `consolidatePitfalls`, and it uses **plain counts** with hardcoded coefficients: `confidence += 0.1 * #(accepted|fixed) − 0.15 * #(rejected)`, clamped to [0,1]. `reverted` is neither positive nor negative there.
+
+So the paired change is: make `consolidatePitfalls` actually *use* a per-incident weight (i.e. call `outcomeWeight`, or richer coefficients) so `fixed` strengthens more than a bare `accepted` and `reverted` (1.5) counts as the strongest positive — instead of all positives being worth a flat `+0.1`.
 
 ## Risks / downsides (why this isn't free)
 
