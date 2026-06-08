@@ -45,29 +45,28 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
 
 ## Quick start
 
-Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run. A review works against any git repo with zero setup; an embedding provider is **optional** (it adds semantic knowledge + the semantic review signals).
+Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run. A review works against any git repo with zero setup; an embedding provider is **optional** (it adds semantic knowledge + the semantic review signals). Native deps ship prebuilt, so install needs no compiler.
 
 ```bash
-pnpm install
-pnpm build                         # → dist/plex.js, dist/plex-mcp.js  (run under node; ADR-19)
+npm i -g @sshanzel/plex            # or run any command ad-hoc with: npx @sshanzel/plex <cmd>
 
 # Optional: one-command setup (asks for an embedding key, registers the MCP, indexes this repo)
-node dist/plex.js init
+plex init
 
 # …or just review — the first review AUTO-INDEXES the repo, no prior step needed:
-node dist/plex.js review /path/to/repo --staged     # or --branch main / --pr 123 / --html nb.html
+plex review /path/to/repo --staged        # or --branch main / --pr 123 / --html nb.html
 
 # Optional: keep the graph fresh automatically on pull/checkout/rebase
-node dist/plex.js install-hooks /path/to/repo
-#   manual refresh is O(changed files):  node dist/plex.js index /path/to/repo --incremental
+plex install-hooks /path/to/repo
+#   manual refresh is O(changed files):  plex index /path/to/repo --incremental
 
 # Optional: an embedding provider (semantic knowledge + brain signals). Set once in
 # ~/.plex/config.json via `init`, or export:
 export PLEX_EMBEDDING_PROVIDER=voyage              # voyage | openai | gemini | ollama
 export VOYAGE_API_KEY=...                           # or OPENAI_API_KEY / GEMINI_API_KEY; ollama needs none
-node dist/plex.js mine /path/to/repo                # build knowledge from PR history (rides your claude sub)
+plex mine /path/to/repo                # build knowledge from PR history (rides your claude sub)
 #   --oldest = chronological (PR #1 up) · --limit N = N PRs/run · --threshold 0..1 = cluster tightness
-node dist/plex.js seed /path/to/repo               # seed from <repo>/plex.md
+plex seed /path/to/repo               # seed from <repo>/plex.md
 ```
 
 > Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` (nothing to `.gitignore`). Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
@@ -75,10 +74,17 @@ node dist/plex.js seed /path/to/repo               # seed from <repo>/plex.md
 ### Use it from Claude Code (MCP)
 
 ```bash
-node dist/plex.js init          # registers the MCP for you, …or do it manually:
-claude mcp add plex -- node /abs/path/to/dist/plex-mcp.js
+plex init                       # registers the MCP for you, …or do it manually:
+claude mcp add plex -- plex-mcp
 ```
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent is at [`.claude/agents/`](.). (Verify end-to-end any time with `pnpm test:brain`.)
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent + skills ship in the repo under [`.claude/`](.) / [`.agents/`](.).
+
+### From source (contributors)
+
+```bash
+pnpm install && pnpm build         # → dist/plex.js, dist/plex-mcp.js (run under node; ADR-19)
+node dist/plex.js review . --staged
+```
 
 ## Inspecting a review (optional)
 
@@ -88,9 +94,9 @@ The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the r
 
 `plex init · doctor · index [--incremental] · install-hooks · uninstall-hooks · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
 
-## MCP tools (14)
+## MCP tools (15)
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `seed_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `seed_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
 
 ## Architecture
 

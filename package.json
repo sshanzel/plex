@@ -26,7 +26,8 @@
     "local-first"
   ],
   "bin": {
-    "plex": "./dist/plex.js"
+    "plex": "./dist/plex.js",
+    "plex-mcp": "./dist/plex-mcp.js"
   },
   "files": [
     "dist",

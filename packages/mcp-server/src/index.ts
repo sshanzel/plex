@@ -1,5 +1,7 @@
+#!/usr/bin/env node
 /**
- * reviewer MCP server (stdio).
+ * reviewer MCP server (stdio). The shebang (first line) is preserved by esbuild/tsup into
+ * dist/plex-mcp.js so the published `plex-mcp` bin is directly spawnable by an MCP client.
  *
  * The integration seam (ADR-02): any coding agent connects here and calls tools to
  * *get* review context and *record* findings/verdicts. The agent brings the LLM; this
@@ -11,7 +13,7 @@
  * ranked stream), record_outcome (scoped verdicts). get_relevant_knowledge lands in M3.
  */
 import path from 'node:path';
-import { statSync } from 'node:fs';
+import { statSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -38,7 +40,15 @@ import {
 } from '@plex/engine';
 import { buildDoctorReport } from './doctor';
 
-const VERSION = '0.2.0';
+// Single-sourced from the package.json that ships beside the bundle (dist/ → ../package.json),
+// so `doctor` and the MCP handshake never report a stale hand-bumped number.
+const VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 // This running file's mtime = the build this process LOADED. Comparing it to the file's mtime
 // *now* tells `doctor` whether a newer build is sitting on disk unused (a long-lived stdio
