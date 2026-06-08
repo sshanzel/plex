@@ -76,6 +76,29 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP
 
 Editing skills: change the real file under `.agents/skills/<name>/SKILL.md`; the `.claude/skills/<name>` symlink picks it up.
 
+### Distribution (Claude Code plugin + marketplace)
+
+Downstream users install via a **Claude Code plugin**, not by cloning this repo. The repo doubles
+as a single-plugin **marketplace**:
+
+```
+.claude-plugin/marketplace.json            # marketplace "sshanzel" → lists the "plex" plugin
+plugin/                                     # the "plex" plugin
+  .claude-plugin/plugin.json               # NO version field → git-SHA versioning (a push = an update)
+  .mcp.json                                # launches the engine: npx -y -p @sshanzel/plex plex-mcp
+  commands/review.md                        # the /plex:review command
+  agents/plex-reviewer.md    -> ../../.claude/agents/plex-reviewer.md          (symlink — single source)
+  skills/plex-parallel-review -> ../../.agents/skills/plex-parallel-review     (symlink — single source)
+```
+
+Install: `/plugin marketplace add sshanzel/plex` → `/plugin install plex@sshanzel`. **Naming rule:**
+`plex-*` skills are Plex-coupled and ship in the plugin; `pr-*` skills (responder/documenter) are the
+general pr-suite — they stay OUT of the plugin and only *detect* Plex (their "close the loop" section
+no-ops without it). The plugin reuses the canonical agent/skill files via symlinks, so there's one
+source of truth; the engine (npm `@sshanzel/plex`) updates separately from the plugin (git push).
+The plugin's npx MCP command needs the npm package published first; verify the install end-to-end
+(incl. that the plugin loader follows the symlinks) after the first publish.
+
 ## Local services (must remember)
 
 - **Kùzu** is embedded — no server. Per-repo data lives **outside the repo** by default at `~/.plex/repos/<id>/` (graph.kuzu, verdicts, log, head.sha) — Plex never writes into the user's tree (no `.gitignore` needed). `PLEX_DATA_DIR=.plex` opts into in-repo storage; the data dir is **self-ignoring** (`ensureDataDir` drops a `.gitignore` of `*` in it), so even the in-repo opt-in never needs hand-gitignoring. The knowledge base is a separate JSON store (ADR-18).
