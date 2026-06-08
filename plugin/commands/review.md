@@ -11,6 +11,6 @@ in the blast-radius code graph + accumulated review knowledge.
   splits into independent coupled clusters, use the **`plex-parallel-review`** skill to fan out and
   consolidate.
 - Present the ranked findings, then stop. Do **not** apply fixes — review only. (To work through
-  the feedback, the `pr-review-responder` skill is the next step.)
+  the feedback, **`/pr-master:respond`** is the next step.)
 
 $ARGUMENTS

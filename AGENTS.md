@@ -49,20 +49,19 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 
 ## Reviewing Plex with Plex — the agent setup (contributors)
 
-Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP registration that downstream users get, so a contributor's own PRs are reviewed by Plex. The setup follows the `.agents/` ↔ `.claude/` symlink convention (mirroring this repo's `CLAUDE.md → AGENTS.md`), so both Claude Code and Codex find it:
+Plex **dogfoods itself**: this repo ships the same reviewer agent + parallel-review skill + MCP registration that downstream users get, so a contributor's own PRs are reviewed by Plex. The agent + skill's canonical home is **`plugin/`** (the distributed plex plugin); the `.agents/` ↔ `.claude/` entries are symlinks pointing **into** it (mirroring this repo's `CLAUDE.md → AGENTS.md` convention), so both Claude Code and Codex find them. The PR-workflow commands (`/pr-master:respond`, `/pr-master:postmortem`, …) come from the **`pr-master@sshanzel`** plugin, enabled in `.claude/settings.json`:
 
 ```
 .mcp.json                                  # registers the `plex` MCP server (node dist/plex-mcp.js)
 .claude/
-  settings.json                            # enables the project MCP + a sensible permission allowlist
+  settings.json                            # project MCP + pr-master@sshanzel + a permission allowlist
+  agents/plex-reviewer.md      -> ../../plugin/agents/plex-reviewer.md         (symlink → plugin/)
+  skills/plex-parallel-review  -> ../../plugin/skills/plex-parallel-review     (symlink → plugin/)
+.agents/skills/                            # Codex/other agents read these
+  plex-parallel-review         -> ../../plugin/skills/plex-parallel-review     (symlink → plugin/)
+plugin/                                    # the REAL files — single source of truth (see Distribution)
   agents/plex-reviewer.md                  # the fresh-context, unbiased reviewer subagent
-  skills/plex-parallel-review    -> ../../.agents/skills/plex-parallel-review    (symlink)
-  skills/pr-review-responder   -> ../../.agents/skills/pr-review-responder   (symlink)
-  skills/pr-review-documenter  -> ../../.agents/skills/pr-review-documenter  (symlink)
-.agents/skills/                            # the REAL skill files (Codex/other agents read these)
-  plex-parallel-review/SKILL.md              # orchestrate a fan-out review when reviewPlan says so
-  pr-review-responder/SKILL.md             # resolve PR feedback + close the Plex learning loop
-  pr-review-documenter/SKILL.md            # capture durable lessons into AGENTS.md / ADR / milestone
+  skills/plex-parallel-review/SKILL.md       # orchestrate a fan-out review when reviewPlan says so
 ```
 
 **One-time:** `pnpm build` (the `.mcp.json` runs the *built* `dist/plex-mcp.js` under node — never tsx, ADR-17/19). Open the repo in Claude Code and approve the `plex` project MCP when prompted (or it's pre-enabled via `.claude/settings.json`).
@@ -71,33 +70,38 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + skills + MCP
 
 **The loop (dogfooding your own PR):**
 1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts). For a **large** change, run the **`plex-parallel-review`** skill instead: it reads the `reviewPlan` Plex returns and, when the change splits into independent coupled clusters, fans out one reviewer per cluster and consolidates into one `submit_findings` (docs/design/parallel-review.md). The guardrail is conservative — small/tightly-coupled changes stay a single pass.
-2. Address feedback with the `pr-review-responder` skill → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
-3. `pr-review-documenter` turns a recurring lesson into a durable doc (AGENTS.md / a new ADR / a milestone record).
+2. Address feedback with **`/pr-master:respond`** (the pr-master plugin) → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
+3. Durable lessons accrue in **Plex's own knowledge/brain** as you record outcomes; when a recurring pattern is worth a written guardrail, **`/pr-master:postmortem`** distills a merged PR's review themes into an `AGENTS.md` / ADR / milestone note (this supersedes the old `pr-review-documenter` skill).
 
-Editing skills: change the real file under `.agents/skills/<name>/SKILL.md`; the `.claude/skills/<name>` symlink picks it up.
+Editing the agent/skill: change the real file under **`plugin/…`** (the canonical home); the `.claude/` and `.agents/` symlinks pick it up (see **Distribution** below).
 
-### Distribution (Claude Code plugin + marketplace)
+### Distribution (Claude Code plugin via the `sshanzel/plugins` hub)
 
-Downstream users install via a **Claude Code plugin**, not by cloning this repo. The repo doubles
-as a single-plugin **marketplace**:
+Downstream users install via a **Claude Code plugin**, not by cloning this repo. The plugin is listed
+in the **`sshanzel/plugins`** marketplace (the hub for all the author's plugins) and pulled from THIS
+repo via a `git-subdir` source (a sparse clone of just `plugin/` — no monorepo cruft). So `plugin/`
+must be **self-contained** (real files, no symlink escaping the dir):
 
 ```
-.claude-plugin/marketplace.json            # marketplace "sshanzel" → lists the "plex" plugin
-plugin/                                     # the "plex" plugin
+plugin/                                     # the "plex" plugin (referenced by sshanzel/plugins via git-subdir)
   .claude-plugin/plugin.json               # NO version field → git-SHA versioning (a push = an update)
   .mcp.json                                # launches the engine: npx -y -p @sshanzel/plex plex-mcp
   commands/review.md                        # the /plex:review command
-  agents/plex-reviewer.md    -> ../../.claude/agents/plex-reviewer.md          (symlink — single source)
-  skills/plex-parallel-review -> ../../.agents/skills/plex-parallel-review     (symlink — single source)
+  agents/plex-reviewer.md                  # REAL file — the canonical home (NOT a symlink)
+  skills/plex-parallel-review/SKILL.md     # REAL file — the canonical home
 ```
 
-Install: `/plugin marketplace add sshanzel/plex` → `/plugin install plex@sshanzel`. **Naming rule:**
-`plex-*` skills are Plex-coupled and ship in the plugin; `pr-*` skills (responder/documenter) are the
-general pr-suite — they stay OUT of the plugin and only *detect* Plex (their "close the loop" section
-no-ops without it). The plugin reuses the canonical agent/skill files via symlinks, so there's one
-source of truth; the engine (npm `@sshanzel/plex`) updates separately from the plugin (git push).
-The plugin's npx MCP command needs the npm package published first; verify the install end-to-end
-(incl. that the plugin loader follows the symlinks) after the first publish.
+`plugin/` is the **single source of truth** for the plex agent + skill; **dogfooding symlinks point
+*into* it** (`.claude/agents/plex-reviewer.md`, `.claude/skills/plex-parallel-review`, and
+`.agents/skills/plex-parallel-review` are all symlinks → `plugin/…`). Edit the real file under
+`plugin/`; the symlinks pick it up. Do NOT reintroduce a symlink that escapes `plugin/` — `git-subdir`
+sparse-clones only that dir, so an escaping link would break in users' installs.
+
+Install: `/plugin marketplace add sshanzel/plugins` → `/plugin install plex@sshanzel`. **Naming rule:**
+`plex-*` (the reviewer agent + `plex-parallel-review`) are Plex-coupled and ship in this plugin; the
+general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel/plugins`) and only
+*detect* Plex. The engine (npm `@sshanzel/plex`) updates separately from the plugin (git push). The
+plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex`).
 
 ## Local services (must remember)
 
@@ -149,7 +153,7 @@ Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive 
 
 ## Status
 
-All milestones complete (M0–M12). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the decision log (through ADR-34). **Fully embedded (Kùzu) — no services, no Docker (ADR-30/33).** `pnpm test` green (238 unit + 14 integration); the PR brain + worktree-seeding are verified E2E under node via `pnpm test:brain` / `pnpm test:worktree`; `pnpm build` produces node-runnable binaries. Install: `plex init` (optional — asks for a key, registers the MCP, indexes) or just review — the **first review auto-indexes** the repo, and reviews auto-refresh the graph on drift. Reviews are **autonomous** — submit findings and stop; a finding addressed by a later change is auto-`accept`ed (ADR-28), reject stays agent/responder-driven, silence infers nothing. Verdicts also include **`acknowledge`** (M12) for an `awareness` flag confirmed intentional. **PR auto-comment** (ADR-34, opt-in `autoComment`) posts the ranked review back to the GitHub PR — one review, inline + summary, deduped per round — for the `pr-review-responder` skill to triage. Waivers suppress the same issue across rounds by meaning (semantic). `reconcile` (MCP `reconcile_outcomes` / `plex reconcile`) is the cheap "did the author fix these?" check for after a push — it matches a fix to a finding by semantic title OR file/line **locality** (so a restructuring fix still reconciles), and returns a `reason` so `accepted: 0` is never a black box. The MCP server exposes 15 tools; per-repo data lives outside the repo (`~/.plex/repos/<id>`).
+All milestones complete (M0–M12). See `docs/milestones/` for per-milestone records and `docs/adr/README.md` for the decision log (through ADR-34). **Fully embedded (Kùzu) — no services, no Docker (ADR-30/33).** `pnpm test` green (238 unit + 14 integration); the PR brain + worktree-seeding are verified E2E under node via `pnpm test:brain` / `pnpm test:worktree`; `pnpm build` produces node-runnable binaries. Install: `plex init` (optional — asks for a key, registers the MCP, indexes) or just review — the **first review auto-indexes** the repo, and reviews auto-refresh the graph on drift. Reviews are **autonomous** — submit findings and stop; a finding addressed by a later change is auto-`accept`ed (ADR-28), reject stays agent/responder-driven, silence infers nothing. Verdicts also include **`acknowledge`** (M12) for an `awareness` flag confirmed intentional. **PR auto-comment** (ADR-34, opt-in `autoComment`) posts the ranked review back to the GitHub PR — one review, inline + summary, deduped per round — for `/pr-master:respond` to triage. Waivers suppress the same issue across rounds by meaning (semantic). `reconcile` (MCP `reconcile_outcomes` / `plex reconcile`) is the cheap "did the author fix these?" check for after a push — it matches a fix to a finding by semantic title OR file/line **locality** (so a restructuring fix still reconciles), and returns a `reason` so `accepted: 0` is never a black box. The MCP server exposes 15 tools; per-repo data lives outside the repo (`~/.plex/repos/<id>`).
 
 **The review target is path-derived, and the brain must not split.** All brain writes (round recording, finding writes, verdicts, reconcile, `record_outcome`) key off **`reviewTargetFor(repoPath, src)`** = `reviewTarget(basename(resolve(repoPath)), src)` — never the code graph's `repo` meta. A secondary worktree seeds its graph by copying the base repo's graph (ADR-32), so the copy carries the BASE name while the worktree dir differs; keying rounds off graph-meta but findings off basename split the brain across two targets and made reconcile report `checked: N, accepted: 0` (it found the findings but no `lastHeadSha`). Route every new brain key through `reviewTargetFor` so they can't diverge. As belt-and-suspenders, `Brain.healSplitTarget` (run on every reconcile/review) realigns a brain if rounds and findings ever DO land under sibling targets — a **permanent, cheap invariant guard** (fires only on the split signature, else one COUNT), not one-off migration; keep it.
 

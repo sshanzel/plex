@@ -61,7 +61,7 @@ export function buildReviewPayload(
   const parts: string[] = [`### Plex review — round ${opts.round}`, `${fresh.length} new finding(s).`];
   if (elsewhere.length) parts.push('', '**Coupled / not on changed lines:**', ...elsewhere);
   if (awareness.length) parts.push('', '**Worth confirming (awareness — intentional? say so):**', ...awareness);
-  parts.push('', '_Posted by Plex. Triage with the `pr-review-responder` skill; it closes the learning loop._');
+  parts.push('', '_Posted by Plex. Triage with `/pr-master:respond`; it closes the learning loop._');
   return { body: parts.join('\n'), comments, count: fresh.length };
 }
 

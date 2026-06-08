@@ -32,7 +32,7 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
         ▼  record_outcome (accept / reject / waive / acknowledge)  →  knowledge sharpens; confirmed bugs → incidents
 ```
 
-**Close the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review — inline comments on changed lines + a summary for coupled/awareness findings, deduped across rounds — which the `pr-review-responder` skill then triages (you decide) and reconciles back into the knowledge (ADR-34).
+**Close the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review — inline comments on changed lines + a summary for coupled/awareness findings, deduped across rounds — which **`/pr-master:respond`** then triages (you decide) and reconciles back into the knowledge (ADR-34).
 
 **Three finding sources, one stream:** first-principles (the agent), knowledge-grounded (retrieved pitfalls), and deterministic (built-in TS-AST checks + optional Semgrep/ast-grep). Prevalence is read by severity — a common *style* is a convention (demoted); a common *bug* is systemic (escalated as a migration).
 
@@ -78,7 +78,7 @@ agent, the parallel-review orchestrator, a `/plex:review` command, and the MCP e
 from npm via `npx`, so there's no separate `npm install`).
 
 ```
-/plugin marketplace add sshanzel/plex
+/plugin marketplace add sshanzel/plugins
 /plugin install plex@sshanzel
 ```
 
@@ -95,7 +95,7 @@ auto-indexes the repo; an embedding provider is optional (`plex init`, or `~/.pl
 plex init                       # registers the MCP for you, …or do it manually:
 claude mcp add plex -- plex-mcp
 ```
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent + skills also ship in this repo under [`.claude/`](.) / [`.agents/`](.).
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made `plex-reviewer` subagent + the `plex-parallel-review` skill also ship in this repo under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)).
 
 ### From source (contributors)
 
