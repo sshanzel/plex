@@ -71,13 +71,31 @@ plex seed /path/to/repo               # seed from <repo>/plex.md
 
 > Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` (nothing to `.gitignore`). Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
 
-### Use it from Claude Code (MCP)
+### Use it from Claude Code — install the plugin (recommended)
+
+The lowest-friction path: one marketplace add + install bootstraps **everything** — the reviewer
+agent, the parallel-review orchestrator, a `/plex:review` command, and the MCP engine (auto-fetched
+from npm via `npx`, so there's no separate `npm install`).
+
+```
+/plugin marketplace add sshanzel/plex
+/plugin install plex@sshanzel
+```
+
+Then, inside any repo: run **`/plex:review`** (or just ask *"review my changes with Plex"*). The
+reviewer is **on-demand** — it runs at review checkpoints, not on every edit. The first review
+auto-indexes the repo; an embedding provider is optional (`plex init`, or `~/.plex/config.json`).
+
+> Updates are a `git push` to the marketplace repo — users get them via `/plugin marketplace update`
+> (or auto-update) + `/reload-plugins`. The MCP engine updates separately on npm.
+
+### …or register the MCP manually (no plugin)
 
 ```bash
 plex init                       # registers the MCP for you, …or do it manually:
 claude mcp add plex -- plex-mcp
 ```
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent + skills ship in the repo under [`.claude/`](.) / [`.agents/`](.).
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made review subagent + skills also ship in this repo under [`.claude/`](.) / [`.agents/`](.).
 
 ### From source (contributors)
 

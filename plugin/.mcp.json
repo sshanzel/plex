@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plex": {
+      "command": "npx",
+      "args": ["-y", "-p", "@sshanzel/plex", "plex-mcp"]
+    }
+  }
+}
