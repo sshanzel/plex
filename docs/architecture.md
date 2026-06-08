@@ -86,7 +86,7 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 
 - a finding **addressed by a later change** → auto-`accept` on the next review (or via `reconcile`); an **explicit dismissal** → `reject` (responder); an `awareness` flag confirmed intentional → **`acknowledge`** (M12, no down-weight); **silence** → nothing.
 - accepted findings become **Incidents** → reweight **Pitfall** confidence (`consolidate_knowledge`); mining distills recurring PR-comment patterns into new pitfalls.
-- **closing the loop on a PR (ADR-34, opt-in `autoComment`):** reviewing a PR posts the ranked stream back as one GitHub review (inline + summary, deduped per round); the `plex-review-responder` skill triages it and records the outcomes above — so the loop runs on the PR itself, not just the terminal.
+- **closing the loop on a PR (ADR-34, opt-in `autoComment`):** reviewing a PR posts the ranked stream back as one GitHub review (inline + summary, deduped per round); the `pr-review-responder` skill triages it and records the outcomes above — so the loop runs on the PR itself, not just the terminal.
 - so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere. `plex.md` ⇄ knowledge ⇄ Semgrep/ast-grep promotion (ADR-09) keeps a human-editable surface and a path to deterministic rules.
 
 ## Knowledge ⇄ markdown (ADR-09, ADR-10)
