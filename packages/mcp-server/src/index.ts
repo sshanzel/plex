@@ -86,7 +86,10 @@ const server = new McpServer(
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
       'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / seed_knowledge / ' +
       'consolidate_knowledge / propose_promotions. `doctor` reports version + whether a newer build is on ' +
-      'disk (reconnect to load it). Prefer these tools over reviewing a diff by hand.',
+      'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
+      'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
+      '"disconnected" status is NEVER a reason to skip a step; just call the tool (the call reconnects), or ' +
+      'ToolSearch("mcp__plex__") first if the tools are deferred. Prefer these tools over reviewing a diff by hand.',
   },
 );
 

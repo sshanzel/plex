@@ -33,14 +33,13 @@ Use this when the user wants to work through PR review feedback end-to-end. It p
 
 ## Closing the Plex review loop (if Plex reviewed the PR)
 
-If the `plex` MCP server is **configured** (in `.mcp.json` / `~/.claude.json`) and Plex reviewed this PR, close its learning loop after fixes land — Plex learns from what the team actually *did*, never from a prompt. This runs as part of the post-`go` loop; do **not** ask the user about Plex verdicts.
+If a `plex` MCP server is configured and reviewed this PR, close its learning loop after fixes land — autonomously, as part of the post-`go` loop; do **not** prompt the user about Plex verdicts. The Plex tools document their own *how* (when to call, identity fields, that `accept` is inferred — read their descriptions); this skill only triggers them:
 
-> **"Plex MCP is disconnected" is NOT a reason to skip.** A stdio MCP server is idle-dropped after a few seconds and **re-spawns on the next tool call** (~400ms) — and Plex is stateless per call (it reads the PR brain from disk), so reconnecting loses nothing. If the tools are configured, **just call `reconcile_outcomes`** — the call itself reconnects the server. If they're deferred behind tool-search, load them with `ToolSearch("mcp__plex__")` first. Only treat Plex as unavailable when the *call itself* errors (then say so and note that the next `plex-reviewer` pass will reconcile from the pushed commits). Skip this section **only** when the `plex` server isn't configured at all.
+- **After pushing fixes** → `mcp__plex__reconcile_outcomes` (auto-accepts what your commits addressed).
+- **For an explicit dismissal** (you replied "wrong/noise" and changed nothing) → `mcp__plex__record_outcome` `kind: "reject"`.
+- **For an `awareness` flag confirmed intentional** ("good catch, but deliberate") → `record_outcome` `kind: "acknowledge"` (not `reject`).
 
-- **After pushing fixes**, call `mcp__plex__reconcile_outcomes` with `{ source: "pr", pr: <n> }`. Plex compares its open findings for this PR against the commits you just pushed and auto-records `accept` for the ones you addressed — one call covers the whole batch. Nothing to confirm.
-- **For an item you dismissed as wrong/noise** (the reviewer was off — replied with rationale, no change), call `mcp__plex__record_outcome` with `kind: "reject"`, `scope: "pattern-repo"`, the same `{ source: "pr", pr: <n> }`, and the finding's `file` / `line` / `title`. This suppresses it AND tells Plex the flag was noise (down-weights it).
-- **For an `awareness` flag confirmed *intentional*** (a *good* catch, but deliberate — e.g. "yes, two payment surfaces on purpose"), call `record_outcome` with **`kind: "acknowledge"`** (same identity fields). This stops it re-surfacing **unless the situation materially changes** (e.g. a 3rd site appears) and — unlike `reject` — does **not** penalize the reviewer for a correct catch. Use `acknowledge`, not `reject`, whenever the flag was right but the answer is "intentional."
-- Do **not** call `record_outcome accept` by hand for fixed items — `reconcile_outcomes` already infers those from the pushed code. Reserve manual `record_outcome` for the explicit `reject`/`acknowledge` above (silence is never a verdict).
+Don't hand-record `accept` for fixed items — `reconcile_outcomes` infers those. Skip this section **only** when no `plex` server is configured (a *disconnected* one is fine — the call reconnects it).
 
 ## gh mechanics (get these right or threads get stuck)
 
