@@ -25,6 +25,14 @@ export interface NeighborhoodOptions {
   refWeight?: number;
   /** Per-hop score decay. */
   hopDecay?: number;
+  /**
+   * Fan (degree) at/below which a changed file's structural (import/ref) edges keep full weight.
+   * Above it, those edges are damped ~`threshold/degree` so a changed **barrel/registry** (`index.ts`,
+   * `app.module.ts`, an entities file imported by hundreds) doesn't paint all its importers as blast
+   * radius — they merely share a registry, they're not coupled to the change. Co-change is left alone
+   * (it's already commit-size-weighted, ADR-06). Default 20.
+   */
+  hubThreshold?: number;
 }
 
 /** Inclusive 1-based range overlap. Pure. */
@@ -48,12 +56,24 @@ function squash(weight: number): number {
 }
 
 /**
+ * Down-weight a structural (import/ref) edge by the **degree** of the changed node it radiates from.
+ * A file connected to many others — a barrel/registry/`index.ts` — is a diffuse hub, not a coupling
+ * signal: changing it shouldn't flood the blast radius with everything that merely imports the
+ * registry. Full weight at/below `threshold`, then a `threshold/degree` falloff (the structural
+ * analogue of co-change's 1/(commit-size) weighting — ADR-06). Always in (0,1]. Pure.
+ */
+export function hubWeight(degree: number, threshold = 20): number {
+  return Math.min(1, threshold / Math.max(1, degree));
+}
+
+/**
  * Materialize the review neighborhood (blast radius) for a diff (ADR-06).
  *
  * 1. Map changed hunks to the symbols they touch (line-range intersection).
  * 2. BFS out from changed files over CoChange + Imports edges, accumulating a
- *    coupling score that decays per hop. Co-change carries its learned weight;
- *    imports a fixed weight. A node reached by multiple sources/edges scores higher.
+ *    coupling score that decays per hop. Co-change carries its learned weight; import/ref edges a
+ *    fixed weight, damped by the source file's degree so a changed barrel/registry doesn't flood
+ *    the radius (`hubWeight`). A node reached by multiple sources/edges scores higher.
  */
 export async function computeNeighborhood(
   db: CodeGraphDB,
@@ -64,6 +84,7 @@ export async function computeNeighborhood(
   const importWeight = opts.importWeight ?? 0.4;
   const refWeight = opts.refWeight ?? 0.5;
   const hopDecay = opts.hopDecay ?? 0.5;
+  const hubThreshold = opts.hubThreshold ?? 20;
 
   const changed: CodeLocation[] = [];
   const changedFileIds: string[] = [];
@@ -108,6 +129,17 @@ export async function computeNeighborhood(
     ]);
     const next = new Set<string>();
 
+    // Degree of each frontier file on this edge type — `WHERE a.id IN $ids` returns ALL of a
+    // frontier file's edges, so this is its full structural degree. A barrel's is huge; `hubWeight`
+    // damps its edges so it can't flood the radius.
+    const degreeBySrc = (edges: { src: string }[]): Map<string, number> => {
+      const d = new Map<string, number>();
+      for (const e of edges) d.set(e.src, (d.get(e.src) ?? 0) + 1);
+      return d;
+    };
+    const impDeg = degreeBySrc(impEdges);
+    const refDeg = degreeBySrc(refEdges);
+
     const bump = (dst: string, contrib: number, provenance: EdgeProvenance): void => {
       if (sources.has(dst)) return;
       score.set(dst, Math.min(1, (score.get(dst) ?? 0) + contrib));
@@ -117,8 +149,8 @@ export async function computeNeighborhood(
     };
 
     for (const e of coEdges) bump(e.dst, squash(e.weight) * decay, 'co-change');
-    for (const e of impEdges) bump(e.dst, importWeight * decay, 'import');
-    for (const e of refEdges) bump(e.dst, refWeight * decay, 'precise-ref');
+    for (const e of impEdges) bump(e.dst, importWeight * hubWeight(impDeg.get(e.src) ?? 1, hubThreshold) * decay, 'import');
+    for (const e of refEdges) bump(e.dst, refWeight * hubWeight(refDeg.get(e.src) ?? 1, hubThreshold) * decay, 'precise-ref');
 
     for (const d of next) seen.add(d);
     frontier = [...next];

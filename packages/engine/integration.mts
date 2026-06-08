@@ -129,6 +129,52 @@ test('neighborhood', 'neighborhood: maps hunk to symbols and finds coupled neigh
   }
 });
 
+test('blast-hub', "neighborhood: a changed barrel's importers are damped vs a direct coupling (hub fix)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-hub-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-hubdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    // barrel.ts is a HUB (imported by 6 files); svc.ts is a DIRECT coupling (imported by exactly 1).
+    writeFileSync(join(repo, 'src/barrel.ts'), 'export const reg = 1;\n');
+    for (let i = 0; i < 6; i++) writeFileSync(join(repo, `src/c${i}.ts`), `import { reg } from './barrel';\nexport const c${i} = reg;\n`);
+    writeFileSync(join(repo, 'src/svc.ts'), 'export const svc = 1;\n');
+    writeFileSync(join(repo, 'src/solo.ts'), "import { svc } from './svc';\nexport const solo = svc;\n");
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init'); // single commit + minPairCount 2 ⇒ no co-change edges survive
+
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    const oneLine = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, newRanges: [{ start: 1, end: 1 }] };
+    const diff: NormalizedDiff = {
+      baseRef: 'HEAD',
+      files: [
+        { path: 'src/barrel.ts', status: 'modified', hunks: [oneLine] },
+        { path: 'src/svc.ts', status: 'modified', hunks: [oneLine] },
+      ],
+    };
+    const db = new CodeGraphDB(dbDir);
+    try {
+      // hubThreshold 3: barrel (degree 6) is damped to threshold/degree = 0.5; svc (degree 1) stays full.
+      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 1, maxNeighbors: 40, minScore: 0.001, hubThreshold: 3 });
+      const score = (p: string) => nb.neighbors.find((n) => String(n.node.props.path) === p)?.score ?? 0;
+      const solo = score('src/solo.ts'); // importer of the LOW-degree svc → full weight
+      const c0 = score('src/c0.ts'); //     importer of the HIGH-degree barrel → damped
+      assert.ok(solo > 0, 'direct coupling (solo) present');
+      assert.ok(c0 > 0, 'barrel importer present — damped, not dropped');
+      assert.ok(solo > c0, `direct coupling ${solo.toFixed(3)} must outrank a barrel importer ${c0.toFixed(3)}`);
+      assert.ok(c0 < 0.4, `barrel importer ${c0.toFixed(3)} is below the undamped import weight (0.4)`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
 test('engine', 'engine: index -> assemble review context -> capture verdict', async () => {
   const repo = makeRepo();
   appendFileSync(join(repo, 'src/user.ts'), '\nexport function extra() {\n  return 1;\n}\n');

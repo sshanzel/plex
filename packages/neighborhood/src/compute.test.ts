@@ -1,6 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { rangesOverlap, symbolsTouchedByRanges } from './compute';
+import { rangesOverlap, symbolsTouchedByRanges, hubWeight } from './compute';
 import type { SymbolRow } from '@plex/code-graph';
+
+describe('hubWeight (barrel/hub damping)', () => {
+  it('is full weight at or below the threshold', () => {
+    expect(hubWeight(1, 20)).toBe(1);
+    expect(hubWeight(20, 20)).toBe(1);
+  });
+
+  it('falls off ~threshold/degree above the threshold', () => {
+    expect(hubWeight(40, 20)).toBeCloseTo(0.5, 5); // a barrel imported by 40 → half
+    expect(hubWeight(200, 20)).toBeCloseTo(0.1, 5); // imported by 200 → a tenth
+  });
+
+  it('is monotonically non-increasing in degree and always in (0, 1]', () => {
+    let prev = 1;
+    for (const d of [1, 5, 20, 50, 100, 500]) {
+      const w = hubWeight(d, 20);
+      expect(w).toBeLessThanOrEqual(prev);
+      expect(w).toBeGreaterThan(0);
+      expect(w).toBeLessThanOrEqual(1);
+      prev = w;
+    }
+  });
+
+  it('guards degree 0 (treated as 1) — never divides by zero', () => {
+    expect(hubWeight(0, 20)).toBe(1);
+  });
+});
 
 describe('rangesOverlap', () => {
   it('detects overlap and disjoint ranges', () => {
