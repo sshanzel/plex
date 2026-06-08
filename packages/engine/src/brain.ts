@@ -84,15 +84,19 @@ export class Brain {
   }
 
   /**
-   * Heal a brain SPLIT by the pre-`reviewTargetFor` worktree bug: if `canonicalTarget` has
-   * findings but NO rounds of its own, an earlier build recorded this same review's ROUNDS under
-   * a sibling target — same `__pr_<n>` / `__<mode>` suffix, different repo-name prefix (the BASE
-   * name a worktree copied via ADR-32). Adopt that sibling's rounds/comments (and any stray
-   * findings/verdicts) into the canonical target so reconcile + fix-inference work again.
+   * INVARIANT GUARD (permanent — not one-off migration; do not delete as "stale"): a review's
+   * rounds and findings MUST live under one target. If they ever diverge — `canonicalTarget` has
+   * findings but NO rounds of its own — realign them. The known historical cause was the
+   * pre-`reviewTargetFor` worktree-seed bug (an old build keyed ROUNDS off the BASE repo name a
+   * worktree copied via ADR-32, while findings used the dir basename), and that cause is fixed —
+   * but this stays as a cheap safety net for the targeting layer, because a split is high-cost
+   * (reconcile + fix-inference silently see no history) and recovery here is free.
    *
-   * One brain file = one repo, so a same-suffix sibling is always THIS repo's same review — safe
-   * to merge. Fires only on the exact split signature (findings, no rounds), so a healthy brain
-   * pays a single COUNT and a fresh target is a no-op. Returns what it merged, or null.
+   * Adopt the sibling target holding this review's rounds — same `__pr_<n>` / `__<mode>` suffix,
+   * different repo-name prefix — into the canonical target (with its comments + any stray
+   * findings/verdicts). One brain file = one repo, so a same-suffix sibling is always THIS repo's
+   * same review — safe to merge. Fires only on the split signature (findings, no own rounds), so a
+   * healthy brain pays a single COUNT and a fresh target is a no-op. Returns what it merged, or null.
    */
   async healSplitTarget(canonicalTarget: string): Promise<{ from: string; rounds: number } | null> {
     const sep = canonicalTarget.indexOf('__');
