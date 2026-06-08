@@ -24,7 +24,7 @@ const excerpt = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '
 
 const SCHEMA = [
   'CREATE NODE TABLE IF NOT EXISTS Round(id STRING, target STRING, n INT64, ts STRING, headSha STRING, baseRef STRING, PRIMARY KEY(id))',
-  'CREATE NODE TABLE IF NOT EXISTS Finding(id STRING, target STRING, title STRING, severity STRING, confidence DOUBLE, signal DOUBLE, source STRING, file STRING, line INT64, triage STRING, outcome STRING, round INT64, PRIMARY KEY(id))',
+  'CREATE NODE TABLE IF NOT EXISTS Finding(id STRING, target STRING, title STRING, severity STRING, confidence DOUBLE, signal DOUBLE, source STRING, file STRING, line INT64, triage STRING, outcome STRING, round INT64, blast DOUBLE, prevalence DOUBLE, agreement INT64, PRIMARY KEY(id))',
   'CREATE NODE TABLE IF NOT EXISTS Verdict(id STRING, target STRING, findingId STRING, kind STRING, scope STRING, ts STRING, title STRING, file STRING, line INT64, PRIMARY KEY(id))',
   'CREATE NODE TABLE IF NOT EXISTS Comment(id STRING, target STRING, body STRING, author STRING, file STRING, line INT64, PRIMARY KEY(id))',
 ];
@@ -50,6 +50,24 @@ export interface BrainFinding {
   title: string;
   /** Severity (bug|improvement|nit|awareness) — `awareness` is excluded from auto-accept (ADR-31). */
   severity?: string;
+}
+
+/**
+ * One finding's ranking `signal` + its raw input features + resolved outcome — the row the offline
+ * ranking-quality eval (tuning.md §5) and a future re-weight fit (§"deferred #1") consume. The
+ * features may be 0 for findings written before feature persistence landed (graceful, not an error).
+ */
+export interface RankingSample {
+  target: string;
+  round: number;
+  id: string;
+  signal: number;
+  outcome: string;
+  severity: string;
+  confidence: number;
+  blast: number;
+  prevalence: number;
+  agreement: number;
 }
 
 export interface RoundState {
@@ -78,6 +96,17 @@ export class Brain {
   static async open(repoPath: string, config: ReviewerConfig): Promise<Brain> {
     const b = new Brain(repoPaths(repoPath, config.dataDir).brainDir);
     for (const ddl of SCHEMA) await b.db.run(ddl);
+    // Idempotent column migration: `CREATE … IF NOT EXISTS` never *alters* an existing table, so a
+    // brain created before the raw ranking features (blast/prevalence/agreement, M12+ feature
+    // persistence) lacks these columns. ADD COLUMN is the only way to backfill them; it throws
+    // "already exists" on a brain that already has them, which we swallow — making open idempotent.
+    for (const col of ['blast DOUBLE DEFAULT 0.0', 'prevalence DOUBLE DEFAULT 0.0', 'agreement INT64 DEFAULT 0']) {
+      try {
+        await b.db.run(`ALTER TABLE Finding ADD ${col}`);
+      } catch {
+        /* column already present (fresh brain or prior migration) — nothing to do */
+      }
+    }
     return b;
   }
 
@@ -154,8 +183,11 @@ export class Brain {
    * else the inferred `Finding.outcome` (`fixed`). Read-only; uses only data the review flow already
    * persists (no schema change). Across all targets/rounds in this repo's brain.
    */
-  async rankingSamples(): Promise<{ target: string; round: number; id: string; signal: number; outcome: string }[]> {
-    const finds = await this.db.run('MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.round AS round, fi.signal AS signal, fi.outcome AS outcome');
+  async rankingSamples(): Promise<RankingSample[]> {
+    const finds = await this.db.run(
+      'MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.round AS round, fi.signal AS signal, fi.outcome AS outcome, ' +
+        'fi.severity AS severity, fi.confidence AS confidence, fi.blast AS blast, fi.prevalence AS prevalence, fi.agreement AS agreement',
+    );
     const verds = await this.db.run('MATCH (v:Verdict) RETURN v.findingId AS fid, v.kind AS kind');
     const kindBy = new Map<string, string>();
     for (const v of verds) kindBy.set(str(v.fid) ?? '', str(v.kind) ?? '');
@@ -167,6 +199,12 @@ export class Brain {
         id,
         signal: Number(r.signal) || 0,
         outcome: kindBy.get(id) || str(r.outcome) || '',
+        // Raw features (may be 0 on a finding written before feature persistence / by a non-enriching path).
+        severity: str(r.severity) ?? '',
+        confidence: Number(r.confidence) || 0,
+        blast: Number(r.blast) || 0,
+        prevalence: Number(r.prevalence) || 0,
+        agreement: Number(r.agreement) || 0,
       };
     });
   }
@@ -195,12 +233,15 @@ export class Brain {
    * WITHOUT resetting the accrued `outcome` (a fixed finding stays fixed even if somehow re-raised). */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
     await this.db.insertMany(
-      'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round ' +
-        'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage, fi.round=$round',
+      'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree ' +
+        'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree',
       findings.map((f) => ({
         id: `${target}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
         o: '', t: target, title: f.title, sev: f.severity, conf: f.confidence, signal: f.signal,
         source: f.source, file: f.location.file, line: f.location.startLine, triage: f.triage, round: roundN,
+        // Raw ranking features (tuning.md §"feature persistence"): the inputs to `signal`, stored so a
+        // future re-weight/fit can learn from them. agreement = #independent sources (min 1 = itself).
+        blast: f.blastRadius ?? 0, prev: f.prevalence ?? 0, agree: f.agreedSources?.length ?? 1,
       })),
     );
   }

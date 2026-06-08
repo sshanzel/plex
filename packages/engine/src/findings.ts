@@ -1,5 +1,7 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource } from '@plex/core';
+import { repoPaths } from './paths';
 import { runDeterministic } from '@plex/deterministic';
 import { rankFindings } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
@@ -77,6 +79,24 @@ export async function rankReviewFindings(
   // even after wording/line changes. Best-effort: only when a real provider is configured
   // and there's at least one semantic (embedded) waiver to match against.
   const all = [...agent, ...det];
+
+  // Enrich each finding's `blast` from the sidecar the last get_review_context wrote (its file's
+  // coupling centrality, or its neighbor score) — this makes the otherwise-dormant blast feature
+  // live in the ranking, with NO Kùzu open here (the centrality was computed while the graph was
+  // already open). Respects an agent-supplied value; best-effort (no sidecar ⇒ unchanged).
+  try {
+    const mapFile = path.join(repoPaths(repoPath, config.dataDir).reviewerDir, 'blast-map.json');
+    const sidecar = JSON.parse(readFileSync(mapFile, 'utf8')) as { target?: string; files?: Record<string, number> };
+    if (sidecar.files && sidecar.target === reviewTargetFor(repoPath, opts)) {
+      for (const f of all) {
+        const s = sidecar.files[f.location.file];
+        if (f.blastRadius == null && s != null) f.blastRadius = s;
+      }
+    }
+  } catch {
+    /* no sidecar / parse error → blast stays as submitted (best-effort) */
+  }
+
   let semanticThreshold: number | undefined;
   if (waivers.some((w) => w.embedding)) {
     const provider = createEmbeddingProvider(config.embedding);

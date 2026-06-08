@@ -375,14 +375,27 @@ test('ranking-eval', 'engine: rankingQuality scores the signal ranking against o
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-rankeval-'));
   const config = resolveConfig({ dataDir: '.plex' });
   const target = 'r__staged';
-  const mk = (title: string, signal: number, file: string, line: number) =>
-    ({ id: title, title, body: '', severity: 'bug' as const, confidence: 0.6, source: 'first-principles' as const, location: { repo: 'r', file, startLine: line, endLine: line }, signal, agreedSources: ['first-principles' as const], triage: 'surface' as const });
+  const mk = (title: string, signal: number, file: string, line: number, feat?: { blast?: number; prev?: number; sources?: ('first-principles' | 'deterministic')[] }) =>
+    ({ id: title, title, body: '', severity: 'bug' as const, confidence: 0.6, source: 'first-principles' as const, location: { repo: 'r', file, startLine: line, endLine: line }, signal, blastRadius: feat?.blast, prevalence: feat?.prev, agreedSources: feat?.sources ?? ['first-principles' as const], triage: 'surface' as const });
   try {
     const brain = await Brain.open(repo, config);
     try {
       // Round 1 — ranking MATCHES outcomes: high-signal accepted, low-signal rejected → nDCG 1.
       await brain.recordRound(target, { target, n: 1, ts: 'now', headSha: 's1', baseRef: 'main' }, []);
-      await brain.writeFindings(target, 1, [mk('a-good', 0.9, 'a.ts', 1), mk('b-noise', 0.1, 'a.ts', 2)]);
+      // 'a-good' carries distinctive raw features so we can assert they survive the round-trip (#2b).
+      await brain.writeFindings(target, 1, [mk('a-good', 0.9, 'a.ts', 1, { blast: 0.7, prev: 0.3, sources: ['first-principles', 'deterministic'] }), mk('b-noise', 0.1, 'a.ts', 2)]);
+
+      // #2b feature persistence: the raw signal inputs (blast/prevalence/agreement) round-trip through
+      // Kùzu so a future re-weight fit can read them — and an unset feature persists as 0 (graceful).
+      const round1 = (await brain.rankingSamples()).filter((s) => s.round === 1);
+      const good = round1.find((s) => s.signal === 0.9)!; // 'a-good' — unique signal within the round
+      const noise = round1.find((s) => s.signal === 0.1)!; // 'b-noise'
+      assert.ok(good && noise, 'both round-1 findings persisted');
+      assert.equal(good.blast, 0.7, 'blast persisted');
+      assert.equal(good.prevalence, 0.3, 'prevalence persisted');
+      assert.equal(good.agreement, 2, 'agreement = #independent sources persisted');
+      assert.equal(noise.blast, 0, 'an unset blast persists as 0 (not null/NaN)');
+      assert.equal(noise.agreement, 1, 'agreement defaults to 1 (the finding itself)');
       // Round 2 — ranking INVERTED: low-signal accepted, high-signal rejected → nDCG < 1.
       await brain.recordRound(target, { target, n: 2, ts: 'now', headSha: 's2', baseRef: 'main' }, []);
       await brain.writeFindings(target, 2, [mk('c-overrated', 0.9, 'b.ts', 1), mk('d-underrated', 0.1, 'b.ts', 2)]);

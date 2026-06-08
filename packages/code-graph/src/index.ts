@@ -14,6 +14,7 @@ export {
   getSymbolsInFile,
   getCoChangeEdges,
   getCoChangeDegrees,
+  getCouplingDegrees,
   getImportEdges,
   getRefEdges,
   fileExists,

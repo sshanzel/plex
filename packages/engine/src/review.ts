@@ -21,6 +21,7 @@ import {
   getMeta,
   commitsBehind,
   getCoChangeEdges,
+  getCouplingDegrees,
   getImportEdges,
   getRefEdges,
   type BuildResult,
@@ -429,12 +430,28 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   let repo: string;
   let nb: ReviewNeighborhood;
   let coupling: [string, string][] = [];
+  let couplingDeg = new Map<string, number>();
   try {
     repo = (await getMeta(db, 'repo')) ?? p.repoPath;
     nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
     coupling = await changedFileCoupling(db, changedPaths);
+    couplingDeg = await getCouplingDegrees(db, changedPaths); // for per-finding blast enrichment
   } finally {
     await db.close();
+  }
+
+  // Persist a per-file blast map for submit_findings to enrich each finding's `blast` (tuning.md §5):
+  // changed files get their batch-relative coupling centrality, neighbors their coupling-to-change
+  // score. Computed HERE while the graph is already open, so submit needs no extra Kùzu open
+  // (ADR-17). Best-effort — a write failure never breaks the review.
+  try {
+    const maxDeg = Math.max(1, ...[...couplingDeg.values()]);
+    const files: Record<string, number> = {};
+    for (const [f, d] of couplingDeg) files[f] = d / maxDeg;
+    for (const n of nb.neighbors) files[String(n.node.props.path)] = n.score;
+    writeFileSync(path.join(p.reviewerDir, 'blast-map.json'), JSON.stringify({ target: reviewTargetFor(opts.repoPath, opts), files }));
+  } catch {
+    /* best-effort: blast enrichment is optional */
   }
 
   // Parallel-review guardrail (ADR-34/parallel-review): advise single vs fan-out from the

@@ -72,7 +72,7 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 | Knob | Value | Basis | Why |
 |---|---|---|---|
 | severity weights | bug 1 · improvement 0.5 · nit 0.2 · awareness 0.3 | empirical | relative importance. |
-| `blast` | `0.5 + 0.5·blast` | empirical | a no-blast finding is dampened, never zeroed. |
+| `blast` | `0.5 + 0.5·blast` | empirical | a no-blast finding is dampened, never zeroed. `blast` is now **auto-enriched** from the neighborhood sidecar (no longer dormant — see "Blast enrichment" below). |
 | `deviation` | bug→1; else `1 − 0.8·prevalence` | **principled (ADR-05)** | prevalence demotes style, **never a bug** (a common bug is systemic). |
 | `agreement` | `1 + 0.15·(sources−1)` | empirical | cross-source corroboration boost. |
 | prevalence threshold | 0.5 | empirical | at/above ⇒ "codebase norm". |
@@ -124,18 +124,27 @@ says so and the defaults stand.
 now `adaptiveFloor`-adapted upward-only (above) — the safe-direction calibration, so a per-model
 baseline shift can only make them suppress *less*, never hide more.
 
+**Blast enrichment + feature persistence (adopted).** Blast is no longer dormant. At
+`get_review_context` time — while the code graph is *already open* for the neighborhood, so **no extra
+Kùzu open** at `submit_findings` (respecting the ADR-17 open-limit) — the review computes a per-file
+`blast` map (changed files: batch-relative File↔File coupling centrality via `getCouplingDegrees`;
+neighbors: their PPR score) and writes it to a `blast-map.json` sidecar keyed by `reviewTargetFor`. At
+rank time `rankReviewFindings` enriches each finding's `blastRadius` from that sidecar (respecting an
+agent-supplied value; best-effort — no sidecar ⇒ unchanged). The brain's `Finding` then **persists the
+raw features** `blast`/`prevalence`/`agreement` (idempotent `ALTER TABLE … ADD … DEFAULT` migration for
+pre-existing brains; an unset feature stores as `0`/`1`), and `Brain.rankingSamples()` returns them — so
+the deferred re-weight has real, mining-independent feature vectors to fit. **Measurement/plumbing only:
+the `signal` formula is unchanged** (a small/uncoupled change still floors blast near 0 ⇒ existing
+rankings move only where coupling is genuinely high).
+
 **Still deferred (needs accrued data, not a formula):**
 1. **The actual ranking re-weight.** Fit the Weighted-Product exponents / a logistic model to maximize
-   `rankingQuality`'s nDCG, then ship only if it beats the defaults on held-out data. Weights stay
-   **global + pooled across the user's reviews + feature-normalized** (so uneven repos / non-miners
-   contribute comparably). Needs enough labeled review→outcome history to generalize.
-2. **Per-finding feature persistence + blast enrichment** (the re-weight's prerequisite). The brain
-   already stores severity/confidence/signal/outcome; the raw `blast`/`prevalence` features aren't
-   persisted *and* `blast` is currently **dormant** (agent-optional, usually unset → `signal.ts` floors
-   it at 0.5). So before blast can be a usable fit feature it must be **auto-enriched** from the
-   neighborhood at submit time, then persisted. Bundled with the re-weight (deferred together).
+   `rankingQuality`'s nDCG over the now-persisted feature vectors, then ship only if it beats the
+   defaults on held-out data. Weights stay **global + pooled across the user's reviews + feature-
+   normalized** (so uneven repos / non-miners contribute comparably). Needs enough labeled
+   review→outcome history to generalize — `plex eval` is the go/no-go guard.
 
-Until those land: change one knob at a time, record the rationale here + in the commit, prefer the
+Until that lands: change one knob at a time, record the rationale here + in the commit, prefer the
 formula-backed shape (PPR, association strength, Beta-Bernoulli, recency-decay, noisy-OR) wherever one
 exists, and use `plex eval` to check the data is rich enough before touching the ranking weights. **Sources** (verified): Wilson 1927; Evan Miller, *How Not To Sort By Average Rating*; Page 1999
 (PageRank) / personalized-PageRank ≡ RWR; van Eck & Waltman 2009 (co-occurrence normalization); Gall 1998

@@ -61,6 +61,22 @@ export async function getCoChangeDegrees(db: CodeGraphDB, ids: string[]): Promis
   return m;
 }
 
+/**
+ * Total coupling degree of each file — the count of incident File↔File edges (CoChange ∪ Imports ∪
+ * Refs; the `b:File` end excludes File→Symbol Declares edges). A proxy for "how widely depended-on
+ * this file is", used to enrich a finding's `blast` (how much could break if this code is wrong).
+ */
+export async function getCouplingDegrees(db: CodeGraphDB, ids: string[]): Promise<Map<string, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.run(
+    'MATCH (a:File)-[r]-(b:File) WHERE a.id IN $ids RETURN a.id AS id, count(r) AS deg',
+    { ids },
+  );
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(String(r.id), Number(r.deg) || 0);
+  return m;
+}
+
 /** Import neighbors of any file in `ids` (undirected: importers and imported). */
 export async function getImportEdges(
   db: CodeGraphDB,
