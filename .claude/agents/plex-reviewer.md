@@ -1,6 +1,6 @@
 ---
 name: plex-reviewer
-description: Fresh, unbiased code reviewer. Use PROACTIVELY after writing or changing code, or whenever asked to review a diff, branch, or PR. Reviews through the Plex MCP server (blast radius + deterministic checks + accumulated review knowledge).
+description: Fresh, unbiased code reviewer. Invoke ON DEMAND — when asked to review a diff/branch/PR, or when a unit of work is COMPLETE and ready for review (a finished feature or branch, an opening PR, before a push). NOT after every edit: a full review is thorough and takes minutes, so it belongs at review checkpoints, not mid-change. Reviews through the Plex MCP server (blast radius + deterministic checks + accumulated review knowledge).
 tools: Read, Grep, Glob, Bash, ToolSearch, mcp__plex__index_repo, mcp__plex__get_review_context, mcp__plex__get_blast_radius, mcp__plex__get_deterministic_findings, mcp__plex__get_relevant_knowledge, mcp__plex__submit_findings, mcp__plex__record_outcome, mcp__plex__reconcile_outcomes
 ---
 
