@@ -1,0 +1,46 @@
+# Tokenless release: npm OIDC Trusted Publishing + provenance.
+#
+# DORMANT until you push a `v*` tag (or manually dispatch) — it never runs on a normal push.
+#
+# Why this shape (supply-chain hardening):
+#   - NO long-lived npm token is stored anywhere. The job mints a short-lived OIDC credential
+#     (`id-token: write`) that npm verifies against a Trusted Publisher you register on the
+#     package. Token theft (the npm-worm payload) has nothing to steal.
+#   - `--provenance` publishes a signed attestation tying the tarball to this exact commit +
+#     workflow (verifiable via `npm audit signatures`).
+#   - Actions pinned to commit SHAs (tags can be re-pointed).
+#
+# ONE-TIME SETUP (after the FIRST manual publish creates the package):
+#   npmjs.com → @sshanzel/plex → Settings → Trusted Publisher → GitHub Actions:
+#     repository = sshanzel/plex,  workflow = release.yml
+#   (Account 2FA "authorization and writes" still protects manual writes; CI/OIDC is exempt.)
+# Fallback without Trusted Publishing: add repo secret NPM_TOKEN (granular, this-package-only,
+# short expiry) and uncomment the NODE_AUTH_TOKEN env on the publish step.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC Trusted Publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: npm install -g npm@latest # ensure provenance + trusted-publishing support
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test # gate: don't ship a failing build
+      - run: npm publish --provenance --access public # prepack builds dist/; OIDC auth, no token
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}  # only if NOT using Trusted Publishing
