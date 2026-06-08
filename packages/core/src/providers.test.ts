@@ -1,5 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity, slugify, hashId, safeEmbed, type EmbeddingProvider } from './providers';
+import { cosineSimilarity, slugify, hashId, safeEmbed, cosineBackground, adaptiveFloor, type EmbeddingProvider } from './providers';
+
+// Anisotropy-aware thresholds: measure a batch's baseline cosine, then raise a fixed suppression
+// cutoff UPWARD only (never below the hand-tuned floor — the safe direction). (m: tuning.md §6.)
+describe('cosineBackground + adaptiveFloor', () => {
+  const e = (i: number, dim = 8): number[] => Array.from({ length: dim }, (_, d) => (d === i ? 1 : 0));
+
+  it('orthogonal batch → ~0 mean, ~0 std', () => {
+    const bg = cosineBackground([e(0), e(1), e(2), e(3)]);
+    expect(bg.mu).toBeCloseTo(0, 6);
+    expect(bg.sigma).toBeCloseTo(0, 6);
+  });
+
+  it('identical batch → mean 1, std 0', () => {
+    const bg = cosineBackground([e(0), e(0), e(0)]);
+    expect(bg.mu).toBeCloseTo(1, 6);
+    expect(bg.sigma).toBeCloseTo(0, 6);
+  });
+
+  it('returns {0,0} for fewer than two usable vectors (empties filtered)', () => {
+    expect(cosineBackground([])).toEqual({ mu: 0, sigma: 0 });
+    expect(cosineBackground([e(0)])).toEqual({ mu: 0, sigma: 0 });
+    expect(cosineBackground([[], []])).toEqual({ mu: 0, sigma: 0 });
+  });
+
+  it('adaptiveFloor never drops below the fixed value — isotropic baseline ⇒ unchanged', () => {
+    expect(adaptiveFloor(0.82, { mu: 0, sigma: 0 })).toBe(0.82);
+    expect(adaptiveFloor(0.82, { mu: 0.1, sigma: 0.05 })).toBe(0.82); // 0.1+0.15 < 0.82 → floored
+  });
+
+  it('adaptiveFloor raises above the fixed value when the baseline is high (anisotropic model)', () => {
+    expect(adaptiveFloor(0.6, { mu: 0.7, sigma: 0.05 }, 3)).toBeCloseTo(0.85, 6); // 0.7 + 3·0.05
+  });
+});
 
 // safeEmbed wraps a provider so a transient failure degrades a feature instead of throwing, and an
 // oversized batch is capped + chunked under provider array/token limits (m5 + B-G1).

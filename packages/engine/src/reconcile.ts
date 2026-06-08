@@ -1,4 +1,4 @@
-import { safeEmbed, type ReviewerConfig, type ChangedRegion } from '@plex/core';
+import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type ChangedRegion } from '@plex/core';
 import { findingAddressedAt } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
@@ -26,6 +26,11 @@ export async function recordFixAccepts(
    *  (default) to fall back to pure semantic matching. */
   changedRegions: ReadonlyArray<ChangedRegion> = [],
 ): Promise<number> {
+  // Adapt the semantic auto-accept cut UPWARD only (tuning.md §6): on an anisotropic model the
+  // bar rises so a "fix" must be more clearly related before we auto-accept — never below the 0.6
+  // floor, so it never auto-accepts (and thus silences) more than today's fixed value would. With
+  // no embedder the embeddings are empty → background {0,0} → stays 0.6, and locality still works.
+  const semanticThreshold = adaptiveFloor(0.6, cosineBackground([...regionEmbeddings, ...findingEmbeddings]));
   let n = 0;
   for (let i = 0; i < priorFindings.length; i++) {
     const f = priorFindings[i]!;
@@ -34,7 +39,7 @@ export async function recordFixAccepts(
     // inferring "fixed" from a nearby change is semantically wrong and, worse, pre-empts the
     // acknowledge → semantic-waiver path that keeps it quiet until it MATERIALLY changes.
     if (f.severity === 'awareness') continue;
-    if (findingAddressedAt({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings)) {
+    if (findingAddressedAt({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold })) {
       await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
       n++;

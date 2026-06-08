@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { safeEmbed, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource } from '@plex/core';
+import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource } from '@plex/core';
 import { runDeterministic } from '@plex/deterministic';
 import { rankFindings } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
@@ -86,7 +86,10 @@ export async function rankReviewFindings(
       const vecs = await safeEmbed(provider, all.map((f) => [f.title, f.body].filter(Boolean).join(' — ')));
       if (vecs) {
         all.forEach((f, i) => (f.embedding = vecs[i]));
-        semanticThreshold = WAIVER_SEMANTIC_THRESHOLD;
+        // Adapt UPWARD only (tuning.md §6): on an anisotropic model whose findings sit at a high
+        // baseline cosine, raise the bar so a waiver suppresses more conservatively — never below
+        // the hand-tuned floor, so it can't hide more than today's fixed value would.
+        semanticThreshold = adaptiveFloor(WAIVER_SEMANTIC_THRESHOLD, cosineBackground(vecs));
       }
     }
   }

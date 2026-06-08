@@ -80,6 +80,38 @@ export async function safeEmbed(
   }
 }
 
+/**
+ * Mean + std of the pairwise cosines of a vector set — the "background" similarity distribution of
+ * a batch. Embedding spaces are anisotropic, so this baseline differs per model; measuring it from
+ * the batch is how a threshold can adapt without a stored calibration corpus (tuning.md §6). Samples
+ * up to `sampleCap` pairs (deterministic prefix). Returns {mu:0, sigma:0} for <2 usable vectors.
+ */
+export function cosineBackground(vectors: number[][], sampleCap = 4000): { mu: number; sigma: number } {
+  const usable = vectors.filter((v) => v.length > 0);
+  const sims: number[] = [];
+  outer: for (let i = 0; i < usable.length; i++) {
+    for (let j = i + 1; j < usable.length; j++) {
+      sims.push(cosineSimilarity(usable[i]!, usable[j]!));
+      if (sims.length >= sampleCap) break outer;
+    }
+  }
+  if (sims.length === 0) return { mu: 0, sigma: 0 };
+  const mu = sims.reduce((a, b) => a + b, 0) / sims.length;
+  const sigma = Math.sqrt(sims.reduce((a, b) => a + (b - mu) ** 2, 0) / sims.length);
+  return { mu, sigma };
+}
+
+/**
+ * Adapt a fixed cosine threshold UPWARD only — `max(fixed, mu + k·sigma)`. For a *suppression* gate
+ * (a waiver, an auto-accept) this is the SAFE direction: on a model whose baseline cosines run high
+ * (anisotropy) the threshold rises so the gate fires more conservatively (suppresses LESS, surfaces
+ * MORE); it can never drop below `fixed`, so it never hides more than the hand-tuned value would.
+ * Pure. (tuning.md §6.)
+ */
+export function adaptiveFloor(fixed: number, bg: { mu: number; sigma: number }, k = 3): number {
+  return Math.max(fixed, bg.mu + k * bg.sigma);
+}
+
 /** Cosine similarity helper for retrieval over embedding vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
