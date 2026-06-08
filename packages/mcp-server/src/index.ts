@@ -11,6 +11,8 @@
  * ranked stream), record_outcome (scoped verdicts). get_relevant_knowledge lands in M3.
  */
 import path from 'node:path';
+import { statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -34,10 +36,35 @@ import {
   type SubmittedFinding,
   type AgentPitfall,
 } from '@plex/engine';
+import { buildDoctorReport } from './doctor';
 
-const config = loadConfig();
+const VERSION = '0.2.0';
+
+// This running file's mtime = the build this process LOADED. Comparing it to the file's mtime
+// *now* tells `doctor` whether a newer build is sitting on disk unused (a long-lived stdio
+// process keeps running its loaded code until the client reconnects/respawns it).
+const SELF = (() => {
+  try {
+    return fileURLToPath(import.meta.url);
+  } catch {
+    return '';
+  }
+})();
+const buildMtimeMs = (): number => {
+  try {
+    return SELF ? statSync(SELF).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+};
+const LOADED_BUILD_MS = buildMtimeMs();
+
+// Config is RE-READ per tool call (see `guard`), so edits to ~/.plex/config.json — an embedding
+// key, autoComment, thresholds — take effect WITHOUT restarting the server. `let`, not `const`,
+// because `guard` reassigns it and every handler's thunk reads it at call time.
+let config = loadConfig();
 const server = new McpServer(
-  { name: 'plex', version: '0.2.0' },
+  { name: 'plex', version: VERSION },
   {
     // Surfaced to the client so tool-search can discover Plex even when MCP tools are
     // deferred behind search in a crowded multi-server session (keywords: review, PR,
@@ -48,7 +75,8 @@ const server = new McpServer(
       'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
       'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / seed_knowledge / ' +
-      'consolidate_knowledge / propose_promotions. Prefer these tools over reviewing a diff by hand.',
+      'consolidate_knowledge / propose_promotions. `doctor` reports version + whether a newer build is on ' +
+      'disk (reconnect to load it). Prefer these tools over reviewing a diff by hand.',
   },
 );
 
@@ -56,6 +84,7 @@ const json = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON
 const fail = (m: string) => ({ content: [{ type: 'text' as const, text: m }], isError: true });
 const guard = async (fn: () => Promise<unknown>, label: string) => {
   try {
+    config = loadConfig(); // refresh per call so config edits apply without a server restart
     return json(await fn());
   } catch (e) {
     return fail(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -294,6 +323,27 @@ server.tool(
   (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_history'),
 );
 
+server.tool(
+  'doctor',
+  'Health + freshness check: running version, the build this process loaded vs what is on disk (a long-lived stdio server keeps running its loaded build until reconnected — so `stale: true` means "reconnect Plex to pick up a newer build"), node version, and the EFFECTIVE config (embeddings provider, data/knowledge dirs — re-read live). Use when a fix or config change "didn\'t seem to apply".',
+  {},
+  () =>
+    guard(
+      async () =>
+        buildDoctorReport({
+          version: VERSION,
+          config,
+          loadedBuildMs: LOADED_BUILD_MS,
+          onDiskBuildMs: buildMtimeMs(),
+          node: process.version,
+          pid: process.pid,
+        }),
+      'doctor',
+    ),
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
-process.stderr.write('[plex] MCP server running on stdio\n');
+process.stderr.write(
+  `[plex] MCP server v${VERSION} (build ${LOADED_BUILD_MS ? new Date(LOADED_BUILD_MS).toISOString() : 'unknown'}) running on stdio\n`,
+);
