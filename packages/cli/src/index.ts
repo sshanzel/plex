@@ -132,6 +132,34 @@ function ask(question: string): Promise<string> {
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a.trim()); }));
 }
 
+/**
+ * Run a slow step with a live spinner + elapsed time so the terminal never looks frozen
+ * (indexing a large repo walks git history — it CAN take a minute). On a non-TTY (CI / piped)
+ * it degrades to a single line, no escape codes. Pure-stdout, no dependency.
+ */
+async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const out = process.stdout;
+  if (!out.isTTY) {
+    out.write(`${label}…\n`);
+    return fn();
+  }
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  const start = Date.now();
+  let i = 0;
+  const render = () => {
+    const s = Math.floor((Date.now() - start) / 1000);
+    out.write(`\r${frames[i++ % frames.length]} ${label}… ${s}s`);
+  };
+  render();
+  const timer = setInterval(render, 80);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(timer);
+    out.write('\r\x1b[K'); // clear the spinner line so the caller's summary starts clean
+  }
+}
+
 /** One-command setup (ADR-29/30): optional embedding key → config, register MCP, index. */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
@@ -159,9 +187,16 @@ async function runInit(repoPath: string): Promise<number> {
 
   // 3. Index this repo + auto-refresh hooks (optional — reviews also auto-index on first use).
   if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
-    await indexRepo(repoPath, loadConfig());
-    try { installHooks(repoPath, process.argv[1] ?? 'plex'); } catch { /* not a git repo */ }
-    out.write('✓ Indexed + installed auto-index hooks\n');
+    const res = await withSpinner(
+      `Indexing ${path.basename(path.resolve(repoPath))} — first index walks git history, large repos take a bit`,
+      () => indexRepo(repoPath, loadConfig()),
+    );
+    let hooked = false;
+    try { installHooks(repoPath, process.argv[1] ?? 'plex'); hooked = true; } catch { /* not a git repo */ }
+    out.write(
+      `✓ Indexed ${res.files} files · ${res.symbols} symbols · ${res.coChangePairs} co-change pairs` +
+        `${hooked ? ' · auto-index hooks installed' : ''}\n`,
+    );
   }
   out.write('\nDone. Restart Claude Code, then ask it to "review my changes with Plex".\n');
   return 0;
@@ -188,7 +223,10 @@ async function main(): Promise<number> {
     }
     case 'index': {
       const repoPath = positionals[1] ?? process.cwd();
-      const res = await indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) });
+      const res = await withSpinner(
+        `${flags.incremental ? 'Refreshing' : 'Indexing'} ${path.basename(path.resolve(repoPath))}`,
+        () => indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) }),
+      );
       if (res.incremental) {
         process.stdout.write(
           `${res.seeded ? 'Seeded from base worktree + applied' : 'Incrementally updated'} ${res.files} file(s) ` +
