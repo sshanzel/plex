@@ -1,4 +1,4 @@
-import type { ReviewerConfig, ChangedRegion } from '@plex/core';
+import { safeEmbed, type ReviewerConfig, type ChangedRegion } from '@plex/core';
 import { findingAddressedAt } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
@@ -124,9 +124,13 @@ export async function reconcileOutcomes(
     if (embedder) {
       const regionTexts = changed.map((c) => c.text);
       const findingTexts = state.priorFindings.map((f) => f.title);
-      const vecs = await embedder.embed([...regionTexts, ...findingTexts]);
-      regionEmb = changed.map((_, i) => vecs[i] ?? []);
-      findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i] ?? []);
+      // safeEmbed: cap + chunk (B-G1) and degrade to locality-only on a transient failure (m5)
+      // instead of throwing out of the reconcile.
+      const vecs = await safeEmbed(embedder, [...regionTexts, ...findingTexts]);
+      if (vecs) {
+        regionEmb = changed.map((_, i) => vecs[i] ?? []);
+        findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i] ?? []);
+      }
     }
 
     const accepted = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);

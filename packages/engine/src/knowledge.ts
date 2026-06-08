@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { ReviewerConfig, CodeLocation, Finding, IncidentOutcome } from '@plex/core';
+import { safeEmbed, type ReviewerConfig, type CodeLocation, type Finding, type IncidentOutcome } from '@plex/core';
 import {
   KnowledgeStore,
   createEmbeddingProvider,
@@ -113,7 +113,12 @@ export async function submitVerdict(
     const text = [input.title, input.note].filter(Boolean).join(' — ').trim();
     if (text) {
       const provider = createEmbeddingProvider(config.embedding);
-      if (provider) enriched = { ...input, embedding: (await provider.embed([text]))[0] };
+      if (provider) {
+        // safeEmbed: a transient embedding failure stores the waiver WITHOUT a vector (it still
+        // suppresses by identity; only semantic re-matching is lost) rather than failing the verdict.
+        const vecs = await safeEmbed(provider, [text]);
+        if (vecs?.[0]) enriched = { ...input, embedding: vecs[0] };
+      }
     }
   }
   const stored = await recordVerdict(repoPath, enriched, config);

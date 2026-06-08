@@ -12,6 +12,7 @@ import type {
   PrComment,
   AttributedChange,
 } from '@plex/core';
+import { safeEmbed } from '@plex/core';
 import {
   CodeGraphDB,
   buildCodeGraph,
@@ -354,19 +355,25 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
           ].filter((s) => s.text.trim());
           const regionTexts = changed.map((c) => c.text);
           const findingTexts = state.priorFindings.map((f) => f.title);
-          const vecs = await embedder.embed([...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
-          regionEmb = changed.map((_, i) => vecs[i] ?? []);
+          // safeEmbed caps + chunks this (comment-heavy, unbounded) batch so it can't exceed a
+          // provider's array/token limit (B-G1), and returns null on a transient failure (m5) —
+          // null degrades exactly like "no embedder": locality-only fix inference, no semantic
+          // attribution, and the review never hard-fails on an embedding hiccup.
+          const vecs = await safeEmbed(embedder, [...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
+          if (vecs) {
+            regionEmb = changed.map((_, i) => vecs[i] ?? []);
 
-          if (signals.length > 0) {
-            const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
-            const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
-            unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
-          } else {
-            unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+            if (signals.length > 0) {
+              const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
+              const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
+              unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
+            } else {
+              unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+            }
+
+            const fBase = regionTexts.length + signals.length;
+            findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
           }
-
-          const fBase = regionTexts.length + signals.length;
-          findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
         }
         // Always run fix inference — locality reconciles restructuring fixes with no provider (ADR-30).
         inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);

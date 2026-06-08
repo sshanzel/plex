@@ -46,6 +46,40 @@ export function hashId(s: string, len = 8): string {
   return createHash('sha1').update(s).digest('hex').slice(0, len);
 }
 
+/**
+ * Embed `texts` resiliently. Two failure modes the raw `provider.embed` doesn't handle, both of
+ * which should DEGRADE a feature (semantic waiver matching, fix inference) rather than fail the
+ * whole review/verdict that merely wanted the enrichment:
+ *
+ *  - **Oversized batch** — one `embed([...])` over every changed region + prior finding + (uncapped)
+ *    PR-comment body can blow past a provider's array/token limit (OpenAI 2048 items, Voyage 1000).
+ *    So we cap each text to `maxChars` and send in chunks of `chunkSize`, concatenating in order
+ *    (result[i] still aligns with texts[i]).
+ *  - **Transient error** — a rate-limit/network/bad-key throw returns `null` instead of propagating,
+ *    so the caller falls back to its no-embeddings path.
+ *
+ * Returns `null` if ANY chunk fails (all-or-nothing keeps index alignment simple — a partial result
+ * would misalign the callers' `vecs[i]` indexing).
+ */
+export async function safeEmbed(
+  provider: EmbeddingProvider,
+  texts: string[],
+  opts: { maxChars?: number; chunkSize?: number } = {},
+): Promise<number[][] | null> {
+  const maxChars = opts.maxChars ?? 8000;
+  const chunkSize = opts.chunkSize ?? 128;
+  const capped = texts.map((t) => (t.length > maxChars ? t.slice(0, maxChars) : t));
+  try {
+    const out: number[][] = [];
+    for (let i = 0; i < capped.length; i += chunkSize) {
+      out.push(...(await provider.embed(capped.slice(i, i + chunkSize))));
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 /** Cosine similarity helper for retrieval over embedding vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;

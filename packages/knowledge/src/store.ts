@@ -56,8 +56,13 @@ export class KnowledgeStore {
   /** Rewrite the whole pitfalls log (used by consolidation). */
   async replacePitfalls(pitfalls: Pitfall[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
-    const body = pitfalls.map((p) => JSON.stringify(p)).join('\n');
-    await fs.writeFile(this.pitfallsFile, pitfalls.length ? body + '\n' : '', 'utf8');
+    const body = pitfalls.length ? pitfalls.map((p) => JSON.stringify(p)).join('\n') + '\n' : '';
+    // ATOMIC rewrite: write a temp sibling, then rename over the target. consolidation rewrites the
+    // WHOLE log, so a crash mid-`writeFile` would truncate the live pitfalls.jsonl and silently lose
+    // knowledge. `rename` within the same dir (same filesystem) is atomic on POSIX.
+    const tmp = `${this.pitfallsFile}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, body, 'utf8');
+    await fs.rename(tmp, this.pitfallsFile);
   }
   addIncident(i: Incident): Promise<void> {
     return this.append(this.incidentsFile, i);

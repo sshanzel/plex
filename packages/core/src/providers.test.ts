@@ -1,5 +1,48 @@
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity, slugify, hashId } from './providers';
+import { cosineSimilarity, slugify, hashId, safeEmbed, type EmbeddingProvider } from './providers';
+
+// safeEmbed wraps a provider so a transient failure degrades a feature instead of throwing, and an
+// oversized batch is capped + chunked under provider array/token limits (m5 + B-G1).
+describe('safeEmbed', () => {
+  const stub = (over: Partial<EmbeddingProvider> = {}): EmbeddingProvider => ({
+    name: 'stub',
+    dimensions: 1,
+    embed: async (texts) => texts.map((t) => [t.length]),
+    ...over,
+  });
+
+  it('passes vectors through on success, aligned to inputs', async () => {
+    expect(await safeEmbed(stub(), ['a', 'bb'])).toEqual([[1], [2]]);
+  });
+
+  it('returns null instead of throwing when the provider fails', async () => {
+    const throwing = stub({ embed: async () => { throw new Error('rate limited'); } });
+    expect(await safeEmbed(throwing, ['a'])).toBeNull();
+  });
+
+  it('chunks large batches but keeps result order aligned to inputs', async () => {
+    const batchSizes: number[] = [];
+    const p = stub({ embed: async (texts) => { batchSizes.push(texts.length); return texts.map((t) => [t.length]); } });
+    const inputs = Array.from({ length: 300 }, (_, i) => 'x'.repeat(i % 7));
+    const out = await safeEmbed(p, inputs, { chunkSize: 128 });
+    expect(out!.length).toBe(300);
+    expect(out!.map((v) => v[0])).toEqual(inputs.map((t) => t.length)); // order preserved across chunk boundaries
+    expect(batchSizes).toEqual([128, 128, 44]); // never one 300-item request
+  });
+
+  it('caps each text to maxChars before sending it to the provider', async () => {
+    let sent: string[] = [];
+    const p = stub({ embed: async (texts) => { sent = texts; return texts.map(() => [0]); } });
+    await safeEmbed(p, ['a'.repeat(10000)], { maxChars: 100 });
+    expect(sent[0]!.length).toBe(100);
+  });
+
+  it('returns null if ANY chunk fails (all-or-nothing keeps caller index alignment safe)', async () => {
+    let call = 0;
+    const p = stub({ embed: async (texts) => { if (++call === 2) throw new Error('boom'); return texts.map(() => [0]); } });
+    expect(await safeEmbed(p, Array.from({ length: 200 }, () => 'x'), { chunkSize: 128 })).toBeNull();
+  });
+});
 
 // slugify + hashId build collision-free ids for pitfalls/incidents. The hash is what
 // rescues distinct-but-same-slug (or empty-slug) titles from colliding.

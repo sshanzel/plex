@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { ReviewerConfig, Finding, RankedFinding, Severity, FindingSource } from '@plex/core';
+import { safeEmbed, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource } from '@plex/core';
 import { runDeterministic } from '@plex/deterministic';
 import { rankFindings } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
@@ -81,9 +81,13 @@ export async function rankReviewFindings(
   if (waivers.some((w) => w.embedding)) {
     const provider = createEmbeddingProvider(config.embedding);
     if (provider) {
-      const vecs = await provider.embed(all.map((f) => [f.title, f.body].filter(Boolean).join(' — ')));
-      all.forEach((f, i) => (f.embedding = vecs[i]));
-      semanticThreshold = WAIVER_SEMANTIC_THRESHOLD;
+      // safeEmbed: a transient embedding failure degrades to identity-only waiver matching instead
+      // of failing the whole review (m5); the batch is also capped + chunked (B-G1).
+      const vecs = await safeEmbed(provider, all.map((f) => [f.title, f.body].filter(Boolean).join(' — ')));
+      if (vecs) {
+        all.forEach((f, i) => (f.embedding = vecs[i]));
+        semanticThreshold = WAIVER_SEMANTIC_THRESHOLD;
+      }
     }
   }
   const ranked = rankFindings(all, { waivers, semanticThreshold });

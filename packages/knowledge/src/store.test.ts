@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Pitfall } from '@plex/core';
@@ -58,6 +58,16 @@ describe('KnowledgeStore', () => {
     await s.replacePitfalls([mkPitfall('p1', 'a')]);
     await s.addPitfall(mkPitfall('p2', 'b'));
     expect((await s.pitfalls()).map((p) => p.id)).toEqual(['p1', 'p2']);
+  });
+
+  it('replacePitfalls rewrites atomically — round-trips and leaves no .tmp behind', async () => {
+    const s = new KnowledgeStore(dir);
+    await s.addPitfall(mkPitfall('p1', 'a'));
+    await s.addPitfall(mkPitfall('p2', 'b'));
+    await s.replacePitfalls([mkPitfall('p2', 'b')]); // shrink the whole log
+    expect((await s.pitfalls()).map((p) => p.id)).toEqual(['p2']);
+    // the temp sibling used for the atomic write+rename must not linger
+    expect(readdirSync(dir).some((f) => f.includes('.tmp'))).toBe(false);
   });
 
   it('hasPitfallTitled is an exact, case-sensitive title match', async () => {
