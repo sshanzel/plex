@@ -83,4 +83,22 @@ describe('rankFindings triage', () => {
     ]);
     expect(ranked[0]!.id).toBe('bug');
   });
+
+  it('strips the transient embedding from the returned stream (no vector leaks to consumers)', () => {
+    const [out] = rankFindings([mk({ id: 'e', severity: 'bug', embedding: [0.11, 0.22, 0.33] })]);
+    expect(out!.id).toBe('e');
+    expect('embedding' in out!).toBe(false); // the ~1KB-16KB vector must not reach the agent/brain
+  });
+
+  it('still suppresses semantically via the embedding before it is stripped', () => {
+    // The embedding is consumed by isWaived (semantic match) BEFORE the strip — proving the strip
+    // doesn't break suppression. A category waiver carrying a matching vector suppresses the finding.
+    const waivers: Waiver[] = [{ scope: 'category-global', embedding: [1, 0, 0] }];
+    const ranked = rankFindings(
+      [mk({ id: 'sem', severity: 'bug', embedding: [1, 0, 0] })],
+      { waivers, semanticThreshold: 0.9 },
+    );
+    expect(ranked[0]!.triage).toBe('suppressed'); // matched via cosine ≥ 0.9
+    expect('embedding' in ranked[0]!).toBe(false); // …and the vector still didn't leak out
+  });
 });

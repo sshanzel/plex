@@ -1,0 +1,45 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveConfig, type ReviewerConfig } from '@plex/core';
+import { recordVerdict, readVerdicts } from './verdicts';
+
+// verdicts.ts is pure fs (no Kùzu) → vitest-safe. A waiver's embedding must be PERSISTED (so the
+// next round can re-match it semantically, ADR-27) but never RETURNED to the caller, which echoes
+// the verdict to the agent over MCP/CLI — a 1024-float vector there is dead tokens (A2).
+let root: string;
+let config: ReviewerConfig;
+const repo = '/some/repo';
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'plex-verdicts-'));
+  config = resolveConfig({ dataDir: root });
+});
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+describe('recordVerdict', () => {
+  it('persists the waiver embedding to the log but does NOT return it to the caller', async () => {
+    const stored = await recordVerdict(
+      repo,
+      { findingId: 'f1', kind: 'waive', scope: 'category-global', title: 'unvalidated input', embedding: [0.1, 0.2, 0.3] },
+      config,
+    );
+    // Returned value (echoed to the agent) is slim — no vector.
+    expect('embedding' in stored).toBe(false);
+    expect(stored.findingId).toBe('f1');
+    expect(stored.ts).toBeTruthy();
+    // …but the on-disk log keeps it for next-round semantic matching.
+    const onDisk = await readVerdicts(repo, config);
+    expect(onDisk).toHaveLength(1);
+    expect(onDisk[0]!.embedding).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it('round-trips a plain verdict (no embedding to strip)', async () => {
+    const stored = await recordVerdict(repo, { findingId: 'f2', kind: 'accept' }, config);
+    expect('embedding' in stored).toBe(false);
+    expect((await readVerdicts(repo, config))[0]!.kind).toBe('accept');
+  });
+});

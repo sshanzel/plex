@@ -31,8 +31,13 @@ export async function recordVerdict(
   const p = repoPaths(repoPath, config.dataDir);
   await mkdir(path.dirname(p.verdictsFile), { recursive: true });
   const rec: StoredVerdict = { ...input, ts: new Date().toISOString() };
+  // Persist WITH the embedding (loadWaivers reads it back for next-round semantic matching),
+  // but never RETURN it: the caller is the MCP/CLI surface that echoes this to the agent, and a
+  // 1024-float waiver vector there is pure token waste no consumer reads (mirrors the rank/pitfall
+  // strips). The on-disk log keeps the vector; the returned value drops it.
   await appendFile(p.verdictsFile, JSON.stringify(rec) + '\n', 'utf8');
-  return rec;
+  const { embedding: _embedding, ...slim } = rec;
+  return slim;
 }
 
 export async function readVerdicts(

@@ -49,7 +49,12 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
     } else {
       triage = 'surface';
     }
-    return { ...f, signal, triage };
+    // `embedding` is set transiently (engine) only so `isWaived` above can match semantically —
+    // it must NOT travel into the returned/persisted stream. It's a 1024-float vector no consumer
+    // reads, and shipping it on every finding floods the agent's context with dead tokens (same
+    // class as the retrieve.ts pitfall strip). Drop it from the result; the match already happened.
+    const { embedding: _embedding, ...rest } = f;
+    return { ...rest, signal, triage };
   });
 
   ranked.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage] || b.signal - a.signal);
