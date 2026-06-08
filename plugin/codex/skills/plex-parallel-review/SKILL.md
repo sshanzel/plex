@@ -71,12 +71,13 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
 6. **Submit once, then stop.** Make **one** `mcp__plex__submit_findings` call with the full
    consolidated list (and the same diff source). Plex merges with deterministic findings, applies
    scoped/semantic waivers, ranks, triages, and — when reviewing a PR with auto-comment on — posts
-   the single review to the PR. Present the returned ranked stream highest-signal first, in the
-   `plex-reviewer` shape (defects, then a separate **"Worth confirming"** section for `awareness`) —
-   and follow `plex-reviewer`'s **lean-presentation** rule: issue + why + `file:line`, **no raw
-   confidence numbers**, and **no meta "State"/run-summary recap**. **Do not ask the user to accept
-   / reject / waive** — the review is autonomous. Suggest **the `pr-master-respond` skill** to
-   triage what landed and close the loop.
+   the single review to the PR. Present the returned stream using `plex-reviewer`'s **fixed severity
+   sections, exactly**: `## Bugs`, `## Improvements`, `## Nits`, `## Worth confirming (awareness)` —
+   in that order, omitting empty sections, each item `**<title>** — file:line. <why>`, ordered by
+   signal within a section. The header IS the label; do **not** invent thematic groupings of your
+   own. **No raw confidence numbers** (words instead), **no meta "State"/run-summary recap**; you may
+   end with one **"Bottom line:"** synthesis line. **Do not ask the user to accept / reject / waive**
+   — the review is autonomous. Suggest **the `pr-master-respond` skill** to triage what landed and close the loop.
 
 ## Rules
 - **Never fan out against `reviewPlan`.** If it says `single`, one pass — don't second-guess it

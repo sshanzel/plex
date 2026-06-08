@@ -59,8 +59,26 @@ Otherwise (a normal direct review) follow the full procedure below.
 
    **Check code against stated intent.** Where `changeContext` exists, compare what the code does to what it claims: flag where the diff does *less* than the description promises, silently does *more* (undisclosed behavior/side effects), or *contradicts* its stated motivation. A change that doesn't do what its PR says is a finding even when the code itself is clean.
 
-4. **Submit, then stop** — call `mcp__plex__submit_findings` (title, body, severity, confidence, file, startLine per finding). Plex merges them with the deterministic findings, applies scoped (incl. semantic) waivers, and returns one ranked, triaged stream. Present that stream to the user, highest-signal first — and **stop. Do NOT ask the user whether to accept / reject / waive.** The review is autonomous.
-   - **Keep the presentation lean.** Group by severity (defects first, then a **"Worth confirming"** section for `awareness`); each item is the issue + why + `file:line`, nothing more. **Do not print raw confidence numbers** (use words). **Do not append a meta "State"/"summary of the run" recap** (round number, commit list, "loop closed", token talk) — end after the findings. If a change is clean, say so in one line. The user can ask for the internals (confidence, round/brain state) if they want them; default to signal, not telemetry.
+4. **Submit, then stop** — call `mcp__plex__submit_findings` (title, body, severity, confidence, file, startLine per finding). Plex merges them with the deterministic findings, applies scoped (incl. semantic) waivers, and returns one ranked, triaged stream. Present it, then **stop. Do NOT ask the user whether to accept / reject / waive.** The review is autonomous.
+   - **Present in fixed severity sections — this exact structure, every time.** Markdown headers in this order; OMIT any section that has no items:
+
+     ```
+     ## Bugs
+     - **<title>** — `file:line`. <one or two sentences: what's wrong + the fix/why>.
+
+     ## Improvements
+     - **<title>** — `file:line`. <…>.
+
+     ## Nits
+     - **<title>** — `file:line`. <…>.
+
+     ## Worth confirming (awareness)
+     - **<title>** — `file:line`. <…> Is this intentional?
+     ```
+
+     The header IS the label (it maps 1:1 to the finding's `severity`). Within a section, order by signal (most important first). Do **NOT** invent thematic groupings of your own ("Hardening", "Lifecycle", "Not a defect", …) — every finding belongs to exactly one severity section. A deterministic finding you judged a false positive still goes under its severity (usually **Nits**) with the rebuttal in its line.
+   - **No raw confidence numbers** — a reader reads "0.4" as "probably wrong", which is not what it means; express uncertainty in words ("potential", "likely", "worth confirming") inside the finding's sentence.
+   - **No meta recap** — no round number, commit list, "loop closed", or token talk. You MAY close with a single **"Bottom line:"** line of synthesis (e.g. when several findings are really one decision). If the change is clean, say so in one line and stop.
    - **Posting to the PR is automatic (ADR-34).** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and awareness findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest **`/pr-master:respond`** so the author can triage what landed and close the loop.
 
 5. **Outcomes are recorded autonomously** — you do not prompt for verdicts. When the author addresses a *defect* and the PR is re-reviewed, Plex auto-records it as `accept` (it sees the fix). Only call `mcp__plex__record_outcome` for an **explicit dismissal** — e.g. when responding to PR discussion and the author pushes back ("intentional / by design") — passing file/line/title **and the same diff source (`pr`/`mode`/`baseRef`) you reviewed**, so the verdict + semantic waiver land on the right PR brain and stay quiet next round. Never infer a reject from silence.
