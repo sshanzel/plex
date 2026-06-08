@@ -1,6 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { rangesOverlap, symbolsTouchedByRanges, associationStrength } from './compute';
+import { rangesOverlap, symbolsTouchedByRanges, associationStrength, personalizedPageRank, type WeightedEdge } from './compute';
 import type { SymbolRow } from '@plex/code-graph';
+
+describe('personalizedPageRank (the propagation, pure)', () => {
+  // A plain adjacency stands in for the db; `expand` returns the out-edges of the frontier.
+  const graphExpand = (graph: Record<string, [string, number][]>) => async (frontier: string[]): Promise<WeightedEdge[]> =>
+    frontier.flatMap((u) => (graph[u] ?? []).map(([dst, w]) => ({ src: u, dst, w, via: 'import' as const })));
+  const opts = { restart: 0.15, maxHops: 4, maxNeighbors: 40, minScore: 0 };
+
+  it('multi-path reinforcement: a node reached by two paths outranks a one-path node', async () => {
+    // S → A directly AND S → C → A (A reached two ways); S → B once.
+    const out = await personalizedPageRank(['S'], graphExpand({ S: [['A', 1], ['C', 1], ['B', 1]], C: [['A', 1]] }), opts);
+    const score = (id: string) => out.find((n) => n.id === id)?.score ?? 0;
+    expect(score('A')).toBeGreaterThan(score('B'));
+  });
+
+  it('degree-normalization: a target behind a HUB is diluted vs one behind a low-degree node', async () => {
+    // S → H (a hub: 1 useful edge + 9 others) → T;  S → D (degree 1) → T2.
+    const hub: [string, number][] = [['T', 1], ...Array.from({ length: 9 }, (_, i) => [`x${i}`, 1] as [string, number])];
+    const out = await personalizedPageRank(['S'], graphExpand({ S: [['H', 1], ['D', 1]], H: hub, D: [['T2', 1]] }), opts);
+    const score = (id: string) => out.find((n) => n.id === id)?.score ?? 0;
+    expect(score('T2')).toBeGreaterThan(score('T')); // the hub split its mass 10 ways
+  });
+
+  it('normalizes so the top neighbor scores exactly 1 and excludes the seed', async () => {
+    const out = await personalizedPageRank(['S'], graphExpand({ S: [['A', 1], ['B', 1]] }), opts);
+    expect(out[0]!.score).toBeCloseTo(1, 10);
+    expect(out.some((n) => n.id === 'S')).toBe(false);
+  });
+
+  it('respects minScore and maxNeighbors', async () => {
+    const wide: [string, number][] = Array.from({ length: 10 }, (_, i) => [`n${i}`, i + 1]); // varied weights
+    const capped = await personalizedPageRank(['S'], graphExpand({ S: wide }), { ...opts, maxNeighbors: 3 });
+    expect(capped.length).toBe(3);
+    const floored = await personalizedPageRank(['S'], graphExpand({ S: wide }), { ...opts, minScore: 0.5 });
+    expect(floored.every((n) => n.score >= 0.5)).toBe(true);
+  });
+});
 
 describe('associationStrength (co-change promiscuity normalization)', () => {
   it('an exclusively-coupled pair scores 1', () => {

@@ -109,6 +109,15 @@ describe('greedyCluster — anisotropic embeddings (the threshold/centroid-sink 
     const sizes = greedyCluster(vectors, 0.8).map((c) => c.length).sort((a, b) => b - a);
     expect(sizes).toEqual([NM, NM, NM]); // 3 groups of 4 — no sink
   });
+
+  it('the ADAPTIVE cut rescues the sink even when the configured fallback (0.6) would collapse it', () => {
+    // n=12 ≥ 8, so adaptiveCosineThreshold estimates μ+kσ from THIS batch and ignores the sink-prone
+    // fallback — this is the exact composition mine.ts runs: greedyCluster(v, adaptiveCosineThreshold(v)).
+    const t = adaptiveCosineThreshold(vectors, { fallback: 0.6 });
+    expect(t).toBeGreaterThan(0.8); // adapted far above the sink-prone 0.6
+    const sizes = greedyCluster(vectors, t).map((c) => c.length).sort((a, b) => b - a);
+    expect(sizes).toEqual([NM, NM, NM]); // 3 groups of 4 — the adaptive cut, not the fallback, drove this
+  });
 });
 
 describe('centroid', () => {

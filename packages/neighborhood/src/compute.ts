@@ -60,6 +60,80 @@ export function associationStrength(co: number, degA: number, degB: number): num
   return denom > 0 ? Math.min(1, co / denom) : 0;
 }
 
+/** A weighted, provenance-tagged directed edge for the PPR walk. */
+export interface WeightedEdge {
+  src: string;
+  dst: string;
+  w: number;
+  via: EdgeProvenance;
+}
+
+/** A scored PPR neighbor (normalized so the top neighbor = 1). */
+export interface PprNeighbor {
+  id: string;
+  score: number;
+  via: EdgeProvenance[];
+  distance: number;
+}
+
+/**
+ * Forward-push **personalized PageRank** (random-walk-with-restart) over a weighted directed graph,
+ * seeded on `seeds`. `expand(frontier)` supplies the weighted out-edges of the current frontier —
+ * injected so this propagation is PURE (the db queries + edge weighting live in the caller; tests
+ * pass a plain adjacency). Each node deposits `restart·residual` (mass that stays) and forwards the
+ * rest split across its out-edges in proportion to weight — so a high-degree hub dilutes natively,
+ * a node reached by several paths accumulates more, and scores converge. Seeds are excluded; scores
+ * are max-normalized to [0,1]; the result is minScore-filtered, ranked, and capped at maxNeighbors.
+ */
+export async function personalizedPageRank(
+  seeds: readonly string[],
+  expand: (frontier: string[]) => Promise<readonly WeightedEdge[]>,
+  opts: { restart: number; maxHops: number; maxNeighbors: number; minScore: number },
+): Promise<PprNeighbor[]> {
+  const sources = new Set(seeds);
+  const ppr = new Map<string, number>(); // accumulated PageRank mass (the deposited score)
+  const via = new Map<string, Set<EdgeProvenance>>();
+  const dist = new Map<string, number>();
+  // Residual mass still to propagate — the teleport vector starts split evenly across the seeds.
+  let residual = new Map<string, number>([...sources].map((id) => [id, 1 / Math.max(1, sources.size)]));
+
+  for (let hop = 1; hop <= opts.maxHops && residual.size > 0; hop++) {
+    const frontier = [...residual.keys()];
+    const out = new Map<string, WeightedEdge[]>();
+    for (const e of await expand(frontier)) {
+      if (e.w <= 0) continue;
+      (out.get(e.src) ?? out.set(e.src, []).get(e.src)!).push(e);
+    }
+    const nextResidual = new Map<string, number>();
+    for (const u of frontier) {
+      const ru = residual.get(u) ?? 0;
+      if (ru <= 0) continue;
+      ppr.set(u, (ppr.get(u) ?? 0) + opts.restart * ru); // deposit the restart share at u
+      const ue = out.get(u) ?? [];
+      const deg = ue.reduce((s, e) => s + e.w, 0);
+      if (deg <= 0) continue;
+      const flow = (1 - opts.restart) * ru;
+      for (const e of ue) {
+        nextResidual.set(e.dst, (nextResidual.get(e.dst) ?? 0) + flow * (e.w / deg));
+        (via.get(e.dst) ?? via.set(e.dst, new Set()).get(e.dst)!).add(e.via);
+        if (!dist.has(e.dst) && !sources.has(e.dst)) dist.set(e.dst, hop);
+      }
+    }
+    residual = nextResidual;
+  }
+  // Deposit whatever mass is still in flight after the last hop (so reachable nodes aren't lost).
+  for (const [u, ru] of residual) ppr.set(u, (ppr.get(u) ?? 0) + opts.restart * ru);
+
+  const ranked = [...ppr.entries()].filter(([id, s]) => !sources.has(id) && s > 0);
+  const max = ranked.reduce((m, [, s]) => Math.max(m, s), 0);
+  return ranked
+    .map(([id, s]) => ({ id, score: max > 0 ? s / max : 0, via: [...(via.get(id) ?? [])], distance: dist.get(id) ?? 1 }))
+    .filter((r) => r.score >= opts.minScore)
+    // Sort by score, then by id — a stable secondary key makes the maxNeighbors cutoff deterministic.
+    .sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, opts.maxNeighbors);
+}
+
 /**
  * Materialize the review neighborhood (blast radius) for a diff (ADR-06, tuning.md §2).
  *
@@ -108,72 +182,34 @@ export async function computeNeighborhood(
     }
   }
 
-  const sources = new Set(changedFileIds);
-  const ppr = new Map<string, number>(); // accumulated PageRank mass (the deposited score)
-  const via = new Map<string, Set<EdgeProvenance>>();
-  const dist = new Map<string, number>();
-  // Residual mass still to propagate — the teleport vector starts split evenly across the seeds.
-  let residual = new Map<string, number>(changedFileIds.map((id) => [id, 1 / Math.max(1, sources.size)]));
-
-  // Forward-push personalized PageRank, batched by hop (one set of edge queries per iteration).
-  // At each step a node deposits `restart·residual` (mass that stays put) and forwards the rest
-  // split across its out-edges in proportion to edge weight — so a high-degree hub dilutes natively.
-  for (let hop = 1; hop <= opts.maxHops && residual.size > 0; hop++) {
-    const frontier = [...residual.keys()];
+  // Lazily supply each frontier's weighted out-edges (co-change = association strength; import/ref =
+  // base weight) — the impure half; the PPR propagation itself is the pure `personalizedPageRank`.
+  const expand = async (frontier: string[]): Promise<WeightedEdge[]> => {
     const [coEdges, impEdges, refEdges] = await Promise.all([
       getCoChangeEdges(db, frontier),
       getImportEdges(db, frontier),
       getRefEdges(db, frontier),
     ]);
-    // Co-change degrees for BOTH endpoints — normalizes pair strength by promiscuity (assoc. strength).
     const coDeg = await getCoChangeDegrees(db, [...new Set(coEdges.flatMap((e) => [e.src, e.dst]))]);
+    const edges: WeightedEdge[] = [];
+    for (const e of coEdges) edges.push({ src: e.src, dst: e.dst, w: associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), via: 'co-change' });
+    for (const e of impEdges) edges.push({ src: e.src, dst: e.dst, w: importWeight, via: 'import' });
+    for (const e of refEdges) edges.push({ src: e.src, dst: e.dst, w: refWeight, via: 'precise-ref' });
+    return edges;
+  };
 
-    // Weighted out-edges per frontier file (co-change = association strength; import/ref = base weight).
-    const out = new Map<string, { dst: string; w: number; prov: EdgeProvenance }[]>();
-    const addEdge = (src: string, dst: string, w: number, prov: EdgeProvenance): void => {
-      if (w <= 0) return;
-      (out.get(src) ?? out.set(src, []).get(src)!).push({ dst, w, prov });
-    };
-    for (const e of coEdges) addEdge(e.src, e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
-    for (const e of impEdges) addEdge(e.src, e.dst, importWeight, 'import');
-    for (const e of refEdges) addEdge(e.src, e.dst, refWeight, 'precise-ref');
-
-    const nextResidual = new Map<string, number>();
-    for (const u of frontier) {
-      const ru = residual.get(u) ?? 0;
-      if (ru <= 0) continue;
-      ppr.set(u, (ppr.get(u) ?? 0) + restart * ru); // deposit the restart share at u
-      const edges = out.get(u) ?? [];
-      const deg = edges.reduce((s, e) => s + e.w, 0);
-      if (deg <= 0) continue;
-      const flow = (1 - restart) * ru;
-      for (const e of edges) {
-        nextResidual.set(e.dst, (nextResidual.get(e.dst) ?? 0) + flow * (e.w / deg));
-        (via.get(e.dst) ?? via.set(e.dst, new Set()).get(e.dst)!).add(e.prov);
-        if (!dist.has(e.dst) && !sources.has(e.dst)) dist.set(e.dst, hop);
-      }
-    }
-    residual = nextResidual;
-  }
-  // Deposit whatever mass is still in flight after the last hop (so reachable nodes aren't lost).
-  for (const [u, ru] of residual) ppr.set(u, (ppr.get(u) ?? 0) + restart * ru);
-
-  // Neighbors = PPR mass on NON-seed nodes, normalized so the top neighbor scores 1 — PPR mass is
-  // otherwise tiny/absolute-scale-dependent, and this preserves the [0,1] / minScore semantics.
-  const ranked = [...ppr.entries()].filter(([id, s]) => !sources.has(id) && s > 0);
-  const max = ranked.reduce((m, [, s]) => Math.max(m, s), 0);
-  const neighbors: NeighborEntry[] = ranked
-    .map(([id, s]) => [id, max > 0 ? s / max : 0] as [string, number])
-    .filter(([, s]) => s >= opts.minScore)
-    // Sort by score, then by id — a stable secondary key makes the maxNeighbors cutoff deterministic.
-    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    .slice(0, opts.maxNeighbors)
-    .map(([id, s]) => ({
-      node: { id, label: 'File' as const, props: { path: id } },
-      score: s,
-      via: [...(via.get(id) ?? [])],
-      distance: dist.get(id) ?? 1,
-    }));
+  const ranked = await personalizedPageRank(changedFileIds, expand, {
+    restart,
+    maxHops: opts.maxHops,
+    maxNeighbors: opts.maxNeighbors,
+    minScore: opts.minScore,
+  });
+  const neighbors: NeighborEntry[] = ranked.map((r) => ({
+    node: { id: r.id, label: 'File' as const, props: { path: r.id } },
+    score: r.score,
+    via: r.via,
+    distance: r.distance,
+  }));
 
   return { repo, changed, neighbors };
 }

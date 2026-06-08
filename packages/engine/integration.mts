@@ -176,6 +176,57 @@ test('blast-hub', "neighborhood: a changed barrel's importers are damped vs a di
   }
 });
 
+test('cochange-hub', 'neighborhood: a promiscuous co-change file is damped vs an exclusive coupling (assoc. strength)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-coh-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-cohdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    for (const f of ['seed', 'exclusive', 'promiscuous', 'o1', 'o2', 'o3', 'o4']) writeFileSync(join(repo, `src/${f}.ts`), `export const ${f} = 1;\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init'); // single commit + minPairCount 2 ⇒ no co-change from the build
+
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      // Craft co-change: `exclusive` partners ONLY with seed; `promiscuous` partners with seed + 4 others.
+      // Degrees ⇒ assoc(seed,exclusive)=1/√(2·1)=0.71  vs  assoc(seed,promiscuous)=1/√(2·5)=0.32.
+      const co = [
+        ['src/seed.ts', 'src/exclusive.ts'],
+        ['src/seed.ts', 'src/promiscuous.ts'],
+        ['src/promiscuous.ts', 'src/o1.ts'],
+        ['src/promiscuous.ts', 'src/o2.ts'],
+        ['src/promiscuous.ts', 'src/o3.ts'],
+        ['src/promiscuous.ts', 'src/o4.ts'],
+      ];
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) CREATE (a)-[:CoChange {weight:$w, cnt:$c}]->(b)',
+        co.map(([a, b]) => ({ a, b, w: 1.0, c: 2 })),
+      );
+
+      const diff: NormalizedDiff = {
+        baseRef: 'HEAD',
+        files: [{ path: 'src/seed.ts', status: 'modified', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, newRanges: [{ start: 1, end: 1 }] }] }],
+      };
+      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 2, maxNeighbors: 40, minScore: 0.001 });
+      const score = (p: string) => nb.neighbors.find((n) => String(n.node.props.path) === p)?.score ?? 0;
+      const exclusive = score('src/exclusive.ts');
+      const promiscuous = score('src/promiscuous.ts');
+      assert.ok(exclusive > 0, 'exclusive coupling present');
+      assert.ok(promiscuous > 0, 'promiscuous co-change present (damped, not dropped)');
+      assert.ok(exclusive > promiscuous, `exclusive ${exclusive.toFixed(3)} must outrank promiscuous ${promiscuous.toFixed(3)}`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
 test('engine', 'engine: index -> assemble review context -> capture verdict', async () => {
   const repo = makeRepo();
   appendFileSync(join(repo, 'src/user.ts'), '\nexport function extra() {\n  return 1;\n}\n');
