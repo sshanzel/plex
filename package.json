@@ -36,12 +36,15 @@
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^3.0.5"
+    "vitest": "^4.1.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
       "kuzu"
-    ]
+    ],
+    "overrides": {
+      "tar@<7.5.11": "^7.5.11"
+    }
   }
 }
