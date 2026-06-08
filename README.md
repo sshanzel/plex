@@ -56,9 +56,8 @@ plex init
 # …or just review — the first review AUTO-INDEXES the repo, no prior step needed:
 plex review /path/to/repo --staged        # or --branch main / --pr 123 / --html nb.html
 
-# Optional: keep the graph fresh automatically on pull/checkout/rebase
-plex install-hooks /path/to/repo
-#   manual refresh is O(changed files):  plex index /path/to/repo --incremental
+# The graph stays fresh on its own — a review auto-refreshes it when it has drifted behind HEAD.
+#   (manual refresh is also O(changed files):  plex index /path/to/repo --incremental)
 
 # Optional: an embedding provider (semantic knowledge + brain signals). Set once in
 # ~/.plex/config.json via `init`, or export:
@@ -120,7 +119,7 @@ node dist/plex.js review . --staged
 
 ## CLI
 
-`plex init · doctor · index [--incremental] · install-hooks · uninstall-hooks · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
+`plex init · doctor · index [--incremental] · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
 
 ## MCP tools (15)
 
@@ -151,7 +150,7 @@ Set once via `plex init` (→ `~/.plex/config.json`), or as process env (which o
 
 ## Status
 
-All milestones complete (M0–M12). `pnpm test` runs the unit (vitest, 213) + integration (tsx, 13) suites; `pnpm test:brain` + `pnpm test:worktree` verify the PR brain and worktree-seeding end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces, fully embedded (Kùzu — no Docker, no services). See [`docs/milestones/`](docs/milestones/) and the [decision log (through ADR-34)](docs/adr/README.md).
+All milestones complete (M0–M12). `pnpm test` runs the unit (vitest, 229) + integration (tsx) suites; `pnpm test:brain` + `pnpm test:worktree` verify the PR brain and worktree-seeding end-to-end under node; `pnpm build` produces node-runnable binaries. Built with TypeScript/Node and pnpm workspaces, fully embedded (Kùzu — no Docker, no services). See [`docs/milestones/`](docs/milestones/) and the [decision log (through ADR-36)](docs/adr/README.md).
 
 ## License
 

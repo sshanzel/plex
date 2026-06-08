@@ -107,6 +107,6 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 | `mining` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
 | `engine` | orchestration: index, assemble context, **Kùzu PR brain**, rank, verdicts, knowledge, reconcile, setup | ✅ |
 | `mcp-server` | the 14-tool MCP surface | ✅ |
-| `cli` | `init · doctor · index · install-hooks · review · reconcile · blast · verdict · seed · promote · mine` | ✅ |
+| `cli` | `init · doctor · index · review · reconcile · blast · verdict · seed · promote · mine` | ✅ |
 
 > **Embedded, no services (ADR-30):** the brain is Kùzu, not FalkorDB — no Docker. Per-repo data lives outside the repo at `~/.plex/repos/<id>/`. Embeddings are **optional** (they add semantic knowledge + the semantic review signals). Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19). The multi-repo workspace is intentionally **out of scope**.

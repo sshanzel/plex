@@ -14,8 +14,6 @@ import {
   loadConfig,
   repoPaths,
   indexRepo,
-  installHooks,
-  uninstallHooks,
   assembleReviewContext,
   blastRadius,
   reconcileOutcomes,
@@ -43,8 +41,6 @@ Usage:
   plex init [repoPath]                                   # one-command setup: embedding key + MCP + index
   plex doctor [repoPath]                                 # check embeddings + graph
   plex index [repoPath] [--incremental]                  # --incremental: refresh only changed files (ADR-25)
-  plex install-hooks [repoPath]                          # auto-incremental-index on pull/checkout/rebase
-  plex uninstall-hooks [repoPath]
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
   plex blast [repoPath] --files <a.ts,b.ts>
@@ -185,18 +181,13 @@ async function runInit(repoPath: string): Promise<number> {
     out.write('! MCP entry not found beside the CLI — register it manually.\n');
   }
 
-  // 3. Index this repo + auto-refresh hooks (optional — reviews also auto-index on first use).
+  // 3. Index this repo (optional — reviews also auto-index on first use and auto-refresh on drift).
   if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
     const res = await withSpinner(
       `Indexing ${path.basename(path.resolve(repoPath))} — first index walks git history, large repos take a bit`,
       () => indexRepo(repoPath, loadConfig()),
     );
-    let hooked = false;
-    try { installHooks(repoPath, process.argv[1] ?? 'plex'); hooked = true; } catch { /* not a git repo */ }
-    out.write(
-      `✓ Indexed ${res.files} files · ${res.symbols} symbols · ${res.coChangePairs} co-change pairs` +
-        `${hooked ? ' · auto-index hooks installed' : ''}\n`,
-    );
+    out.write(`✓ Indexed ${res.files} files · ${res.symbols} symbols · ${res.coChangePairs} co-change pairs\n`);
   }
   out.write('\nDone. Restart Claude Code, then ask it to "review my changes with Plex".\n');
   return 0;
@@ -241,29 +232,6 @@ async function main(): Promise<number> {
             `Graph: ${res.graphDir}\n`,
         );
       }
-      return 0;
-    }
-    case 'install-hooks': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const cliPath = process.argv[1] ?? path.resolve('dist/plex.js');
-      const res = installHooks(repoPath, cliPath);
-      process.stdout.write(
-        `Installed auto-index git hooks (${res.hooks.join(', ') || 'none'}) in ${res.hooksDir}.\n` +
-          (res.skipped?.length
-            ? `Skipped (non-shell hook — left untouched): ${res.skipped.join(', ')}.\n`
-            : '') +
-          `The graph now refreshes incrementally on pull / checkout / rebase.\n`,
-      );
-      return 0;
-    }
-    case 'uninstall-hooks': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const res = uninstallHooks(repoPath);
-      process.stdout.write(
-        res.hooks.length
-          ? `Removed plex auto-index from hooks: ${res.hooks.join(', ')}.\n`
-          : `No plex auto-index hooks found.\n`,
-      );
       return 0;
     }
     case 'review': {

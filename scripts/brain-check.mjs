@@ -8,7 +8,7 @@
 // `dist/` (run `pnpm build`). The Kùzu fix-accept path is covered by the tsx `reconcile`
 // scenario.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, appendFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, appendFileSync, rmSync, existsSync, openSync, closeSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -21,7 +21,22 @@ if (!existsSync(CLI)) {
 // fake = test-only embedder (enables the semantic signals); .plex keeps data in the temp repo.
 const env = { ...process.env, PLEX_EMBEDDING_PROVIDER: 'fake', PLEX_DATA_DIR: '.plex' };
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' });
-const cli = (args, cwd) => execFileSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+// Capture stdout via a FILE, not execFileSync's pipe: `review --json` embeds vectors and can far
+// exceed the 64KB OS pipe buffer, which truncates a piped capture even with maxBuffer set — a file
+// never blocks. (The auto-index child uses stdio:'ignore', so it never pollutes this stream.)
+let cliCalls = 0;
+const cli = (args, cwd) => {
+  const outFile = join(tmpdir(), `plex-cli-${process.pid}-${cliCalls++}.out`);
+  const fd = openSync(outFile, 'w');
+  try {
+    execFileSync(process.execPath, [CLI, ...args], { cwd, env, stdio: ['ignore', fd, 'inherit'] });
+  } finally {
+    closeSync(fd);
+  }
+  const out = readFileSync(outFile, 'utf8');
+  rmSync(outFile, { force: true });
+  return out;
+};
 const assert = (c, m) => {
   if (!c) {
     console.error('✗ brain-check: ' + m);

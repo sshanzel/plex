@@ -296,10 +296,11 @@ interface BrainContext {
 }
 
 /**
- * Build the PR-brain context for this review (ADR-22/23): determine the round, ingest PR
- * comments, attribute what changed since last round (semantic — embeddings REQUIRED, no
- * heuristic; ADR-13), and persist the round to FalkorDB. Throws if FalkorDB/embeddings are
- * unavailable — the brain has no fallback.
+ * Build the PR-brain context for this review (ADR-22/23/30): determine the round, ingest PR
+ * comments, and — when the head moved since the last round — attribute what changed (ADR-23)
+ * and infer fixes (ADR-28), persisting the round to the embedded Kùzu brain. Embeddings are
+ * OPTIONAL (ADR-30): without a provider the round/findings still record and fix inference falls
+ * back to file/line LOCALITY; only the semantic change-attribution (unexplainedChanges) is skipped.
  */
 async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: string): Promise<BrainContext> {
   const config = opts.config;
@@ -330,32 +331,44 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
       comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
     }
 
-    // Attribute changes since the previous round (ADR-23) + infer fixes (ADR-28) — needs an
-    // embedder; both run off one batch of embeddings (regions, signals, prior findings).
+    // Attribute changes since the previous round (ADR-23) + infer fixes (ADR-28). Embeddings power
+    // the SEMANTIC signals (unexplained-change attribution + semantic fix match); the file/line
+    // LOCALITY fix-match needs none (ADR-30). So run fix inference whenever the head moved — with a
+    // provider it adds the semantic signal, without one it still reconciles restructuring fixes by
+    // locality. This mirrors reconcileOutcomes, so a no-embeddings standalone review closes the SAME
+    // accept-loop the responder's `reconcile` would — `priorFindings` is already filtered to
+    // un-outcomed findings (brain.ts), so neither path double-accepts the other's.
     let unexplainedChanges: AttributedChange[] = [];
     let inferredOutcomes = 0;
-    if (embedder && state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
+    if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
       const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
       if (changed.length > 0) {
-        const signals = [
-          ...state.signals,
-          ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
-        ].filter((s) => s.text.trim());
-        const regionTexts = changed.map((c) => c.text);
-        const findingTexts = state.priorFindings.map((f) => f.title);
-        const vecs = await embedder.embed([...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
-        const regionEmb = changed.map((_, i) => vecs[i] ?? []);
+        // Locality-only by default (empty vectors → semantic never fires); a configured provider
+        // fills these in below for the semantic half + unexplained-change attribution.
+        let regionEmb: number[][] = changed.map(() => []);
+        let findingEmb: number[][] = state.priorFindings.map(() => []);
+        if (embedder) {
+          const signals = [
+            ...state.signals,
+            ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
+          ].filter((s) => s.text.trim());
+          const regionTexts = changed.map((c) => c.text);
+          const findingTexts = state.priorFindings.map((f) => f.title);
+          const vecs = await embedder.embed([...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
+          regionEmb = changed.map((_, i) => vecs[i] ?? []);
 
-        if (signals.length > 0) {
-          const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
-          const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
-          unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
-        } else {
-          unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+          if (signals.length > 0) {
+            const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
+            const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
+            unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
+          } else {
+            unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+          }
+
+          const fBase = regionTexts.length + signals.length;
+          findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
         }
-
-        const fBase = regionTexts.length + signals.length;
-        const findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
+        // Always run fix inference — locality reconciles restructuring fixes with no provider (ADR-30).
         inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
       }
     }
