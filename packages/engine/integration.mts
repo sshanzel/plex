@@ -189,6 +189,46 @@ test('review-plan', 'engine: reviewPlan fans out into coupled clusters (parallel
   }
 });
 
+test('brain-heal', 'engine: a worktree-split brain self-heals (orphaned rounds adopt the findings\' target)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-heal-'));
+  const config = resolveConfig({ dataDir: '.plex' });
+  const baseName = 'playright__pr_79'; // where an OLD build put ROUNDS (graph-meta name a worktree copied)
+  const canonical = 'work__pr_79'; // where it put FINDINGS (dir basename) = reviewTargetFor today
+  try {
+    const brain = await Brain.open(repo, config);
+    try {
+      // Reproduce the split: rounds under the base name, findings under the canonical (basename) name.
+      await brain.recordRound(baseName, { target: baseName, n: 1, ts: 't1', headSha: 'sha1', baseRef: 'main' }, []);
+      await brain.recordRound(baseName, { target: baseName, n: 2, ts: 't2', headSha: 'sha2', baseRef: 'main' }, []);
+      await brain.writeFindings(canonical, 1, [
+        { id: 'x', title: 'leak', body: '', severity: 'bug', confidence: 0.6, source: 'first-principles', location: { repo: 'r', file: 'a.ts', startLine: 5, endLine: 5 }, signal: 0.4, agreedSources: ['first-principles'], triage: 'surface' },
+      ]);
+
+      // Pre-heal: canonical has findings but no rounds → lastHeadSha missing (reconcile would bail 0).
+      let st = await brain.loadRoundState(canonical);
+      assert.equal(st.priorFindings.length, 1, 'findings present under canonical');
+      assert.equal(st.lastN, 0, 'no rounds under canonical (split)');
+
+      const healed = await brain.healSplitTarget(canonical);
+      assert.ok(healed, 'heal fired');
+      assert.equal(healed!.from, baseName, 'adopted the sibling with the same __pr_79 suffix');
+      assert.equal(healed!.rounds, 2);
+
+      // Post-heal: the rounds now belong to canonical → reconcile can diff + match.
+      st = await brain.loadRoundState(canonical);
+      assert.equal(st.lastN, 2, 'rounds adopted');
+      assert.equal(st.lastHeadSha, 'sha2', 'lastHeadSha is the latest adopted round');
+      assert.equal(st.priorFindings.length, 1, 'findings still present');
+
+      assert.equal(await brain.healSplitTarget(canonical), null, 'idempotent: a second heal is a no-op');
+    } finally {
+      await brain.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('brain', 'engine: Kùzu PR brain — rounds, findings, comments, outcome (ADR-30)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-brain-'));
   const config = resolveConfig({ dataDir: '.plex' });

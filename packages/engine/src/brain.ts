@@ -83,6 +83,41 @@ export class Brain {
     return this.db.close();
   }
 
+  /**
+   * Heal a brain SPLIT by the pre-`reviewTargetFor` worktree bug: if `canonicalTarget` has
+   * findings but NO rounds of its own, an earlier build recorded this same review's ROUNDS under
+   * a sibling target — same `__pr_<n>` / `__<mode>` suffix, different repo-name prefix (the BASE
+   * name a worktree copied via ADR-32). Adopt that sibling's rounds/comments (and any stray
+   * findings/verdicts) into the canonical target so reconcile + fix-inference work again.
+   *
+   * One brain file = one repo, so a same-suffix sibling is always THIS repo's same review — safe
+   * to merge. Fires only on the exact split signature (findings, no rounds), so a healthy brain
+   * pays a single COUNT and a fresh target is a no-op. Returns what it merged, or null.
+   */
+  async healSplitTarget(canonicalTarget: string): Promise<{ from: string; rounds: number } | null> {
+    const sep = canonicalTarget.indexOf('__');
+    if (sep < 0) return null;
+    const suffix = canonicalTarget.slice(sep); // e.g. "__pr_79" — the part after the repo prefix
+
+    const own = await this.db.run('MATCH (r:Round {target:$t}) RETURN count(r) AS c', { t: canonicalTarget });
+    if (Number(own[0]?.c ?? 0) > 0) return null; // canonical already has its own rounds — not split
+    const finds = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN count(fi) AS c', { t: canonicalTarget });
+    if (Number(finds[0]?.c ?? 0) === 0) return null; // nothing to anchor — not the split signature
+
+    // A sibling target that HAS rounds, shares the suffix, and whose prefix is everything before it.
+    const targets = await this.db.run('MATCH (r:Round) RETURN DISTINCT r.target AS t');
+    const from = targets
+      .map((s) => str(s.t) ?? '')
+      .find((t) => t !== canonicalTarget && t.endsWith(suffix) && t.indexOf('__') === t.length - suffix.length);
+    if (!from) return null;
+
+    const rc = await this.db.run('MATCH (r:Round {target:$f}) RETURN count(r) AS c', { f: from });
+    for (const label of ['Round', 'Comment', 'Finding', 'Verdict']) {
+      await this.db.run(`MATCH (n:${label} {target:$f}) SET n.target=$t`, { f: from, t: canonicalTarget });
+    }
+    return { from, rounds: Number(rc[0]?.c ?? 0) };
+  }
+
   /** Load prior rounds + the signals/findings used for change attribution & fix inference. */
   async loadRoundState(target: string): Promise<RoundState> {
     const roundRows = await this.db.run(

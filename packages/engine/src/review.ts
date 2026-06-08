@@ -317,6 +317,9 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 
   const brain = await Brain.open(opts.repoPath, config);
   try {
+    // Self-heal a worktree brain split (rounds orphaned under a sibling target by an older build)
+    // before reading state, so a re-review's fix-inference sees the prior rounds (reviewTargetFor).
+    await brain.healSplitTarget(target);
     const state = await brain.loadRoundState(target);
     const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
     const round = sameRound ? state.lastN : state.lastN + 1;
