@@ -638,6 +638,19 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
     assert.ok(ranked.some((r) => r.title === 'Possible null deref'), 'agent finding present');
     assert.equal(ranked[0]!.triage, 'surface');
     assert.equal(ranked[0]!.severity, 'bug');
+
+    // A deterministic finding the agent judges a FALSE POSITIVE: a line-scoped waive suppresses it
+    // from the stream — the mechanism the reviewer uses instead of emitting a contradicting nit.
+    const det = ranked.find((r) => r.tags?.includes('no-debugger'))!;
+    await recordVerdict(repo, { findingId: 'det-fp', kind: 'waive', scope: 'line', file: det.location.file, line: det.location.startLine, title: det.title }, config);
+    const reranked = await rankReviewFindings(
+      repo,
+      config,
+      [{ title: 'Possible null deref', severity: 'bug', confidence: 0.7, file: 'src/a.ts', startLine: 3, source: 'first-principles' }],
+      { mode: 'staged' },
+    );
+    assert.equal(reranked.find((r) => r.tags?.includes('no-debugger'))!.triage, 'suppressed', 'a line-scoped waive suppresses the deterministic false positive');
+    assert.equal(reranked.find((r) => r.title === 'Possible null deref')!.triage, 'surface', 'the agent finding is unaffected');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
