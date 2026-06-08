@@ -1,5 +1,5 @@
 ---
-name: pr-parallel-review
+name: plex-parallel-review
 description: Run a Plex code review, fanning out into parallel sub-reviewers when (and ONLY when) the change is big enough and splits into independent coupled clusters. Use for reviewing a large diff, branch, or PR where a single-pass review would be slow. Consolidates every sub-reviewer's findings into ONE ranked stream.
 ---
 
@@ -72,7 +72,7 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
    `plex-reviewer` shape (defects, then a separate **"Worth confirming"** section for `awareness`) —
    and follow `plex-reviewer`'s **lean-presentation** rule: issue + why + `file:line`, **no raw
    confidence numbers**, and **no meta "State"/run-summary recap**. **Do not ask the user to accept
-   / reject / waive** — the review is autonomous. Suggest the **`pr-review-responder`** skill to
+   / reject / waive** — the review is autonomous. Suggest the **`plex-review-responder`** skill to
    triage what landed and close the loop.
 
 ## Rules

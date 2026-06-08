@@ -1,5 +1,5 @@
 ---
-name: pr-review-responder
+name: plex-review-responder
 description: Fetch PR review comments, classify them, propose actions, apply fixes or replies, resolve threads — and close the Plex learning loop. Use when working through PR review feedback end-to-end on this repo.
 ---
 

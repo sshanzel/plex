@@ -478,7 +478,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
       ...AGENT_NOTES,
       ...BRAIN_NOTES,
       plan.strategy === 'parallel'
-        ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the pr-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
+        ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,
       ...(brain.inferredOutcomes > 0
         ? [`Plex auto-recorded ${brain.inferredOutcomes} prior finding(s) as fixed (a change since addressed them) — do not re-raise or ask to confirm those.`]

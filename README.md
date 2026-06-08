@@ -32,7 +32,7 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
         ▼  record_outcome (accept / reject / waive / acknowledge)  →  knowledge sharpens; confirmed bugs → incidents
 ```
 
-**Close the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review — inline comments on changed lines + a summary for coupled/awareness findings, deduped across rounds — which the `pr-review-responder` skill then triages (you decide) and reconciles back into the knowledge (ADR-34).
+**Close the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review — inline comments on changed lines + a summary for coupled/awareness findings, deduped across rounds — which the `plex-review-responder` skill then triages (you decide) and reconciles back into the knowledge (ADR-34).
 
 **Three finding sources, one stream:** first-principles (the agent), knowledge-grounded (retrieved pitfalls), and deterministic (built-in TS-AST checks + optional Semgrep/ast-grep). Prevalence is read by severity — a common *style* is a convention (demoted); a common *bug* is systemic (escalated as a migration).
 

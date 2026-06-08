@@ -18,7 +18,7 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
 
 ## Focused unit mode (parallel review)
 
-When the **`pr-parallel-review`** orchestrator spawns you, your prompt names a `FOCUS FILES`
+When the **`plex-parallel-review`** orchestrator spawns you, your prompt names a `FOCUS FILES`
 subset and supplies the grounding inline (blast radius, deterministic findings, knowledge,
 `changeContext`, `plex.md`). In that mode:
 
@@ -38,7 +38,7 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus `source` / `mode` (`working|staged|branch`) / `baseRef` / `pr`.
 
-   **If the change is large** (many files / big surface), consider the **`pr-parallel-review`**
+   **If the change is large** (many files / big surface), consider the **`plex-parallel-review`**
    skill instead — it asks Plex for a `reviewPlan` and, when the change splits into independent
    coupled clusters, fans the review out across parallel sub-reviewers and consolidates. For an
    ordinary change, a single pass here is faster; don't fan out by reflex.
@@ -61,10 +61,10 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 4. **Submit, then stop** — call `mcp__plex__submit_findings` (title, body, severity, confidence, file, startLine per finding). Plex merges them with the deterministic findings, applies scoped (incl. semantic) waivers, and returns one ranked, triaged stream. Present that stream to the user, highest-signal first — and **stop. Do NOT ask the user whether to accept / reject / waive.** The review is autonomous.
    - **Keep the presentation lean.** Group by severity (defects first, then a **"Worth confirming"** section for `awareness`); each item is the issue + why + `file:line`, nothing more. **Do not print raw confidence numbers** (use words). **Do not append a meta "State"/"summary of the run" recap** (round number, commit list, "loop closed", token talk) — end after the findings. If a change is clean, say so in one line. The user can ask for the internals (confidence, round/brain state) if they want them; default to signal, not telemetry.
-   - **Posting to the PR is automatic (ADR-34).** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and awareness findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest the **`pr-review-responder`** skill so the author can triage what landed and close the loop.
+   - **Posting to the PR is automatic (ADR-34).** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and awareness findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest the **`plex-review-responder`** skill so the author can triage what landed and close the loop.
 
 5. **Outcomes are recorded autonomously** — you do not prompt for verdicts. When the author addresses a *defect* and the PR is re-reviewed, Plex auto-records it as `accept` (it sees the fix). Only call `mcp__plex__record_outcome` for an **explicit dismissal** — e.g. when responding to PR discussion and the author pushes back ("intentional / by design") — passing file/line/title **and the same diff source (`pr`/`mode`/`baseRef`) you reviewed**, so the verdict + semantic waiver land on the right PR brain and stay quiet next round. Never infer a reject from silence.
-   - **`awareness` flags are NOT auto-accepted** (they aren't defects to "fix"). They stay surfaced until an **explicit `acknowledge`** (intentional) or `reject` — once acknowledged, the semantic waiver keeps them silent **until the situation materially changes** (a genuinely new instance re-surfaces). So a "yes, intentional" should be recorded as `acknowledge`, not left to silence — that's what stops it coming back every round. (The `pr-review-responder` skill does this when the author confirms intent.)
+   - **`awareness` flags are NOT auto-accepted** (they aren't defects to "fix"). They stay surfaced until an **explicit `acknowledge`** (intentional) or `reject` — once acknowledged, the semantic waiver keeps them silent **until the situation materially changes** (a genuinely new instance re-surfaces). So a "yes, intentional" should be recorded as `acknowledge`, not left to silence — that's what stops it coming back every round. (The `plex-review-responder` skill does this when the author confirms intent.)
 
 ## Rules
 - A pattern repeated across many files is usually a *convention* — demote it to a nit — UNLESS it is a genuine bug, which makes it *systemic*: escalate and note the blast radius.

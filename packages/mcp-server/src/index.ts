@@ -117,7 +117,7 @@ server.tool(
 
 server.tool(
   'get_review_context',
-  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the pr-parallel-review skill), and guidance. Auto-indexes the repo on first use.',
+  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and guidance. Auto-indexes the repo on first use.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
