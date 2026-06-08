@@ -25,12 +25,18 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
   let reinforced = 0;
   const next = pitfalls.map((p) => {
     const inc = byPitfall.get(p.id) ?? [];
-    if (inc.length === 0) return p;
+    // Idempotent: fold in ONLY incidents not already applied. Recomputing from the CURRENT
+    // (already-bumped) confidence over ALL incidents made re-running consolidate re-apply the same
+    // evidence every time (0.4 → 0.6 → 0.8 → … → saturate). `incidentIds` is the applied-set ledger,
+    // so a re-run with no new incidents is a no-op and a new incident moves confidence exactly once.
+    const applied = new Set(p.incidentIds ?? []);
+    const fresh = inc.filter((i) => !applied.has(i.id));
+    if (fresh.length === 0) return p;
     reinforced++;
-    const positive = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed').length;
-    const negative = inc.filter((i) => i.outcome === 'rejected').length;
+    const positive = fresh.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed').length;
+    const negative = fresh.filter((i) => i.outcome === 'rejected').length;
     const confidence = Math.max(0, Math.min(1, p.confidence + 0.1 * positive - 0.15 * negative));
-    return { ...p, confidence, incidentIds: inc.map((i) => i.id) };
+    return { ...p, confidence, incidentIds: [...(p.incidentIds ?? []), ...fresh.map((i) => i.id)] };
   });
 
   await store.replacePitfalls(next);

@@ -43,6 +43,28 @@ describe('consolidatePitfalls', () => {
     expect(byId['p2']!.confidence).toBeCloseTo(0.35, 5); // 0.5 - 0.15
     expect(byId['p1']!.incidentIds).toEqual(['i1', 'i2']);
   });
+
+  it('is idempotent — re-running with no new incidents leaves confidence put (no double-count)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kp-idem-'));
+    const store = new KnowledgeStore(dir);
+    await store.addPitfall(pf({ id: 'p1', confidence: 0.4 }));
+    await store.addIncident({ id: 'i1', pitfallId: 'p1', source: 'review', outcome: 'accepted', ts: 't' });
+    await store.addIncident({ id: 'i2', pitfallId: 'p1', source: 'review', outcome: 'accepted', ts: 't' });
+
+    const first = await consolidatePitfalls(store);
+    expect(first.reinforced).toBe(1);
+    expect((await store.pitfalls())[0]!.confidence).toBeCloseTo(0.6, 5);
+
+    const second = await consolidatePitfalls(store); // SAME incidents, no new ones
+    expect(second.reinforced).toBe(0);
+    expect((await store.pitfalls())[0]!.confidence).toBeCloseTo(0.6, 5); // unchanged — NOT 0.8
+
+    await store.addIncident({ id: 'i3', pitfallId: 'p1', source: 'review', outcome: 'rejected', ts: 't' });
+    const third = await consolidatePitfalls(store); // one NEW incident still moves it, once
+    expect(third.reinforced).toBe(1);
+    expect((await store.pitfalls())[0]!.confidence).toBeCloseTo(0.45, 5); // 0.6 - 0.15
+    expect((await store.pitfalls())[0]!.incidentIds).toEqual(['i1', 'i2', 'i3']);
+  });
 });
 
 describe('proposePromotions', () => {
