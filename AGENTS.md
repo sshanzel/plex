@@ -77,29 +77,43 @@ Editing the agent/skill: change the real file under **`plugin/…`** (the canoni
 
 ### Distribution (Claude Code plugin via the `sshanzel/plugins` hub)
 
-Downstream users install via a **Claude Code plugin**, not by cloning this repo. The plugin is listed
-in the **`sshanzel/plugins`** marketplace (the hub for all the author's plugins) and pulled from THIS
-repo via a `git-subdir` source (a sparse clone of just `plugin/` — no monorepo cruft). So `plugin/`
-must be **self-contained** (real files, no symlink escaping the dir):
+Downstream users install via a **plugin — Claude Code *or* Codex** — not by cloning this repo. One
+`plugin/` dir carries both: each agent reads its own manifest and ignores the other's.
+
+- **Claude Code** installs from the **`sshanzel/plugins`** hub marketplace, which pulls THIS repo's
+  `plugin/` via a `git-subdir` source (a sparse clone of just `plugin/` — no monorepo cruft). So
+  `plugin/` must be **self-contained** (real files, no symlink escaping the dir).
+- **Codex** installs from this repo's own Codex marketplace at the repo root
+  (`.agents/plugins/marketplace.json` → `./plugin`): `codex plugin marketplace add sshanzel/plex`.
 
 ```
-plugin/                                     # the "plex" plugin (referenced by sshanzel/plugins via git-subdir)
-  .claude-plugin/plugin.json               # NO version field → git-SHA versioning (a push = an update)
-  .mcp.json                                # launches the engine: npx -y -p @sshanzel/plex plex-mcp
-  commands/review.md                        # the /plex:review command
-  agents/plex-reviewer.md                  # REAL file — the canonical home (NOT a symlink)
-  skills/plex-parallel-review/SKILL.md     # REAL file — the canonical home
+plugin/                                     # the "plex" plugin — Claude AND Codex read this one dir
+  .claude-plugin/plugin.json               # Claude manifest (NO version → git-SHA versioning; a push = an update)
+  .codex-plugin/plugin.json                # Codex manifest → skills: ./codex/skills/
+  .mcp.json                                # launches the engine for BOTH: npx -y -p @sshanzel/plex plex-mcp
+  commands/review.md                        # Claude: the /plex:review command
+  agents/plex-reviewer.md                  # Claude: the reviewer subagent — REAL file, canonical
+  skills/plex-parallel-review/SKILL.md     # the parallel-review orchestrator — REAL file, canonical
+  scripts/gen-codex-skills.mjs             # generates codex/skills/ from the agent + skill
+  codex/skills/                            # GENERATED + committed (Codex has no agent/command type):
+    plex-review/SKILL.md                   #   the agent → a plex-review skill (Codex-neutral tool wording)
+    plex-parallel-review/SKILL.md          #   + the parallel-review skill carried across
+.agents/plugins/marketplace.json           # (repo ROOT, not in plugin/) the Codex marketplace → ./plugin
 ```
 
-`plugin/` is the **single source of truth** for the plex agent + skill; **dogfooding symlinks point
-*into* it** (`.claude/agents/plex-reviewer.md`, `.claude/skills/plex-parallel-review`, and
-`.agents/skills/plex-parallel-review` are all symlinks → `plugin/…`). Edit the real file under
-`plugin/`; the symlinks pick it up. Do NOT reintroduce a symlink that escapes `plugin/` — `git-subdir`
-sparse-clones only that dir, so an escaping link would break in users' installs.
+`plugin/` is the **single source of truth**: Claude reads `agents/` + `commands/` + `skills/`; Codex
+reads `codex/skills/`. The agent + parallel-review skill are canonical and **`codex/skills/` is
+generated** — edit the source, then `node plugin/scripts/gen-codex-skills.mjs` and commit (the
+generated files are committed so the Codex marketplace clone has them). **Dogfooding symlinks point
+*into* `plugin/`** (`.claude/agents/plex-reviewer.md`, `.claude/skills/plex-parallel-review`,
+`.agents/skills/plex-parallel-review` → `plugin/…`). Do NOT reintroduce a symlink that escapes
+`plugin/` — `git-subdir` sparse-clones only that dir for Claude, so an escaping link would break
+users' installs.
 
-Install: `/plugin marketplace add sshanzel/plugins` → `/plugin install plex@sshanzel`. **Naming rule:**
-`plex-*` (the reviewer agent + `plex-parallel-review`) are Plex-coupled and ship in this plugin; the
-general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel/plugins`) and only
+Install — Claude: `/plugin marketplace add sshanzel/plugins` → `/plugin install plex@sshanzel`.
+Codex: `codex plugin marketplace add sshanzel/plex` (then the `plex-review` skill). **Naming rule:**
+`plex-*` (the reviewer agent/skill + `plex-parallel-review`) are Plex-coupled and ship in this plugin;
+the general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel/plugins`) and only
 *detect* Plex. The engine (npm `@sshanzel/plex`) updates separately from the plugin (git push). The
 plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex`).
 

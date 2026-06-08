@@ -1,0 +1,18 @@
+{
+  "name": "plex",
+  "owner": {
+    "name": "Lee Solevilla",
+    "email": "sshanzel@yahoo.com"
+  },
+  "metadata": {
+    "description": "Local-first, unbiased AI code reviewer (Codex plugin).",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "plex",
+      "source": { "path": "./plugin" },
+      "description": "Local-first, unbiased AI code reviewer — a fresh-context plex-review skill + a parallel-review orchestrator, grounded in a blast-radius code graph + accumulated review knowledge. MCP engine via npx (@sshanzel/plex)."
+    }
+  ]
+}
