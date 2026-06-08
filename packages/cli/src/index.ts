@@ -1,6 +1,10 @@
+#!/usr/bin/env node
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: index, review, blast, verdict, verdicts.
+ *
+ * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
+ * making the published `bin` directly executable.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -49,7 +53,7 @@ Usage:
   plex seed [repoPath] [--file <markdown>]
   plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
 
-Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_FALKORDB_URL, PLEX_EMBEDDING_PROVIDER`;
+Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
 
 function printReview(ctx: ReviewContext): void {
   const out: string[] = [];

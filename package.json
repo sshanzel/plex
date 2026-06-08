@@ -1,11 +1,41 @@
 {
-  "name": "plex-monorepo",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@sshanzel/plex",
+  "version": "0.1.0",
   "type": "module",
   "description": "Local-first, open-source AI code reviewer: an MCP server + CLI that grounds any agent's review in a blast-radius code graph and accumulated review knowledge.",
   "license": "MIT",
   "author": "Lee Solevilla",
+  "homepage": "https://github.com/sshanzel/plex#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sshanzel/plex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sshanzel/plex/issues"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "mcp",
+    "claude",
+    "codex",
+    "code-graph",
+    "pull-request",
+    "static-analysis",
+    "developer-tools",
+    "local-first"
+  ],
+  "bin": {
+    "plex": "./dist/plex.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.32.0",
   "engines": {
     "node": ">=20"
@@ -13,6 +43,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsup",
+    "prepack": "pnpm build",
     "start:mcp": "node dist/plex-mcp.js",
     "start": "node dist/plex.js",
     "test": "vitest run && pnpm test:integration",
@@ -29,13 +60,13 @@
     "@modelcontextprotocol/sdk": "^1.12.0",
     "kuzu": "^0.11.3",
     "parse-diff": "^0.11.1",
+    "typescript": "^5.7.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
     "vitest": "^4.1.0"
   },
   "pnpm": {
