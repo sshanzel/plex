@@ -44,6 +44,23 @@ export async function getCoChangeEdges(db: CodeGraphDB, ids: string[]): Promise<
   }));
 }
 
+/**
+ * Co-change "degree" of each file in `ids` — the sum of its incident CoChange edge weights. Used
+ * to normalize pair strength into an association-strength / Salton-cosine score (tuning.md §4), so a
+ * file that co-changes with *everything* (a config, lockfile, or barrel) doesn't dominate the blast
+ * radius. Read-only over the stored weights — no schema or incremental-merge change.
+ */
+export async function getCoChangeDegrees(db: CodeGraphDB, ids: string[]): Promise<Map<string, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.run(
+    'MATCH (a:File)-[c:CoChange]-(b:File) WHERE a.id IN $ids RETURN a.id AS id, sum(c.weight) AS deg',
+    { ids },
+  );
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(String(r.id), Number(r.deg) || 0);
+  return m;
+}
+
 /** Import neighbors of any file in `ids` (undirected: importers and imported). */
 export async function getImportEdges(
   db: CodeGraphDB,

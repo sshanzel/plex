@@ -1,5 +1,14 @@
 import type { Pitfall, Incident } from '@plex/core';
 import type { KnowledgeStore } from './store';
+import { betaPosteriorMean } from './stats';
+
+// Beta-Bernoulli model for pitfall confidence (tuning.md §1). Prior Beta(1,1) = Laplace's rule of
+// succession (an untested pitfall sits at 0.5 once evidence arrives); rejects cost 1.5× a confirm
+// (a false positive is dearer — this is the old +0.1/−0.15 asymmetry, now permanent and bounded).
+const PRIOR_ALPHA = 1;
+const PRIOR_BETA = 1;
+const REJECT_COST = 1.5;
+const POSITIVE = new Set(['accepted', 'fixed']);
 
 export interface ConsolidateResult {
   pitfalls: number;
@@ -25,18 +34,16 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
   let reinforced = 0;
   const next = pitfalls.map((p) => {
     const inc = byPitfall.get(p.id) ?? [];
-    // Idempotent: fold in ONLY incidents not already applied. Recomputing from the CURRENT
-    // (already-bumped) confidence over ALL incidents made re-running consolidate re-apply the same
-    // evidence every time (0.4 → 0.6 → 0.8 → … → saturate). `incidentIds` is the applied-set ledger,
-    // so a re-run with no new incidents is a no-op and a new incident moves confidence exactly once.
-    const applied = new Set(p.incidentIds ?? []);
-    const fresh = inc.filter((i) => !applied.has(i.id));
-    if (fresh.length === 0) return p;
+    if (inc.length === 0) return p; // no outcomes yet → keep the mined/seeded prior confidence
     reinforced++;
-    const positive = fresh.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed').length;
-    const negative = fresh.filter((i) => i.outcome === 'rejected').length;
-    const confidence = Math.max(0, Math.min(1, p.confidence + 0.1 * positive - 0.15 * negative));
-    return { ...p, confidence, incidentIds: [...(p.incidentIds ?? []), ...fresh.map((i) => i.id)] };
+    // Beta-Bernoulli posterior mean over ALL linked outcomes. Idempotent by construction — it's a
+    // pure function of the counts, so re-running consolidate can't drift confidence the way the old
+    // additive rule did (no applied-set ledger needed). Real accept/reject evidence supersedes the
+    // mined prior estimate, which is what we want once a pitfall has a track record.
+    const s = inc.filter((i) => POSITIVE.has(i.outcome ?? '')).length;
+    const f = inc.filter((i) => i.outcome === 'rejected').length;
+    const confidence = betaPosteriorMean(PRIOR_ALPHA + s, PRIOR_BETA + REJECT_COST * f);
+    return { ...p, confidence, incidentIds: inc.map((i) => i.id) };
   });
 
   await store.replacePitfalls(next);

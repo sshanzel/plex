@@ -2,7 +2,7 @@ import type { ReviewerConfig, EmbeddingProvider, Incident, CompletionProvider } 
 import { KnowledgeStore } from '@plex/knowledge';
 import { listPrs, fetchCommentsForPr } from './github';
 import { isSubstantive, categorize } from './classify';
-import { greedyCluster, centroid } from './cluster';
+import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
 import { llmDistill, type ClusterInput } from './distill';
 import { createCompletionProvider } from './llm';
 import { outcomeFor } from './outcome';
@@ -88,7 +88,10 @@ export async function scanHistory(
   }
 
   const vectors = await embed.embed(substantive.map((c) => c.body));
-  const clusters = greedyCluster(vectors, config.mining.clusterThreshold)
+  // Adaptive cut from this batch's own cosine background (tuning.md §6) — the configured value is
+  // the small-batch fallback, not a per-model magic constant.
+  const threshold = adaptiveCosineThreshold(vectors, { fallback: config.mining.clusterThreshold });
+  const clusters = greedyCluster(vectors, threshold)
     .filter((idx) => idx.length >= config.mining.minClusterSize)
     .map((idx) => ({
       comments: idx.map((i) => substantive[i]!),

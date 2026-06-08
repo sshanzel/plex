@@ -1,6 +1,34 @@
 import { describe, it, expect } from 'vitest';
-import { greedyCluster, centroid } from './cluster';
+import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
 import { minedPitfallId } from './distill';
+
+describe('adaptiveCosineThreshold (per-batch cosine calibration)', () => {
+  const DIM = 12;
+  const e = (i: number): number[] => Array.from({ length: DIM }, (_, d) => (d === i ? 1 : 0));
+  const same = (n: number): number[][] => Array.from({ length: n }, () => e(0)); // all identical
+  const basis = (n: number): number[][] => Array.from({ length: n }, (_, i) => e(i)); // mutually orthogonal
+
+  it('falls back to the configured value for a small batch (n < 8)', () => {
+    expect(adaptiveCosineThreshold(same(5), { fallback: 0.8 })).toBe(0.8);
+    expect(adaptiveCosineThreshold([], { fallback: 0.73 })).toBe(0.73);
+  });
+
+  it('rises toward the ceiling when the batch is all near-identical (μ≈1, σ≈0)', () => {
+    expect(adaptiveCosineThreshold(same(10), { fallback: 0.8 })).toBeCloseTo(0.97, 5); // clamped ceiling
+  });
+
+  it('drops to the floor when the batch is mutually orthogonal (μ≈0, σ≈0)', () => {
+    expect(adaptiveCosineThreshold(basis(10), { fallback: 0.8 })).toBeCloseTo(0.5, 5); // clamped floor
+  });
+
+  it('adapts between the extremes — a batch with real spread lands in-band', () => {
+    // 8 vectors: 4 share a direction (cosine 1), 4 mutually orthogonal (cosine 0) ⇒ μ,σ mid-range.
+    const mixed = [...same(4), e(4), e(5), e(6), e(7)];
+    const t = adaptiveCosineThreshold(mixed, { fallback: 0.8, k: 2 });
+    expect(t).toBeGreaterThan(0.5);
+    expect(t).toBeLessThanOrEqual(0.97);
+  });
+});
 
 // Mined-pitfall ids must be collision-free: titles differing only in punctuation, or
 // emoji/CJK-only titles (which slug to ''), used to produce identical ids and silently

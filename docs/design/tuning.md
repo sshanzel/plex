@@ -5,6 +5,16 @@ current value, where it lives, and **whether it rests on a formula or on intuiti
 was scattered across code comments + ADRs + git history; this consolidates it so the experimentation
 is tracked, not rediscovered.
 
+> **Principled-tuning rehaul (adopted).** A literature pass (with verified citations) replaced five
+> hand-tuned mechanisms with their textbook forms — each a tested commit:
+> 1. **Pitfall confidence → Beta-Bernoulli posterior mean + Wilson lower bound** (was `±0.1/±0.15`).
+> 2. **Co-change strength → Salton association strength** `co/√(degA·degB)` (was a raw count; removes the frequency confound).
+> 3. **Clustering cut → adaptive `μ+kσ` of the batch's own cosines** (was a fixed `0.8`).
+> 4. **Blast radius → personalized PageRank / RWR**, degree-normalized — *subsumes* the hub-damping (was BFS + `hubWeight`).
+> 5. **Ranking → an nDCG eval metric** over outcome labels (live verdicts **or mined PR history**) — the measuring stick the weights need.
+>
+> What remains genuinely empirical / deferred is called out per-section and in **The honest limit** below.
+
 ## How a change is recorded (the "basis/record" answer)
 
 There is no separate experiment DB — the record is **git history + ADR notes + this file**:
@@ -28,13 +38,20 @@ There is no separate experiment DB — the record is **git history + ADR notes +
 
 | Knob | Value | Exposed | Basis | Why |
 |---|---|---|---|---|
-| `maxHops` | 2 | config | empirical | 1 hop misses transitive coupling; 3+ explodes the radius. |
+Propagation is **personalized PageRank / random-walk-with-restart** (Page 1999; PPR ≡ RWR), seeded on
+the changed files over CoChange ∪ Imports ∪ Refs. The walk's transition is **degree-normalized** — a
+node forwards its mass split across its out-edges by weight — so a hub (barrel/registry) dilutes
+natively. That **subsumes** the old `hubWeight` (removed) and the per-hop decay.
+
+| Knob | Value | Exposed | Basis | Why |
+|---|---|---|---|---|
+| `maxHops` | 2 | config | empirical | RWR iteration cap; 1 misses transitive coupling, 3+ widens the radius. |
 | `maxNeighbors` | 40 | config | empirical | output/token cap on the radius. |
-| `minScore` | 0.05 | config | empirical | floor that drops trace-coupling noise. |
-| `importWeight` | 0.4 | hardcoded | empirical | a structural import is a weaker signal than co-change. |
-| `refWeight` | 0.5 | hardcoded | empirical | a precise alias-ref is slightly stronger than a bare import. |
-| `hopDecay` | 0.5 | hardcoded | empirical | each hop halves contribution. |
-| `hubThreshold` | 20 | hardcoded | **principled (IDF)** | **inverse-popularity damping.** A node connected to many files is a diffuse hub (barrel/registry), not coupling — the same intuition as TF-IDF's `idf = log(N/df)`. We ship a **bounded approximation** `min(1, threshold/degree)` (full ≤ threshold, then `1/degree` falloff); the formal `log(N/df)` is the upgrade if we want strict grounding (ADR-06 refinement). |
+| `minScore` | 0.05 | config | empirical | floor (of the max-normalized PPR score) that drops trace coupling. |
+| `restart` | 0.15 | hardcoded | **principled** | RWR teleport / damping `d = 0.85` — the PageRank convention. |
+| `importWeight` | 0.4 | hardcoded | empirical | relative edge weight: a structural import is weaker than co-change. |
+| `refWeight` | 0.5 | hardcoded | empirical | a precise alias-ref slightly stronger than a bare import. |
+| ~~`hubThreshold`~~ | — | removed | **principled (PPR)** | the structural-hub fix is now intrinsic to the degree-normalized walk; no separate knob (PPR's random-walk normalization is the proper form of the IDF intuition the old `min(1,threshold/degree)` approximated). |
 
 ## Co-change (logical coupling) — `config.coChange`, `packages/code-graph`
 
@@ -44,6 +61,7 @@ There is no separate experiment DB — the record is **git history + ADR notes +
 | `halfLifeDays` | 365 | **principled** (form) / empirical (value) | exponential recency decay — standard; the 1-year half-life itself is a guess. |
 | `minPairCount` | 2 | **principled** | a pair must recur to count — kills singleton N² noise (ADR-06). |
 | `maxCommits` | 5000 | empirical | history-crawl budget. |
+| pair strength | `co / √(degA·degB)` | **principled (adopted)** | **Salton association strength** (van Eck & Waltman 2009) over co-change degrees — divides out each file's promiscuity, so a config/lockfile/barrel that co-changes with everything collapses toward 0. The read-time, no-marginal-storage form of association-rule **lift** (Gall 1998; Zimmermann 2004); applied in `neighborhood/compute.ts`, stored weight untouched (ADR-26 incremental safe). |
 | confidence merge | `1−(1−a)(1−b)` | **principled** | noisy-OR: independent sources agreeing raise confidence (`dedupe.ts`). |
 
 ## Ranking / signal — `packages/findings/src/signal.ts`, `rank.ts`
@@ -70,9 +88,10 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 
 | Knob | Value | Basis | Why |
 |---|---|---|---|
-| `WAIVER_SEMANTIC_THRESHOLD` | 0.82 | **empirical (model-calibrated)** | a waiver suppresses cosine-≥ findings; calibrated to voyage-code-3 (related ~0.86, unrelated ~0.40 — `config.ts`). |
-| `mining.clusterThreshold` | 0.8 | **empirical (model-calibrated)** | cluster tightness; <~0.7 sinks everything into one cluster. |
-| consolidation | +0.1 accept/fixed · −0.15 reject | empirical | reject weighs more than accept (a false positive should cost more). |
+| `WAIVER_SEMANTIC_THRESHOLD` | 0.82 | **empirical — adaptive deferred** | a waiver suppresses cosine-≥ findings; still a fixed per-model cutoff. The adaptive form (below) is **deferred** here on purpose: this gate controls *suppression*, so a careless threshold silently hides real findings — it earns its own carefully-rolled-out change, not a bundle. |
+| `semanticThreshold` (fix-inference) | 0.6 | **empirical — adaptive deferred** | same: a suppression-adjacent gate (auto-accept); deferred for the same reason. |
+| `mining.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
+| pitfall confidence | **Beta-Bernoulli** posterior mean | **principled (adopted)** | `confidence = (α0+s)/(α0+β0+s+1.5f)` with prior Beta(1,1) and rejects at 1.5× (was `±0.1/±0.15`). Idempotent, no clamp-loss, no path-dependence. `wilsonLowerBound` (Wilson 1927) available for small-sample ranking. `promotion.ts`. |
 | promotion threshold | 0.7 | empirical | confidence at which a pitfall is proposed for `plex.md`. |
 
 ## Review plan (fan-out) — `config.reviewPlan` (ADR-34)
@@ -82,18 +101,30 @@ small/tightly-coupled change stays a single pass.
 
 ---
 
-## The honest limit — and the only rigorous fix
+## The honest limit — and what's left
 
-The **model-calibrated cosine cutoffs** (0.6 / 0.82 / 0.8) and the **magnitude knobs** (import/ref/hop
-weights, severity weights, consolidation deltas) have **no closed-form "correct" value**. They were set
-by intuition and are only as good as that intuition. Cosine thresholds are additionally **provider-specific**
-— switching embedding models invalidates them (ADR-13), because each model places "related" and "unrelated"
-at different cosines.
+The **ranking magnitude knobs** (severity weights, import/ref edge weights, the `blast`/`agreement`
+shapes) have **no closed-form correct value** — they encode a preference (the multiplicative form is a
+legitimate Weighted Product Model; only the relative weights are free). You cannot derive them; you can
+only *fit* them against labeled relevance.
 
-The principled way to move past guessing is **not** a formula but an **evaluation harness**: a labeled
-corpus of diffs with known-good / known-bad findings (and known coupling), against which we measure
-precision / recall / ranking quality (e.g. nDCG for the blast radius) as a knob changes — turning each
-edit from "feels better" into a measured delta. That harness doesn't exist yet; it's the highest-leverage
-investment for tuning, and the prerequisite for any auto-tuning. Until then: change one knob at a time,
-record the rationale here + in the commit, and prefer the formula-backed shape (IDF, recency-decay,
-noisy-OR) wherever one exists.
+That measuring stick now exists: **`ndcg` / `rankingNdcg`** (`findings/src/eval.ts`) scores a ranking
+against outcome labels. And the labels exist two ways — live `record_outcome` verdicts, and, at scale,
+**mined PR history** (every review comment is a finding a human cared about; its outcome grades it; the
+mining pipeline already pulls comment → outcome). So the path is concrete:
+
+**Next (designed, not yet built):**
+1. **Mining-fed weight-fit.** Extract per-incident ranking features from mined history → fit the WPM
+   exponents / a logistic model by maximizing `rankingNdcg` offline. Mining is the bulk label source;
+   live verdicts refine it. This is the only rigorous way to set the ranking weights — resist hand-tuning.
+2. **Adaptive waiver + fix-inference thresholds.** Same per-batch / per-provider calibration as the
+   clustering cut, applied to `WAIVER_SEMANTIC_THRESHOLD` and `semanticThreshold`. Deferred deliberately:
+   both gate *suppression*, so they get a careful, separately-validated rollout (a bad threshold there
+   silently hides real findings) rather than riding the rehaul bundle.
+
+Until those land: change one knob at a time, record the rationale here + in the commit, and prefer the
+formula-backed shape (PPR, association strength, Beta-Bernoulli, recency-decay, noisy-OR) wherever one
+exists. **Sources** (verified): Wilson 1927; Evan Miller, *How Not To Sort By Average Rating*; Page 1999
+(PageRank) / personalized-PageRank ≡ RWR; van Eck & Waltman 2009 (co-occurrence normalization); Gall 1998
+& Zimmermann 2004 (logical coupling / lift); Mu & Viswanath 2018 & Su 2021 (embedding anisotropy);
+Järvelin & Kekäläinen 2002 (nDCG); Weighted Product Model.

@@ -157,8 +157,9 @@ test('blast-hub', "neighborhood: a changed barrel's importers are damped vs a di
     };
     const db = new CodeGraphDB(dbDir);
     try {
-      // hubThreshold 3: barrel (degree 6) is damped to threshold/degree = 0.5; svc (degree 1) stays full.
-      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 1, maxNeighbors: 40, minScore: 0.001, hubThreshold: 3 });
+      // PPR damps the barrel natively: its 6 importers split the walk's mass 6 ways, while svc's
+      // lone importer gets it all — so a barrel importer must rank below the direct coupling.
+      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 2, maxNeighbors: 40, minScore: 0.001 });
       const score = (p: string) => nb.neighbors.find((n) => String(n.node.props.path) === p)?.score ?? 0;
       const solo = score('src/solo.ts'); // importer of the LOW-degree svc → full weight
       const c0 = score('src/c0.ts'); //     importer of the HIGH-degree barrel → damped

@@ -1,31 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { rangesOverlap, symbolsTouchedByRanges, hubWeight } from './compute';
+import { rangesOverlap, symbolsTouchedByRanges, associationStrength } from './compute';
 import type { SymbolRow } from '@plex/code-graph';
 
-describe('hubWeight (barrel/hub damping)', () => {
-  it('is full weight at or below the threshold', () => {
-    expect(hubWeight(1, 20)).toBe(1);
-    expect(hubWeight(20, 20)).toBe(1);
+describe('associationStrength (co-change promiscuity normalization)', () => {
+  it('an exclusively-coupled pair scores 1', () => {
+    expect(associationStrength(2, 2, 2)).toBe(1); // a and b only co-change with each other
   });
-
-  it('falls off ~threshold/degree above the threshold', () => {
-    expect(hubWeight(40, 20)).toBeCloseTo(0.5, 5); // a barrel imported by 40 → half
-    expect(hubWeight(200, 20)).toBeCloseTo(0.1, 5); // imported by 200 → a tenth
+  it('a promiscuous file collapses toward 0', () => {
+    expect(associationStrength(1, 10, 10)).toBeCloseTo(0.1, 5); // each co-changes with ~10 others
+    expect(associationStrength(1, 100, 1)).toBeCloseTo(0.1, 5); // one barrel endpoint suffices
   });
-
-  it('is monotonically non-increasing in degree and always in (0, 1]', () => {
+  it('is monotonically non-increasing as a pair gets more promiscuous, and stays in (0,1]', () => {
     let prev = 1;
-    for (const d of [1, 5, 20, 50, 100, 500]) {
-      const w = hubWeight(d, 20);
-      expect(w).toBeLessThanOrEqual(prev);
-      expect(w).toBeGreaterThan(0);
-      expect(w).toBeLessThanOrEqual(1);
-      prev = w;
+    for (const deg of [1, 2, 5, 20, 100]) {
+      const s = associationStrength(1, deg, deg);
+      expect(s).toBeLessThanOrEqual(prev);
+      expect(s).toBeGreaterThan(0);
+      expect(s).toBeLessThanOrEqual(1);
+      prev = s;
     }
   });
-
-  it('guards degree 0 (treated as 1) — never divides by zero', () => {
-    expect(hubWeight(0, 20)).toBe(1);
+  it('never exceeds 1 even if a degree is mis-reported below the pair weight', () => {
+    expect(associationStrength(5, 1, 1)).toBe(1); // guarded: deg treated as ≥ co
   });
 });
 

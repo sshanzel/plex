@@ -37,6 +37,35 @@ export function greedyCluster(vectors: number[][], threshold: number): number[][
   return clusters.map((c) => c.indices);
 }
 
+/**
+ * Adaptive cosine cut for clustering: `μ + k·σ` of the batch's OWN pairwise-cosine background
+ * (tuning.md §6). A fixed cutoff (0.8) is fragile because embedding spaces are anisotropic — the
+ * "unrelated" baseline cosine differs per model — so a constant means a different thing per model.
+ * Estimating the cut from the batch auto-adapts: a pair is "unusually similar" only if it sits `k`
+ * standard deviations above this batch's typical pair. Falls back to `fallback` when there aren't
+ * enough vectors to estimate a background (n < 8), and is clamped to a sane band so a degenerate
+ * batch can neither sink everything into one cluster nor shatter it into singletons. Pure.
+ */
+export function adaptiveCosineThreshold(
+  vectors: number[][],
+  opts: { fallback: number; k?: number; sampleCap?: number },
+): number {
+  const k = opts.k ?? 3;
+  if (vectors.length < 8) return opts.fallback;
+  const cap = opts.sampleCap ?? 4000;
+  const sims: number[] = [];
+  outer: for (let i = 0; i < vectors.length; i++) {
+    for (let j = i + 1; j < vectors.length; j++) {
+      sims.push(cosineSimilarity(vectors[i]!, vectors[j]!));
+      if (sims.length >= cap) break outer;
+    }
+  }
+  const mu = sims.reduce((a, b) => a + b, 0) / sims.length;
+  const variance = sims.reduce((a, b) => a + (b - mu) ** 2, 0) / sims.length;
+  const sigma = Math.sqrt(variance);
+  return Math.min(0.97, Math.max(0.5, mu + k * sigma));
+}
+
 /** Mean vector of the given rows. */
 export function centroid(vectors: number[][]): number[] {
   if (vectors.length === 0) return [];

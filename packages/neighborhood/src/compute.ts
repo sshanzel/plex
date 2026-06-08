@@ -9,6 +9,7 @@ import {
   CodeGraphDB,
   getSymbolsInFile,
   getCoChangeEdges,
+  getCoChangeDegrees,
   getImportEdges,
   getRefEdges,
   fileExists,
@@ -23,16 +24,12 @@ export interface NeighborhoodOptions {
   importWeight?: number;
   /** Fixed contribution of a precise (alias-aware) reference edge. */
   refWeight?: number;
-  /** Per-hop score decay. */
-  hopDecay?: number;
   /**
-   * Fan (degree) at/below which a changed file's structural (import/ref) edges keep full weight.
-   * Above it, those edges are damped ~`threshold/degree` so a changed **barrel/registry** (`index.ts`,
-   * `app.module.ts`, an entities file imported by hundreds) doesn't paint all its importers as blast
-   * radius — they merely share a registry, they're not coupled to the change. Co-change is left alone
-   * (it's already commit-size-weighted, ADR-06). Default 20.
+   * Random-walk restart/teleport probability for the personalized-PageRank propagation (tuning.md §2).
+   * Higher = more local (probability mass stays near the changed files). Default 0.15 (the RWR/PPR
+   * convention; damping d = 1 − restart = 0.85).
    */
-  hubThreshold?: number;
+  restart?: number;
 }
 
 /** Inclusive 1-based range overlap. Pure. */
@@ -50,30 +47,29 @@ export function symbolsTouchedByRanges(
   );
 }
 
-/** Squash an unbounded co-change weight into (0,1): 0→0, 1→0.5, large→1. */
-function squash(weight: number): number {
-  return weight / (weight + 1);
-}
-
 /**
- * Down-weight a structural (import/ref) edge by the **degree** of the changed node it radiates from.
- * A file connected to many others — a barrel/registry/`index.ts` — is a diffuse hub, not a coupling
- * signal: changing it shouldn't flood the blast radius with everything that merely imports the
- * registry. Full weight at/below `threshold`, then a `threshold/degree` falloff (the structural
- * analogue of co-change's 1/(commit-size) weighting — ADR-06). Always in (0,1]. Pure.
+ * Association strength (Salton cosine) of a co-change pair: `co / sqrt(degA · degB)` ∈ (0,1].
+ * Divides out each file's co-change PROMISCUITY — a config/lockfile/barrel that co-changes with
+ * *everything* has a huge degree, so its pair strengths collapse toward 0; an exclusively-coupled
+ * pair (each only co-changes with the other) scores 1. This is the read-time, no-storage form of
+ * lift's frequency-confound removal (tuning.md §4; van Eck & Waltman 2009 on co-occurrence
+ * normalization). Pure. `degA`/`degB` are each ≥ `co`, so the result never exceeds 1.
  */
-export function hubWeight(degree: number, threshold = 20): number {
-  return Math.min(1, threshold / Math.max(1, degree));
+export function associationStrength(co: number, degA: number, degB: number): number {
+  const denom = Math.sqrt(Math.max(co, degA) * Math.max(co, degB));
+  return denom > 0 ? Math.min(1, co / denom) : 0;
 }
 
 /**
- * Materialize the review neighborhood (blast radius) for a diff (ADR-06).
+ * Materialize the review neighborhood (blast radius) for a diff (ADR-06, tuning.md §2).
  *
  * 1. Map changed hunks to the symbols they touch (line-range intersection).
- * 2. BFS out from changed files over CoChange + Imports edges, accumulating a
- *    coupling score that decays per hop. Co-change carries its learned weight; import/ref edges a
- *    fixed weight, damped by the source file's degree so a changed barrel/registry doesn't flood
- *    the radius (`hubWeight`). A node reached by multiple sources/edges scores higher.
+ * 2. Score every other file by **personalized PageRank** (random-walk-with-restart) seeded on the
+ *    changed files, walking CoChange ∪ Imports ∪ Refs edges. The walk's transition is degree-
+ *    normalized — a node passes its mass split across its out-edges by weight — so a hub
+ *    (barrel/registry imported by hundreds) natively dilutes what it forwards, with no separate
+ *    hub-damping. Co-change edges carry their association strength; import/ref a fixed base weight.
+ *    Scores are normalized so the top neighbor = 1 (a node reached by many short paths ranks high).
  */
 export async function computeNeighborhood(
   db: CodeGraphDB,
@@ -83,8 +79,7 @@ export async function computeNeighborhood(
 ): Promise<ReviewNeighborhood> {
   const importWeight = opts.importWeight ?? 0.4;
   const refWeight = opts.refWeight ?? 0.5;
-  const hopDecay = opts.hopDecay ?? 0.5;
-  const hubThreshold = opts.hubThreshold ?? 20;
+  const restart = opts.restart ?? 0.15;
 
   const changed: CodeLocation[] = [];
   const changedFileIds: string[] = [];
@@ -114,52 +109,63 @@ export async function computeNeighborhood(
   }
 
   const sources = new Set(changedFileIds);
-  const score = new Map<string, number>();
+  const ppr = new Map<string, number>(); // accumulated PageRank mass (the deposited score)
   const via = new Map<string, Set<EdgeProvenance>>();
   const dist = new Map<string, number>();
-  const seen = new Set(sources);
-  let frontier = [...sources];
+  // Residual mass still to propagate — the teleport vector starts split evenly across the seeds.
+  let residual = new Map<string, number>(changedFileIds.map((id) => [id, 1 / Math.max(1, sources.size)]));
 
-  for (let hop = 1; hop <= opts.maxHops && frontier.length > 0; hop++) {
-    const decay = Math.pow(hopDecay, hop - 1);
+  // Forward-push personalized PageRank, batched by hop (one set of edge queries per iteration).
+  // At each step a node deposits `restart·residual` (mass that stays put) and forwards the rest
+  // split across its out-edges in proportion to edge weight — so a high-degree hub dilutes natively.
+  for (let hop = 1; hop <= opts.maxHops && residual.size > 0; hop++) {
+    const frontier = [...residual.keys()];
     const [coEdges, impEdges, refEdges] = await Promise.all([
       getCoChangeEdges(db, frontier),
       getImportEdges(db, frontier),
       getRefEdges(db, frontier),
     ]);
-    const next = new Set<string>();
+    // Co-change degrees for BOTH endpoints — normalizes pair strength by promiscuity (assoc. strength).
+    const coDeg = await getCoChangeDegrees(db, [...new Set(coEdges.flatMap((e) => [e.src, e.dst]))]);
 
-    // Degree of each frontier file on this edge type — `WHERE a.id IN $ids` returns ALL of a
-    // frontier file's edges, so this is its full structural degree. A barrel's is huge; `hubWeight`
-    // damps its edges so it can't flood the radius.
-    const degreeBySrc = (edges: { src: string }[]): Map<string, number> => {
-      const d = new Map<string, number>();
-      for (const e of edges) d.set(e.src, (d.get(e.src) ?? 0) + 1);
-      return d;
+    // Weighted out-edges per frontier file (co-change = association strength; import/ref = base weight).
+    const out = new Map<string, { dst: string; w: number; prov: EdgeProvenance }[]>();
+    const addEdge = (src: string, dst: string, w: number, prov: EdgeProvenance): void => {
+      if (w <= 0) return;
+      (out.get(src) ?? out.set(src, []).get(src)!).push({ dst, w, prov });
     };
-    const impDeg = degreeBySrc(impEdges);
-    const refDeg = degreeBySrc(refEdges);
+    for (const e of coEdges) addEdge(e.src, e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
+    for (const e of impEdges) addEdge(e.src, e.dst, importWeight, 'import');
+    for (const e of refEdges) addEdge(e.src, e.dst, refWeight, 'precise-ref');
 
-    const bump = (dst: string, contrib: number, provenance: EdgeProvenance): void => {
-      if (sources.has(dst)) return;
-      score.set(dst, Math.min(1, (score.get(dst) ?? 0) + contrib));
-      (via.get(dst) ?? via.set(dst, new Set()).get(dst)!).add(provenance);
-      if (!dist.has(dst)) dist.set(dst, hop);
-      if (!seen.has(dst)) next.add(dst);
-    };
-
-    for (const e of coEdges) bump(e.dst, squash(e.weight) * decay, 'co-change');
-    for (const e of impEdges) bump(e.dst, importWeight * hubWeight(impDeg.get(e.src) ?? 1, hubThreshold) * decay, 'import');
-    for (const e of refEdges) bump(e.dst, refWeight * hubWeight(refDeg.get(e.src) ?? 1, hubThreshold) * decay, 'precise-ref');
-
-    for (const d of next) seen.add(d);
-    frontier = [...next];
+    const nextResidual = new Map<string, number>();
+    for (const u of frontier) {
+      const ru = residual.get(u) ?? 0;
+      if (ru <= 0) continue;
+      ppr.set(u, (ppr.get(u) ?? 0) + restart * ru); // deposit the restart share at u
+      const edges = out.get(u) ?? [];
+      const deg = edges.reduce((s, e) => s + e.w, 0);
+      if (deg <= 0) continue;
+      const flow = (1 - restart) * ru;
+      for (const e of edges) {
+        nextResidual.set(e.dst, (nextResidual.get(e.dst) ?? 0) + flow * (e.w / deg));
+        (via.get(e.dst) ?? via.set(e.dst, new Set()).get(e.dst)!).add(e.prov);
+        if (!dist.has(e.dst) && !sources.has(e.dst)) dist.set(e.dst, hop);
+      }
+    }
+    residual = nextResidual;
   }
+  // Deposit whatever mass is still in flight after the last hop (so reachable nodes aren't lost).
+  for (const [u, ru] of residual) ppr.set(u, (ppr.get(u) ?? 0) + restart * ru);
 
-  const neighbors: NeighborEntry[] = [...score.entries()]
+  // Neighbors = PPR mass on NON-seed nodes, normalized so the top neighbor scores 1 — PPR mass is
+  // otherwise tiny/absolute-scale-dependent, and this preserves the [0,1] / minScore semantics.
+  const ranked = [...ppr.entries()].filter(([id, s]) => !sources.has(id) && s > 0);
+  const max = ranked.reduce((m, [, s]) => Math.max(m, s), 0);
+  const neighbors: NeighborEntry[] = ranked
+    .map(([id, s]) => [id, max > 0 ? s / max : 0] as [string, number])
     .filter(([, s]) => s >= opts.minScore)
-    // Sort by score, then by id — a stable secondary key makes the maxNeighbors cutoff
-    // deterministic when scores tie (otherwise it depended on Kùzu row/iteration order).
+    // Sort by score, then by id — a stable secondary key makes the maxNeighbors cutoff deterministic.
     .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .slice(0, opts.maxNeighbors)
     .map(([id, s]) => ({

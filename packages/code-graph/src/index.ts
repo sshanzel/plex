@@ -13,6 +13,7 @@ export type { CommitRecord, CoChangePair, AggregateOptions, ChangedFiles } from 
 export {
   getSymbolsInFile,
   getCoChangeEdges,
+  getCoChangeDegrees,
   getImportEdges,
   getRefEdges,
   fileExists,
