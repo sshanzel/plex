@@ -114,11 +114,21 @@ against outcome labels. And the labels exist two ways — live `record_outcome` 
 mining pipeline already pulls comment → outcome). So the path is concrete:
 
 **Measurement is wired (adopted).** `rankingQuality` (`engine/ranking-eval.ts`, surfaced as `plex eval`)
-reads the brain's per-finding `signal` + outcome — data the review flow already persists, **mining-
-independent** — and reports the current ranking's nDCG vs what the user actually accepted, per
+reads the brain's per-finding `signal` + raw features + outcome — data the review flow already persists,
+**mining-independent** — and reports the current ranking's nDCG vs what the user actually accepted, per
 evaluable round. It is **measurement only** (never mutates weights) and is the guard that answers, for
 *this* user's accrued data, whether a re-weight could even beat the defaults. If the data is sparse it
 says so and the defaults stand.
+
+**Readiness verdict (adopted).** `plex eval` no longer just prints numbers — it emits an explicit
+**`READY` / `NOT YET` / `DEFAULTS ALREADY WIN`** verdict for deferred #1, from a pure, unit-tested gate
+(`rankingReadiness`, `findings/eval.ts`). The gates, in priority order, are the honest floor for *being
+able to fit at all* then *being worth fitting*: ≥`minEvaluableRounds` (25) for grouped held-out CV →
+≥`minPositives` (50, the EPV rule: ≈10 per feature) → both label classes present
+(`minMinorityShare` 0.2 / `minNegatives` 10) → current nDCG **below** `headroomNdcg` (0.85, else the
+defaults already win). `READY` means *build a candidate* — which must still beat the defaults on grouped
+held-out CV before shipping (that CV harness is step 1 of #1, below). A near-constant feature (e.g. blast
+on a small-change repo) is flagged so the fit drops it.
 
 **Adaptive suppression thresholds (adopted).** `WAIVER_SEMANTIC_THRESHOLD` and the fix-inference cut are
 now `adaptiveFloor`-adapted upward-only (above) — the safe-direction calibration, so a per-model

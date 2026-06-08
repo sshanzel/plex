@@ -224,8 +224,6 @@ export interface ReviewContext {
   unexplainedChanges?: AttributedChange[];
   /** PR-thread comments ingested this round (facts). */
   openComments?: PrComment[];
-  /** Prior findings auto-recorded as fixed this round because a change addressed them (ADR-28). */
-  inferredOutcomes?: number;
   /**
    * Parallel-review advice (parallel-review.md): `single` (one reviewer) or `parallel` (fan
    * out one reviewer per coupled cluster — the `units`), decided from the coupling graph. The
@@ -274,7 +272,7 @@ export interface AssembleOptions extends DiffSource {
 
 const AGENT_NOTES = [
   'You did NOT write this code. Review it with fresh, skeptical eyes.',
-  'Report bugs, potential bugs, improvements, and nits. Severity (bug|improvement|nit) and confidence (0..1) are independent: a high-severity, low-confidence item is a "potential bug" — say so honestly.',
+  'Report bugs, potential bugs, improvements, and nits. Severity (bug|improvement|nit) and confidence (0..1) are independent axes you set on `submit_findings`: a high-severity, low-confidence item is a "potential bug". Confidence is an INTERNAL ranking input — NEVER display it (no numeric score, no "high/low confidence" wording, no certainty self-rating, in prose OR a table). Surface genuine uncertainty only by calling it a potential bug and hedging the claim itself ("may", "if X then…").',
   '`blastRadius` lists files coupled to the change (co-change = historical, import = structural). Inspect them for breakage the diff might cause.',
   '`deterministic` findings are already computed — incorporate them, do not re-derive them.',
   '`changeContext` is the author\'s STATED intent (PR title/description or commit subjects) — NOT ground truth. Check the code against it: flag where the diff does less than it claims, does something the description omits, or contradicts the stated motivation.',
@@ -509,7 +507,6 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     priorRounds: brain.priorRounds,
     unexplainedChanges: brain.unexplainedChanges,
     openComments: brain.openComments,
-    inferredOutcomes: brain.inferredOutcomes,
     reviewPlan: plan,
     notes: [
       ...AGENT_NOTES,
@@ -517,9 +514,6 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,
-      ...(brain.inferredOutcomes > 0
-        ? [`Plex auto-recorded ${brain.inferredOutcomes} prior finding(s) as fixed (a change since addressed them) — do not re-raise or ask to confirm those.`]
-        : []),
       ...(graphStale?.refreshed
         ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
         : graphStale

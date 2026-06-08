@@ -411,10 +411,15 @@ test('ranking-eval', 'engine: rankingQuality scores the signal ranking against o
 
     const q = await rankingQuality(repo, config);
     assert.equal(q.labeledFindings, 4, 'all four findings have a recorded outcome');
+    assert.equal(q.positives, 2, 'two fixed findings are positive labels');
+    assert.equal(q.negatives, 2, 'two rejected findings are negative labels');
     assert.equal(q.evaluableRounds, 2, 'both rounds are evaluable (≥2 findings + a positive)');
     assert.ok(q.meanNdcg !== null, 'a score was produced');
     // round1 nDCG=1, round2 nDCG=0.63 ⇒ mean ≈ 0.815 — strictly between the inverted round and perfect.
     assert.ok(q.meanNdcg! > 0.6 && q.meanNdcg! < 1, `mean nDCG should reflect one good + one inverted round (got ${q.meanNdcg})`);
+    // Readiness verdict (deferred #1): 2 rounds is far below the CV floor ⇒ NOT YET, keep defaults.
+    assert.equal(q.verdict, 'not-yet', 'too few rounds to attempt a re-weight');
+    assert.ok(/NOT YET/.test(q.note) && /round/.test(q.note), `verdict note names the binding gate (got: ${q.note})`);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

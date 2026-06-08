@@ -274,11 +274,13 @@ async function main(): Promise<number> {
     case 'eval': {
       const repoPath = positionals[1] ?? process.cwd();
       const q = await rankingQuality(repoPath, config);
+      const verdictLabel = { 'not-yet': 'NOT YET', 'defaults-win': 'DEFAULTS ALREADY WIN', ready: 'READY' }[q.verdict];
       process.stdout.write(
         'plex ranking eval (offline — measurement only, no weights change)\n' +
-          `  labeled findings: ${q.labeledFindings}\n` +
+          `  labeled findings: ${q.labeledFindings}  (${q.positives} positive / ${q.negatives} negative)\n` +
           `  evaluable rounds: ${q.evaluableRounds}\n` +
           `  mean nDCG:        ${q.meanNdcg == null ? 'n/a' : q.meanNdcg.toFixed(3)}\n` +
+          `\n  re-weight (deferred #1): ${verdictLabel}\n` +
           `  ${q.note}\n`,
       );
       return 0;
