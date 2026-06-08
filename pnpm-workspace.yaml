@@ -1,2 +1,12 @@
 packages:
   - 'packages/*'
+
+# Supply-chain cooldown (ADR-35 / SECURITY.md): refuse any dependency version published less
+# than this many MINUTES ago, resolving to the last version old enough instead. The 2026 npm
+# worms (Shai-Hulud / IronWorm / Miasma) land malicious versions in builds within minutes of
+# publishing, before the registry yanks them — this skips that danger window. 4320 = 3 days
+# (pnpm 11 defaults this to 1440 = 1 day; raise for more safety, lower for fresher updates).
+# Trade-off: also delays *legitimate* patches; for an urgent fix, add the pkg to
+# `minimumReleaseAgeExclude` or bump it deliberately. Workspace (`@plex/*`) deps are unaffected
+# (they resolve via the workspace, not the registry).
+minimumReleaseAge: 4320

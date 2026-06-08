@@ -34,11 +34,15 @@ checks. The defenses below are chosen against these **mechanisms**, not against 
 - **Exact, hash-verified deps** via the committed `pnpm-lock.yaml` (SRI integrity, 325 entries);
   vulnerable transitive deps force-patched via pnpm `overrides`; **Dependabot** enabled.
 - **Publishing protected by npm 2FA with a passkey.**
+- **Release-age cooldown**: pnpm `minimumReleaseAge: 4320` (**3 days**) in `pnpm-workspace.yaml` —
+  no dependency version (incl. transitive) is installed until 3 days after publication, skipping the
+  post-publish window the worms exploit (malicious releases are typically yanked within the hour).
+  `minimumReleaseAgeExclude` can exempt specific trusted packages for an urgent patch.
 
 **Residual risk (named honestly):** the allowlist stops install/build execution for *non*-allowlisted
 deps, but not (a) a compromised version of an **allowlisted** dep (`esbuild` / `kuzu`) — those *do*
 run install logic on your machine — nor (b) malice in any dependency's **runtime** code, which runs
-when our bundle imports it. The release-age cooldown (below) is the main mitigation for both; keep the
+when our bundle imports it. The release-age cooldown (above) is the main mitigation for both; keep the
 allowlist minimal and treat updates to `esbuild`/`kuzu` with extra care.
 
 ## Hardening roadmap (deferred — single-maintainer today)
@@ -60,9 +64,5 @@ are users:
   `permissions:` matter.
 - **npm 2FA level → "authorization and writes"** so a passkey is required on every *publish*, not
   just login.
-- **Release-age cooldown**: enable pnpm `minimumReleaseAge` (e.g. 3 days) so a freshly-published
-  (possibly malicious) dependency version isn't pulled into a build before the ecosystem detects
-  and yanks it — the cooldown is the main defense against the allowlisted-dep and runtime-code
-  residual risks above.
 - **First publish is manual** (creates the package, with 2FA); the workflow takes over for
   `0.1.1+`.
