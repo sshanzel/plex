@@ -18,6 +18,9 @@ pnpm-debug.log*
 .env
 .env.*
 
+# transient Claude Code agent worktrees (isolation mode) — never part of the repo
+.claude/worktrees/
+
 # editor / OS
 .DS_Store
 .idea/

@@ -69,9 +69,11 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
    consolidated list (and the same diff source). Plex merges with deterministic findings, applies
    scoped/semantic waivers, ranks, triages, and — when reviewing a PR with auto-comment on — posts
    the single review to the PR. Present the returned ranked stream highest-signal first, in the
-   `plex-reviewer` shape (defects, then a separate **"Worth confirming"** section for `awareness`).
-   **Do not ask the user to accept / reject / waive** — the review is autonomous. Suggest the
-   **`pr-review-responder`** skill to triage what landed and close the loop.
+   `plex-reviewer` shape (defects, then a separate **"Worth confirming"** section for `awareness`) —
+   and follow `plex-reviewer`'s **lean-presentation** rule: issue + why + `file:line`, **no raw
+   confidence numbers**, and **no meta "State"/run-summary recap**. **Do not ask the user to accept
+   / reject / waive** — the review is autonomous. Suggest the **`pr-review-responder`** skill to
+   triage what landed and close the loop.
 
 ## Rules
 - **Never fan out against `reviewPlan`.** If it says `single`, one pass — don't second-guess it

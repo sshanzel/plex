@@ -29,6 +29,11 @@ export async function recordFixAccepts(
   let n = 0;
   for (let i = 0; i < priorFindings.length; i++) {
     const f = priorFindings[i]!;
+    // `awareness` flags are never auto-accepted (ADR-31): an awareness item isn't a defect to be
+    // "fixed" — its only valid outcomes are an EXPLICIT acknowledge (intentional) or reject. Auto-
+    // inferring "fixed" from a nearby change is semantically wrong and, worse, pre-empts the
+    // acknowledge → semantic-waiver path that keeps it quiet until it MATERIALLY changes.
+    if (f.severity === 'awareness') continue;
     if (findingAddressedAt({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings)) {
       await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');

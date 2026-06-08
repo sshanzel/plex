@@ -48,6 +48,8 @@ export interface BrainFinding {
   file?: string;
   line?: number;
   title: string;
+  /** Severity (bug|improvement|nit|awareness) — `awareness` is excluded from auto-accept (ADR-31). */
+  severity?: string;
 }
 
 export interface RoundState {
@@ -131,7 +133,7 @@ export class Brain {
     const rounds: RoundSummary[] = roundRows.map((r) => ({ n: Number(r.n), ts: str(r.ts) ?? '', headSha: str(r.headSha) || undefined }));
     const last = rounds[rounds.length - 1];
 
-    const findingRows = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title, fi.outcome AS outcome', { t: target });
+    const findingRows = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title, fi.severity AS severity, fi.outcome AS outcome', { t: target });
     const commentRows = await this.db.run('MATCH (c:Comment {target:$t}) RETURN c.file AS file, c.body AS body', { t: target });
 
     const signals: BrainSignal[] = [
@@ -140,7 +142,7 @@ export class Brain {
     ];
     const priorFindings: BrainFinding[] = findingRows
       .filter((r) => !str(r.outcome)) // un-outcomed ('' sentinel)
-      .map((r) => ({ id: str(r.id) ?? '', file: str(r.file) || undefined, line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '' }))
+      .map((r) => ({ id: str(r.id) ?? '', file: str(r.file) || undefined, line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '', severity: str(r.severity) }))
       .filter((f) => f.id && f.title);
 
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
