@@ -76,9 +76,11 @@ export function findingAddressed(
  *      but reads nothing like the bug's *title* — so the cosine never clears the bar even though
  *      the code clearly got touched. Anchoring on the finding's location recovers those.
  *
- * Either signal suffices (recall-biased on purpose: a missed accept loses the learning signal
- * entirely and re-surfaces a fixed finding; a rare false accept only mildly over-reinforces a
- * pitfall). Pure — embeddings/diff computed at the boundary, the decision unit-tested with vectors.
+ * Either signal suffices, but the locality window is kept TIGHT (see `lineWindow`): a false accept
+ * doesn't merely over-reinforce a pitfall — it marks a still-live bug `fixed`, drops it from the
+ * stream, and never re-surfaces it. So locality must mean "the fix touched THIS code," not "someone
+ * edited nearby." Genuinely relocated/restructured fixes are caught by the semantic signal instead.
+ * Pure — embeddings/diff computed at the boundary, the decision unit-tested with vectors.
  */
 export function findingAddressedAt(
   finding: { file?: string; line?: number },
@@ -88,7 +90,12 @@ export function findingAddressedAt(
   opts: { semanticThreshold?: number; lineWindow?: number } = {},
 ): boolean {
   const semanticThreshold = opts.semanticThreshold ?? 0.6;
-  const lineWindow = opts.lineWindow ?? 30;
+  // Drift tolerance, NOT a search radius — the changed region already spans the fix; this only
+  // absorbs the few lines a finding's RECORDED line may have shifted (edits above it). ±30 was far
+  // too loose: in a churning file almost any later edit lands within 30 lines of a prior finding,
+  // silently auto-accepting (and burying) a live bug. Tight keeps locality honest; semantic carries
+  // relocated fixes.
+  const lineWindow = opts.lineWindow ?? 5;
   if (findingEmbedding.length > 0 && findingAddressed(findingEmbedding, regionEmbeddings, semanticThreshold)) {
     return true;
   }

@@ -32,12 +32,14 @@ describe('findingAddressedAt (ADR-28 refined — semantic OR locality)', () => {
     expect(findingAddressedAt(f, titleVec, regions, [fixVec])).toBe(true);
   });
 
-  it('LOCALITY tolerates line drift via the window (line just outside the changed range)', () => {
-    const regions: ChangedRegion[] = [{ file: 'src/venue.ts', start: 50, end: 60 }]; // 42 ∈ [20,90] via window 30
-    expect(findingAddressedAt(f, titleVec, regions, [fixVec])).toBe(true);
-    // ...but a change far away in the same file is NOT counted as addressing it.
-    const farRegions: ChangedRegion[] = [{ file: 'src/venue.ts', start: 500, end: 520 }];
-    expect(findingAddressedAt(f, titleVec, farRegions, [fixVec])).toBe(false);
+  it('LOCALITY tolerates a few lines of drift but NOT a distant edit (tight window — C-G2)', () => {
+    // small drift: finding line 42, fix region starts at 45 (3 lines off) → still addressed.
+    expect(findingAddressedAt(f, titleVec, [{ file: 'src/venue.ts', start: 45, end: 60 }], [fixVec])).toBe(true);
+    // an UNRELATED edit ~20 lines away WOULD have matched under the old ±30 window (42 ∈ [32,100]),
+    // silently burying a still-live bug — now correctly NOT addressed.
+    expect(findingAddressedAt(f, titleVec, [{ file: 'src/venue.ts', start: 62, end: 70 }], [fixVec])).toBe(false);
+    // a far edit is likewise not addressed.
+    expect(findingAddressedAt(f, titleVec, [{ file: 'src/venue.ts', start: 500, end: 520 }], [fixVec])).toBe(false);
   });
 
   it('a change in a DIFFERENT file does not address by locality (semantic still can)', () => {

@@ -161,13 +161,21 @@ export class Brain {
     );
   }
 
-  /** Persist the agent's ranked findings, round-tagged, with an empty outcome. */
+  /** Persist the agent's ranked findings with an empty outcome; `round` is the latest round raised.
+   *
+   * The id is keyed by target+file:line+title — NOT round (ADR-28 fix). A defect re-raised in a
+   * later round (the agent re-reviews the whole diff and re-flags what's still unfixed) is the SAME
+   * finding: keying by round minted a fresh node each round, so when the fix finally landed every
+   * duplicate auto-accepted → multiple incidents (over-reinforcing the pitfall), and un-fixed
+   * findings piled up one orphaned un-outcomed node per round (re-embedded as a signal every time).
+   * Round-free identity makes re-raises idempotent; `ON MATCH SET fi.round` tracks the latest round
+   * WITHOUT resetting the accrued `outcome` (a fixed finding stays fixed even if somehow re-raised). */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
     await this.db.insertMany(
       'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round ' +
-        'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage',
+        'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage, fi.round=$round',
       findings.map((f) => ({
-        id: `${target}#${roundN}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
+        id: `${target}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
         o: '', t: target, title: f.title, sev: f.severity, conf: f.confidence, signal: f.signal,
         source: f.source, file: f.location.file, line: f.location.startLine, triage: f.triage, round: roundN,
       })),

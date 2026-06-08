@@ -250,6 +250,17 @@ test('brain', 'engine: Kùzu PR brain — rounds, findings, comments, outcome (A
       assert.equal(st.priorFindings.length, 1, 'one un-outcomed finding');
       assert.ok(st.signals.some((s) => s.label.startsWith('finding:')) && st.signals.some((s) => s.label.startsWith('comment:')), 'finding + comment signals');
 
+      // C-G1: re-raising the SAME defect (file+line+title) in a later round must reuse the node —
+      // round is NOT part of the Finding identity. With round in the key this minted a 2nd node, so
+      // when the fix landed every duplicate auto-accepted (multiple incidents) and un-fixed findings
+      // piled up one orphaned un-outcomed node per round.
+      await brain.recordRound(target, { target, n: 2, ts: 'now', headSha: 'sha2', baseRef: 'main' }, []);
+      await brain.writeFindings(target, 2, [
+        { id: 'agent:0', title: 'venue_opened double-fire', body: '', severity: 'bug', confidence: 0.6, source: 'first-principles', location: { repo: 'r', file: 'a.ts', startLine: 1, endLine: 1 }, signal: 0.4, agreedSources: ['first-principles'], triage: 'surface' },
+      ]);
+      st = await brain.loadRoundState(target);
+      assert.equal(st.priorFindings.length, 1, 're-raised finding reuses the SAME node (round-free identity), not a duplicate');
+
       await brain.markFindingOutcome(st.priorFindings[0]!.id, 'fixed');
       st = await brain.loadRoundState(target);
       assert.equal(st.priorFindings.length, 0, 'outcome resolves the finding');
