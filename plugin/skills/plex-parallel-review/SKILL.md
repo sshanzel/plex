@@ -71,10 +71,12 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
    the single review to the PR. Present the returned stream using `plex-reviewer`'s **fixed severity
    sections, exactly**: `## Bugs`, `## Improvements`, `## Nits`, `## Worth confirming (awareness)` —
    in that order, omitting empty sections, each item `**<title>** — file:line. <why>`, ordered by
-   signal within a section. The header IS the label; do **not** invent thematic groupings of your
-   own. **No raw confidence numbers** (words instead), **no meta "State"/run-summary recap**; you may
-   end with one **"Bottom line:"** synthesis line. **Do not ask the user to accept / reject / waive**
-   — the review is autonomous. Suggest **`/pr-master:respond`** to triage what landed and close the loop.
+   signal within a section. The header IS the label; do **not** invent thematic groupings of your own
+   or label findings by what the user should *do* ("needs a decision"/"must-fix"). **No confidence
+   values or self-rated certainty**, **no meta/run-summary recap**; you may end with one neutral
+   **"Bottom line:"** line connecting related findings (observational, not a directive). **Report —
+   don't decide for the user**: don't ask them to accept / reject / waive; they assess. Suggest
+   **`/pr-master:respond`** to triage what landed and close the loop.
 
 ## Rules
 - **Never fan out against `reviewPlan`.** If it says `single`, one pass — don't second-guess it
