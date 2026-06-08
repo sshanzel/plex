@@ -1,4 +1,5 @@
 import { Database, Connection, type QueryResult } from 'kuzu';
+import { RepoBusyError, isLockError } from '@plex/core';
 
 type Row = Record<string, unknown>;
 type Params = Record<string, unknown>;
@@ -15,8 +16,16 @@ export class CodeGraphDB {
   private readonly conn: Connection;
 
   constructor(public readonly dir: string) {
-    this.db = new Database(dir);
-    this.conn = new Connection(this.db);
+    try {
+      // Kùzu acquires its single-writer file lock here; a same-path concurrent open throws an
+      // "IO exception: Could not set lock" — translate it to a clear RepoBusyError (different
+      // worktrees use different dirs and never hit this; ADR-30 + paths.repoId).
+      this.db = new Database(dir);
+      this.conn = new Connection(this.db);
+    } catch (e) {
+      if (isLockError(e)) throw new RepoBusyError(dir);
+      throw e;
+    }
   }
 
   private static rows(res: QueryResult | QueryResult[]): Promise<Row[]> {
@@ -24,23 +33,38 @@ export class CodeGraphDB {
     return qr ? (qr.getAll() as Promise<Row[]>) : Promise.resolve([]);
   }
 
+  /** Translate Kùzu's lazy file-lock IOException (it locks at first query, not at open) into a
+   *  clear RepoBusyError; pass every other error through untouched. */
+  private rethrow(e: unknown): never {
+    if (isLockError(e)) throw new RepoBusyError(this.dir);
+    throw e;
+  }
+
   /** Run a single statement; with params it is prepared+executed, else queried directly. */
   async run(stmt: string, params?: Params): Promise<Row[]> {
-    if (params) {
-      const prepared = await this.conn.prepare(stmt);
-      const res = await this.conn.execute(prepared, params as Record<string, never>);
+    try {
+      if (params) {
+        const prepared = await this.conn.prepare(stmt);
+        const res = await this.conn.execute(prepared, params as Record<string, never>);
+        return CodeGraphDB.rows(res);
+      }
+      const res = await this.conn.query(stmt);
       return CodeGraphDB.rows(res);
+    } catch (e) {
+      this.rethrow(e);
     }
-    const res = await this.conn.query(stmt);
-    return CodeGraphDB.rows(res);
   }
 
   /** Execute one prepared statement across many parameter rows (bulk insert). */
   async insertMany(stmt: string, rows: Params[]): Promise<void> {
     if (rows.length === 0) return;
-    const prepared = await this.conn.prepare(stmt);
-    for (const r of rows) {
-      await this.conn.execute(prepared, r as Record<string, never>);
+    try {
+      const prepared = await this.conn.prepare(stmt);
+      for (const r of rows) {
+        await this.conn.execute(prepared, r as Record<string, never>);
+      }
+    } catch (e) {
+      this.rethrow(e);
     }
   }
 
