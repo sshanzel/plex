@@ -33,5 +33,11 @@ export async function retrieveRelevant(
     .map((pitfall) => ({ pitfall, score: cosineSimilarity(q, pitfall.embedding!) }))
     .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
+    .slice(0, topK)
+    // Drop the embedding from the RESULT: it powers the cosine above but no consumer ever reads
+    // it (the agent, CLI, and audit log use title/why/category/score). A `voyage-code-3` vector is
+    // 1024 floats ≈ 16KB serialized PER pitfall — returning topK of them ships ~80KB / tens of
+    // thousands of tokens into every review context that the model can't use. The stored pitfall
+    // keeps its vector (knowledge store is untouched); only the retrieved copy is slimmed.
+    .map(({ pitfall: { embedding: _embedding, ...pitfall }, score }) => ({ pitfall, score }));
 }
