@@ -23,6 +23,8 @@ export { buildReviewPayload, postFindingsToPr } from './pr-comment';
 export type { ReviewPayload } from './pr-comment';
 export { reconcileOutcomes, recordFixAccepts } from './reconcile';
 export type { ReconcileResult } from './reconcile';
+export { rankingQuality } from './ranking-eval';
+export type { RankingQuality } from './ranking-eval';
 export {
   knowledgeStore,
   buildKnowledgeQuery,

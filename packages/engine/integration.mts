@@ -35,6 +35,7 @@ import {
   submitVerdict,
   knowledgeStore,
   recordFixAccepts,
+  rankingQuality,
   reviewTarget,
   Brain,
 } from './src/index';
@@ -365,6 +366,42 @@ test('brain', 'engine: Kùzu PR brain — rounds, findings, comments, outcome (A
     } finally {
       await brain.close();
     }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('ranking-eval', 'engine: rankingQuality scores the signal ranking against outcomes (nDCG)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-rankeval-'));
+  const config = resolveConfig({ dataDir: '.plex' });
+  const target = 'r__staged';
+  const mk = (title: string, signal: number, file: string, line: number) =>
+    ({ id: title, title, body: '', severity: 'bug' as const, confidence: 0.6, source: 'first-principles' as const, location: { repo: 'r', file, startLine: line, endLine: line }, signal, agreedSources: ['first-principles' as const], triage: 'surface' as const });
+  try {
+    const brain = await Brain.open(repo, config);
+    try {
+      // Round 1 — ranking MATCHES outcomes: high-signal accepted, low-signal rejected → nDCG 1.
+      await brain.recordRound(target, { target, n: 1, ts: 'now', headSha: 's1', baseRef: 'main' }, []);
+      await brain.writeFindings(target, 1, [mk('a-good', 0.9, 'a.ts', 1), mk('b-noise', 0.1, 'a.ts', 2)]);
+      // Round 2 — ranking INVERTED: low-signal accepted, high-signal rejected → nDCG < 1.
+      await brain.recordRound(target, { target, n: 2, ts: 'now', headSha: 's2', baseRef: 'main' }, []);
+      await brain.writeFindings(target, 2, [mk('c-overrated', 0.9, 'b.ts', 1), mk('d-underrated', 0.1, 'b.ts', 2)]);
+
+      const byTitle = new Map((await brain.loadRoundState(target)).priorFindings.map((f) => [f.title, f.id]));
+      await brain.markFindingOutcome(byTitle.get('a-good')!, 'fixed'); // relevant, ranked first  → good
+      await brain.markFindingOutcome(byTitle.get('b-noise')!, 'rejected');
+      await brain.markFindingOutcome(byTitle.get('c-overrated')!, 'rejected'); // irrelevant, ranked first → bad
+      await brain.markFindingOutcome(byTitle.get('d-underrated')!, 'fixed');
+    } finally {
+      await brain.close(); // close before rankingQuality opens its own (Kùzu single-writer)
+    }
+
+    const q = await rankingQuality(repo, config);
+    assert.equal(q.labeledFindings, 4, 'all four findings have a recorded outcome');
+    assert.equal(q.evaluableRounds, 2, 'both rounds are evaluable (≥2 findings + a positive)');
+    assert.ok(q.meanNdcg !== null, 'a score was produced');
+    // round1 nDCG=1, round2 nDCG=0.63 ⇒ mean ≈ 0.815 — strictly between the inverted round and perfect.
+    assert.ok(q.meanNdcg! > 0.6 && q.meanNdcg! < 1, `mean nDCG should reflect one good + one inverted round (got ${q.meanNdcg})`);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

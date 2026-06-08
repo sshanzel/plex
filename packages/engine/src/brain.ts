@@ -148,6 +148,29 @@ export class Brain {
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
   }
 
+  /**
+   * Every finding's ranking `signal` paired with its resolved outcome — the raw material for the
+   * offline ranking-quality eval (tuning.md §5). Outcome is the explicit Verdict kind if one exists,
+   * else the inferred `Finding.outcome` (`fixed`). Read-only; uses only data the review flow already
+   * persists (no schema change). Across all targets/rounds in this repo's brain.
+   */
+  async rankingSamples(): Promise<{ target: string; round: number; id: string; signal: number; outcome: string }[]> {
+    const finds = await this.db.run('MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.round AS round, fi.signal AS signal, fi.outcome AS outcome');
+    const verds = await this.db.run('MATCH (v:Verdict) RETURN v.findingId AS fid, v.kind AS kind');
+    const kindBy = new Map<string, string>();
+    for (const v of verds) kindBy.set(str(v.fid) ?? '', str(v.kind) ?? '');
+    return finds.map((r) => {
+      const id = str(r.id) ?? '';
+      return {
+        target: str(r.target) ?? '',
+        round: Number(r.round) || 0,
+        id,
+        signal: Number(r.signal) || 0,
+        outcome: kindBy.get(id) || str(r.outcome) || '',
+      };
+    });
+  }
+
   /** Record this round + its ingested PR comments. */
   async recordRound(target: string, round: ReviewRound, comments: PrComment[]): Promise<void> {
     const rid = `${target}#${round.n}`;

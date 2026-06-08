@@ -17,6 +17,7 @@ import {
   assembleReviewContext,
   blastRadius,
   reconcileOutcomes,
+  rankingQuality,
   submitVerdict,
   readVerdicts,
   seedKnowledge,
@@ -43,6 +44,7 @@ Usage:
   plex index [repoPath] [--incremental]                  # --incremental: refresh only changed files (ADR-25)
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
+  plex eval [repoPath]                                   # offline: how well does ranking match outcomes (nDCG)? measurement only
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
@@ -267,6 +269,18 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
       process.stdout.write(`  ${res.reason}\n`); // always explain the outcome — esp. why accepted is 0
+      return 0;
+    }
+    case 'eval': {
+      const repoPath = positionals[1] ?? process.cwd();
+      const q = await rankingQuality(repoPath, config);
+      process.stdout.write(
+        'plex ranking eval (offline — measurement only, no weights change)\n' +
+          `  labeled findings: ${q.labeledFindings}\n` +
+          `  evaluable rounds: ${q.evaluableRounds}\n` +
+          `  mean nDCG:        ${q.meanNdcg == null ? 'n/a' : q.meanNdcg.toFixed(3)}\n` +
+          `  ${q.note}\n`,
+      );
       return 0;
     }
     case 'blast': {

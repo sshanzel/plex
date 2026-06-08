@@ -88,8 +88,8 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 
 | Knob | Value | Basis | Why |
 |---|---|---|---|
-| `WAIVER_SEMANTIC_THRESHOLD` | 0.82 | **empirical — adaptive deferred** | a waiver suppresses cosine-≥ findings; still a fixed per-model cutoff. The adaptive form (below) is **deferred** here on purpose: this gate controls *suppression*, so a careless threshold silently hides real findings — it earns its own carefully-rolled-out change, not a bundle. |
-| `semanticThreshold` (fix-inference) | 0.6 | **empirical — adaptive deferred** | same: a suppression-adjacent gate (auto-accept); deferred for the same reason. |
+| `WAIVER_SEMANTIC_THRESHOLD` | 0.82 floor | **adaptive — safe-direction (adopted)** | a waiver suppresses cosine-≥ findings. Now `max(0.82, μ+3σ)` of the batch's cosine background (`adaptiveFloor`) — on an anisotropic model the bar rises so it suppresses *less*; it can never fall below 0.82, so it never hides more than the fixed value did. |
+| `semanticThreshold` (fix-inference) | 0.6 floor | **adaptive — safe-direction (adopted)** | the auto-accept cut, `max(0.6, μ+3σ)` of the region/finding background — rises (auto-accepts *less*, surfaces *more*) on a high-baseline model, never below 0.6. With no embedder → background {0,0} → stays 0.6, locality unaffected. |
 | `mining.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
 | pitfall confidence | **Beta-Bernoulli** posterior mean | **principled (adopted)** | `confidence = (α0+s)/(α0+β0+s+1.5f)` with prior Beta(1,1) and rejects at 1.5× (was `±0.1/±0.15`). Idempotent, no clamp-loss, no path-dependence. `wilsonLowerBound` (Wilson 1927) available for small-sample ranking. `promotion.ts`. |
 | promotion threshold | 0.7 | empirical | confidence at which a pitfall is proposed for `plex.md`. |
@@ -113,18 +113,31 @@ against outcome labels. And the labels exist two ways — live `record_outcome` 
 **mined PR history** (every review comment is a finding a human cared about; its outcome grades it; the
 mining pipeline already pulls comment → outcome). So the path is concrete:
 
-**Next (designed, not yet built):**
-1. **Mining-fed weight-fit.** Extract per-incident ranking features from mined history → fit the WPM
-   exponents / a logistic model by maximizing `rankingNdcg` offline. Mining is the bulk label source;
-   live verdicts refine it. This is the only rigorous way to set the ranking weights — resist hand-tuning.
-2. **Adaptive waiver + fix-inference thresholds.** Same per-batch / per-provider calibration as the
-   clustering cut, applied to `WAIVER_SEMANTIC_THRESHOLD` and `semanticThreshold`. Deferred deliberately:
-   both gate *suppression*, so they get a careful, separately-validated rollout (a bad threshold there
-   silently hides real findings) rather than riding the rehaul bundle.
+**Measurement is wired (adopted).** `rankingQuality` (`engine/ranking-eval.ts`, surfaced as `plex eval`)
+reads the brain's per-finding `signal` + outcome — data the review flow already persists, **mining-
+independent** — and reports the current ranking's nDCG vs what the user actually accepted, per
+evaluable round. It is **measurement only** (never mutates weights) and is the guard that answers, for
+*this* user's accrued data, whether a re-weight could even beat the defaults. If the data is sparse it
+says so and the defaults stand.
 
-Until those land: change one knob at a time, record the rationale here + in the commit, and prefer the
+**Adaptive suppression thresholds (adopted).** `WAIVER_SEMANTIC_THRESHOLD` and the fix-inference cut are
+now `adaptiveFloor`-adapted upward-only (above) — the safe-direction calibration, so a per-model
+baseline shift can only make them suppress *less*, never hide more.
+
+**Still deferred (needs accrued data, not a formula):**
+1. **The actual ranking re-weight.** Fit the Weighted-Product exponents / a logistic model to maximize
+   `rankingQuality`'s nDCG, then ship only if it beats the defaults on held-out data. Weights stay
+   **global + pooled across the user's reviews + feature-normalized** (so uneven repos / non-miners
+   contribute comparably). Needs enough labeled review→outcome history to generalize.
+2. **Per-finding feature persistence + blast enrichment** (the re-weight's prerequisite). The brain
+   already stores severity/confidence/signal/outcome; the raw `blast`/`prevalence` features aren't
+   persisted *and* `blast` is currently **dormant** (agent-optional, usually unset → `signal.ts` floors
+   it at 0.5). So before blast can be a usable fit feature it must be **auto-enriched** from the
+   neighborhood at submit time, then persisted. Bundled with the re-weight (deferred together).
+
+Until those land: change one knob at a time, record the rationale here + in the commit, prefer the
 formula-backed shape (PPR, association strength, Beta-Bernoulli, recency-decay, noisy-OR) wherever one
-exists. **Sources** (verified): Wilson 1927; Evan Miller, *How Not To Sort By Average Rating*; Page 1999
+exists, and use `plex eval` to check the data is rich enough before touching the ranking weights. **Sources** (verified): Wilson 1927; Evan Miller, *How Not To Sort By Average Rating*; Page 1999
 (PageRank) / personalized-PageRank ≡ RWR; van Eck & Waltman 2009 (co-occurrence normalization); Gall 1998
 & Zimmermann 2004 (logical coupling / lift); Mu & Viswanath 2018 & Su 2021 (embedding anisotropy);
 Järvelin & Kekäläinen 2002 (nDCG); Weighted Product Model.
