@@ -1,5 +1,7 @@
 {
-  "enabledMcpjsonServers": ["plex"],
+  "enabledMcpjsonServers": [
+    "plex"
+  ],
   "permissions": {
     "allow": [
       "Read",
@@ -21,5 +23,16 @@
       "Bash(pnpm test:*)",
       "Bash(pnpm build)"
     ]
+  },
+  "extraKnownMarketplaces": {
+    "sshanzel": {
+      "source": {
+        "source": "github",
+        "repo": "sshanzel/plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "pr-master@sshanzel": true
   }
 }
