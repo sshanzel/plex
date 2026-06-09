@@ -15,20 +15,20 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 
 ## Quick start
 
-**1. Add the plugin** in Claude Code. This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP engine it runs on (fetched on demand, nothing else to install).
+**1. Add the plugin** in Claude Code. This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP engine it runs on.
 
 ```
 /plugin marketplace add sshanzel/plugins
 /plugin install plex@sshanzel
 ```
 
-**2. Add an embedding key** (highly recommended), from inside your repo. This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and mining. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
+**2. Add an embedding key** (highly recommended). This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and mining. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
 
 ```bash
 npx @sshanzel/plex init
 ```
 
-It saves the key to `~/.plex/config.json` and offers to index the repo. A running review picks the key up on the next pass, no reload.
+It saves the key to `~/.plex/config.json`, which every repo shares, so you set it once. Run it inside a repo and it also offers to index that repo. A running review picks the key up on the next pass, no reload.
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
