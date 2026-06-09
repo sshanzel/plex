@@ -1,6 +1,6 @@
 {
   "name": "@sshanzel/plex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Local-first, open-source AI code reviewer: an MCP server + CLI that grounds any agent's review in a blast-radius code graph and accumulated review knowledge.",
   "license": "MIT",
