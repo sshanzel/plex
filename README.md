@@ -25,11 +25,10 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 **2. Add an embedding key** (highly recommended). This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and mining. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
 
 ```bash
-npm install -g @sshanzel/plex
-plex init
+npx -p @sshanzel/plex plex init
 ```
 
-It saves the key to `~/.plex/config.json` and offers to index the current repo. (No global install? `npx -p @sshanzel/plex plex init` does the same.)
+It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. If you'll use the CLI a lot, `npm install -g @sshanzel/plex` gives you a plain `plex` command.
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
@@ -54,7 +53,13 @@ Plex works without an embedding provider, but a key is what turns on the layer t
 - **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality.
 - **With a key:** all of that, plus the knowledge layer. Plex pulls relevant past pitfalls into each review, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
 
-So add one. Set it with `plex init` (or edit `~/.plex/config.json`); it takes effect on the next review, no reload.
+So add one: run `npx -p @sshanzel/plex plex init`, or just create `~/.plex/config.json` yourself:
+
+```json
+{ "embedding": { "provider": "voyage", "apiKey": "YOUR_KEY" } }
+```
+
+Either way it takes effect on the next review, no reload.
 
 **Providers:**
 
