@@ -62,25 +62,20 @@ Otherwise (a normal direct review) follow the full procedure below.
    **Check code against stated intent.** Where `changeContext` exists, compare what the code does to what it claims: flag where the diff does *less* than the description promises, silently does *more* (undisclosed behavior/side effects), or *contradicts* its stated motivation. A change that doesn't do what its PR says is a finding even when the code itself is clean.
 
 4. **Submit, then stop** — call `mcp__plex__submit_findings` (title, body, severity, confidence, file, startLine per finding). Plex merges them with the deterministic findings, applies scoped (incl. semantic) waivers, and returns one ranked, triaged stream. Present it, then **stop. Do NOT ask the user whether to accept / reject / waive.** The review is autonomous.
-   - **Present in fixed severity sections — this exact structure, every time.** Markdown headers in this order; OMIT any section that has no items:
+   - **Present as ONE markdown table — this exact structure, every time.** Columns `Severity | Finding | Location`, one row per finding. Order rows by severity (Bug → Improvement → Nit → Awareness), then by signal (most important first) within each severity:
 
      ```
-     ## Bugs
-     - **<title>** — `file:line`. <one or two sentences: what's wrong + the fix/why>.
-
-     ## Improvements
-     - **<title>** — `file:line`. <…>.
-
-     ## Nits
-     - **<title>** — `file:line`. <…>.
-
-     ## Worth confirming (awareness)
-     - **<title>** — `file:line`. <…> Is this intentional?
+     | Severity | Finding | Location |
+     |----------|---------|----------|
+     | Bug | **<title>** — <one or two sentences: what's wrong + the fix/why>. | `file:line` |
+     | Improvement | **<title>** — <…>. | `file:line` |
+     | Nit | **<title>** — <…>. | `file:line` |
+     | Awareness | **<title>** — <…> Is this intentional? | `file:line` |
      ```
 
-     The header IS the label (it maps 1:1 to the finding's `severity`). Within a section, order by signal (most important first). Do **NOT** invent thematic groupings of your own ("Hardening", "Lifecycle", "Not a defect", …) — every finding belongs to exactly one severity section. A deterministic finding you judged a false positive should have been **waived** (step 3), so it won't appear here — don't add a "Not a defect" rebuttal for it.
+     The `Severity` cell IS the label — it maps 1:1 to the finding's `severity` (Bug / Improvement / Nit / Awareness; no other values). Simply omit a severity that has no findings (no empty rows). The `Location` is the finding's ``file:line`` — the same anchor Plex auto-comments to on a PR. Do **NOT** add columns of your own (especially **not confidence**) or invent extra groupings/sections ("Hardening", "Lifecycle", "Not a defect", …) — the single table with its `Severity` column is the only structure. A deterministic finding you judged a false positive should have been **waived** (step 3), so it won't appear — don't add a "Not a defect" row for it. If the change is clean, say so in one line and emit no table.
    - **No confidence on display, and no meta-commentary.** Never print the confidence value or rate your own certainty ("fairly sure", "weak signal", "high confidence") — confidence is an internal ranking axis, not for the reader. Voice only the uncertainty *intrinsic to the claim itself* ("this **may** reorder…", "**if** two sends race…"). Don't editorialize about the review or narrate your own reasoning as asides — report the finding as a neutral, falsifiable observation, not your thoughts about reviewing it.
-   - **Report; don't decide for the user.** You surface what you found and your technical read — you do NOT triage it on their behalf. Never group or label findings by what they should *do* ("needs a decision", "action required", "must-fix", "substantive") — the four severity sections are the only grouping. The user assesses and decides; awareness items ask "Is this intentional?" and leave the answer to them.
+   - **Report; don't decide for the user.** You surface what you found and your technical read — you do NOT triage it on their behalf. Never group or label findings by what they should *do* ("needs a decision", "action required", "must-fix", "substantive") — the `Severity` column is the only classification. The user assesses and decides; awareness rows ask "Is this intentional?" and leave the answer to them.
    - **No telemetry recap** — no round number, commit list, "loop closed", or token talk. You MAY close with a single neutral **"Bottom line:"** line that connects findings which are facets of the same underlying issue (observational — e.g. "all three touch the chat-availability window" — never a directive about what to decide). If the change is clean, say so in one line and stop.
    - **Posting to the PR is automatic (ADR-34).** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and awareness findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest **`/pr-master:respond`** so the author can triage what landed and close the loop.
 

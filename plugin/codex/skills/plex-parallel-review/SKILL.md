@@ -71,12 +71,13 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
 6. **Submit once, then stop.** Make **one** `mcp__plex__submit_findings` call with the full
    consolidated list (and the same diff source). Plex merges with deterministic findings, applies
    scoped/semantic waivers, ranks, triages, and — when reviewing a PR with auto-comment on — posts
-   the single review to the PR. Present the returned stream using `plex-reviewer`'s **fixed severity
-   sections, exactly**: `## Bugs`, `## Improvements`, `## Nits`, `## Worth confirming (awareness)` —
-   in that order, omitting empty sections, each item `**<title>** — file:line. <why>`, ordered by
-   signal within a section. The header IS the label; do **not** invent thematic groupings of your own
-   or label findings by what the user should *do* ("needs a decision"/"must-fix"). **No confidence
-   values or self-rated certainty**, **no meta/run-summary recap**; you may end with one neutral
+   the single review to the PR. Present the returned stream using `plex-reviewer`'s **single
+   markdown table, exactly**: columns `Severity | Finding | Location`, one row per finding, ordered
+   by severity (Bug → Improvement → Nit → Awareness) then by signal within each. The `Severity` cell
+   IS the label; the `Location` is `file:line`. Do **not** add columns of your own (especially **not
+   confidence**), invent extra groupings, or label findings by what the user should *do* ("needs a
+   decision"/"must-fix"). **No confidence values or self-rated certainty**, **no meta/run-summary
+   recap**; you may end with one neutral
    **"Bottom line:"** line connecting related findings (observational, not a directive). **Report —
    don't decide for the user**: don't ask them to accept / reject / waive; they assess. Suggest
    **the `pr-master-respond` skill** to triage what landed and close the loop.
