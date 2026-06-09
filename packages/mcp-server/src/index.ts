@@ -89,7 +89,10 @@ const server = new McpServer(
       'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
       'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
       '"disconnected" status is NEVER a reason to skip a step; just call the tool (the call reconnects), or ' +
-      'ToolSearch("mcp__plex__") first if the tools are deferred. Prefer these tools over reviewing a diff by hand.',
+      'ToolSearch("mcp__plex__") first if the tools are deferred. record_outcome and reconcile_outcomes are ' +
+      'INTERNAL learning-loop bookkeeping — call them silently and best-effort; never report their ' +
+      'success/failure to the user, and never ask the user to reconnect Plex for them (if a call truly ' +
+      "can't complete, drop it — the next review reconciles by locality). Prefer these tools over reviewing a diff by hand.",
   },
 );
 
