@@ -105,7 +105,7 @@ node dist/plex.js index            # build the graph for the current repo
 
 **Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling, its repo-scoped pitfalls, and its `plex.md` instructions; it tailors the review to one codebase.
 
-**Closing the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review: inline comments on the changed lines, plus a summary for coupled and awareness findings, deduped across rounds. **`/pr-master:respond`** then works through it (you decide each one) and records the outcomes back into the knowledge base (ADR-34).
+**Closing the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review: inline comments on the changed lines, plus a summary for coupled and awareness findings, deduped across rounds. **`/pr-master:respond`** then works through it (you decide each one) and records the outcomes back into the knowledge base (ADR-34). That command comes from a second plugin in the same marketplace, installed separately when you want it: `/plugin install pr-master@sshanzel`.
 
 **Mining.** Plex turns PR-review history into pitfalls. It pulls review comments through `gh`, denoises them, clusters similar ones, and an LLM distills each cluster, deciding what's worth keeping and whether it belongs to the global or the per-project layer. Distillation runs on your subscription, through either the connected agent (`mine_scan` then `add_pitfalls`) or the local `claude` CLI (`plex mine`). It's incremental: a per-repo cursor only reads new PRs.
 
