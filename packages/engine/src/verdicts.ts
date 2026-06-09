@@ -57,14 +57,19 @@ export async function readVerdicts(
 }
 
 /**
- * Active suppression rules. `waive` suppresses a defect (ADR-10); `acknowledge` suppresses
- * a confirmed-intentional `awareness` flag the same way (ADR-31) — both are matched
- * semantically when they carry an embedding, so a materially changed instance re-surfaces.
+ * Active suppression rules: a recorded verdict stops the SAME finding re-surfacing on later reviews,
+ * so a dispositioned issue doesn't keep coming back. `waive` (a defect / false positive, ADR-10),
+ * `acknowledge` (a confirmed-intentional `awareness` flag, ADR-31), and `reject` (the finding was
+ * dismissed) all suppress. They match semantically when they carry an embedding, so a materially
+ * changed instance still re-surfaces. `reject` ALSO down-weights the pitfall via the
+ * outcome→confidence path; that is orthogonal to this instance-level suppression. (Without this,
+ * a deterministic finding the author rejected — e.g. an intentional await-in-loop — re-ran and
+ * re-surfaced every round, since codified checks recompute from scratch.)
  */
 export async function loadWaivers(repoPath: string, config: ReviewerConfig): Promise<Waiver[]> {
   const stored = await readVerdicts(repoPath, config);
   return stored
-    .filter((v) => v.kind === 'waive' || v.kind === 'acknowledge')
+    .filter((v) => v.kind === 'waive' || v.kind === 'acknowledge' || v.kind === 'reject')
     .map((v) => ({
       scope: v.scope ?? 'file',
       file: v.file,
