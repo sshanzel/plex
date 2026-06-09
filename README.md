@@ -42,63 +42,57 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
 
 ## Quick start
 
-Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run; native deps ship prebuilt (no compiler). **Run it inside your repo** — every command defaults to the current git repo.
+Plex plugs into the coding agent you already use — **install the plugin once, then review from inside any repo.** One marketplace add bootstraps **everything**: the reviewer agent, the parallel-review orchestrator, a `/plex:review` command, and the MCP engine itself (auto-fetched from npm via `npx` — no separate install). It's **fully embedded** (Kùzu): no Docker, no services, nothing to run.
 
-```bash
-npm i -g @sshanzel/plex          # or run ad-hoc: npx @sshanzel/plex <cmd>
-
-cd your-repo                     # any git repo
-plex init                        # one-time: optional embedding key, register the MCP, and —
-                                 # since you're in a git repo — offer to index it
-
-plex review --staged             # review the change. or: --branch main · --pr 123 · --html nb.html
-```
-
-`init` is optional too — the **first review auto-indexes** the repo, and the graph **auto-refreshes** when it drifts behind HEAD. An embedding provider is **optional** (adds semantic knowledge + review signals); set it during `init` or in `~/.plex/config.json`.
-
-```bash
-plex index                       # (re)index the current repo — add --incremental for just changed files
-plex mine                        # build knowledge from this repo's PR history (rides your claude sub)
-plex seed                        # seed pitfalls from ./plex.md
-```
-
-> Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` — nothing to `.gitignore`. Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
-
-### Use it from Claude Code or Codex — install the plugin (recommended)
-
-The lowest-friction path: one marketplace add + install bootstraps **everything** — the reviewer
-agent, the parallel-review orchestrator, a `/plex:review` command, and the MCP engine (auto-fetched
-from npm via `npx`, so there's no separate `npm install`).
+**Claude Code**
 
 ```
 /plugin marketplace add sshanzel/plugins
 /plugin install plex@sshanzel
 ```
 
-Then, inside any repo: run **`/plex:review`** (or just ask *"review my changes with Plex"*). The
-reviewer is **on-demand** — it runs at review checkpoints, not on every edit. The first review
-auto-indexes the repo; an embedding provider is optional (`plex init`, or `~/.plex/config.json`).
-
-**Codex** installs the same plugin from this repo's Codex marketplace — Codex has no "agent" type, so
-the reviewer ships as a **`plex-review`** skill (plus the `plex-parallel-review` orchestrator), with
-the MCP engine wired via the plugin's `.mcp.json`:
+**Codex** — the same plugin from this repo's Codex marketplace (Codex has no "agent" type, so the reviewer ships as a **`plex-review`** skill alongside the `plex-parallel-review` orchestrator):
 
 ```
 codex plugin marketplace add sshanzel/plex
 ```
-Then run the **`plex-review`** skill (via `/skills` or `$plex-review`) — same flow, on-demand.
 
-> Updates are a `git push` to the marketplace repo. Claude: `/plugin marketplace update` (or
-> auto-update) + `/reload-plugins`. Codex: `codex plugin marketplace upgrade`. The MCP engine
-> updates separately on npm.
+Then, inside any repo, run **`/plex:review`** — or just ask *"review my changes with Plex."* (Codex: the `plex-review` skill via `/skills` or `$plex-review`.) The reviewer is **on-demand** — it runs at review checkpoints, not on every edit. The **first review auto-indexes** the repo and the graph **auto-refreshes** on drift, so there's no setup step. An embedding provider is **optional** (adds semantic knowledge + review signals) — configure it in `~/.plex/config.json` (or `plex init`).
 
-### …or register the MCP manually (no plugin)
+> Updates are a `git push` to the marketplace. Claude: `/plugin marketplace update` + `/reload-plugins`. Codex: `codex plugin marketplace upgrade`. The MCP engine updates separately on npm.
+
+### …or register just the MCP (no plugin)
+
+Prefer your own agent setup? Install the package and point your agent at the MCP server:
 
 ```bash
-plex init                       # registers the MCP for you, …or do it manually:
+npm i -g @sshanzel/plex
+plex init                       # registers the MCP for you …or do it manually:
 claude mcp add plex -- plex-mcp
 ```
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Then restart Claude Code and, inside a target repo, ask *"review my changes with Plex."* A ready-made `plex-reviewer` subagent + the `plex-parallel-review` skill also ship in this repo under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)).
+
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Restart Claude Code, then inside a repo ask *"review my changes with Plex."* The `plex-reviewer` subagent + `plex-parallel-review` skill also ship under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)).
+
+## CLI (optional — indexing, mining, headless review)
+
+The MCP server is how an agent uses Plex; the CLI is that same engine for humans and CI — building knowledge, or running a review with no agent attached. **Run it inside your repo** — every command defaults to the current git repo.
+
+```bash
+npm i -g @sshanzel/plex          # or run ad-hoc: npx @sshanzel/plex <cmd>
+
+cd your-repo
+plex review --staged             # headless review. or: --branch main · --pr 123 · --html <file>
+plex index                       # (re)index — add --incremental for just changed files
+plex mine                        # build knowledge from this repo's PR history (rides your claude sub)
+plex seed                        # seed pitfalls from ./plex.md
+plex doctor                      # embeddings + graph status
+```
+
+Full command list: `init · doctor · index [--incremental] · review · reconcile · eval · blast · verdict · verdicts · seed · promote · mine`.
+
+> Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` — nothing to `.gitignore`. Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine.
+
+**`plex review --html`** writes a single self-contained Cytoscape file — the changed symbols and their blast-radius neighbors — to inspect what the reviewer saw. No services, nothing to run.
 
 ### From source (contributors)
 
@@ -106,14 +100,6 @@ The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the r
 pnpm install && pnpm build         # → dist/plex.js, dist/plex-mcp.js (run under node; ADR-19)
 node dist/plex.js review --staged  # from inside a git repo
 ```
-
-## Inspecting a review (optional)
-
-`plex review --html` writes a single self-contained Cytoscape file — the changed symbols and their blast-radius neighbors. No services, nothing to run.
-
-## CLI
-
-`plex init · doctor · index [--incremental] · review · reconcile · blast · verdict · verdicts · seed · promote · mine`
 
 ## MCP tools (15)
 
