@@ -46,6 +46,16 @@ Then run the `plex-review` skill (through `/skills` or `$plex-review`). Everythi
 
 > Updating: the plugin updates with a marketplace pull. Claude: `/plugin marketplace update` then `/reload-plugins`. Codex: `codex plugin marketplace upgrade`. The engine updates on its own through npm.
 
+## Large repos
+
+The first review indexes the repo for you, which walks the git history. On a large repo that can take a minute, so the first review is slower than the rest. To get that out of the way up front, build the graph before you review, from inside the repo:
+
+```bash
+npx @sshanzel/plex index
+```
+
+After that, reviews use the cached graph and refresh only what changed. (If you installed the CLI globally, it's just `plex index`.)
+
 ## Embeddings
 
 Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
