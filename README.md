@@ -7,7 +7,7 @@
 - **Compounding** — review **knowledge** that grows globally (across your repos) and per-project, reweighted by your verdicts and mined from PR history.
 - **One stream** — first-principles reasoning, learned pitfalls, and deterministic checks, merged and ranked by severity × confidence × blast.
 
-The reasoning stays the frontier model's; Plex feeds it the right context and remembers what it learns. (RAG, not fine-tuning.)
+The reasoning stays the frontier model's; Plex feeds it the right context and remembers what it learns.
 
 ## Why
 
