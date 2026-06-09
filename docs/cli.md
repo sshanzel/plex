@@ -1,6 +1,6 @@
 # Plex CLI
 
-You do not need the CLI for normal use. The plugin runs the reviewer (agent + MCP), and `npx @sshanzel/plex init` sets your embedding key. The CLI is the same engine for the jobs that aren't the review itself: building the code graph, growing the knowledge base, and inspecting state, by hand or in CI.
+You do not need the CLI for normal use. The plugin runs the reviewer (agent + MCP), and `plex init` sets your embedding key. The CLI is the same engine for the jobs that aren't the review itself: building the code graph, growing the knowledge base, and inspecting state, by hand or in CI.
 
 There is no `plex review` command. A review always runs through the agent, in its own fresh context (that is the whole point), so the CLI never does the reasoning.
 
@@ -8,20 +8,20 @@ There is no `plex review` command. A review always runs through the agent, in it
 
 Two ways, same engine. Run them from inside your repo; every command defaults to the current git repo.
 
-- **No install (simplest).** Prefix any command with `npx @sshanzel/plex`. npx fetches the package once, caches it, and reuses the copy the plugin already pulled:
-
-  ```bash
-  npx @sshanzel/plex doctor
-  ```
-
-- **Global install (for a bare `plex`).** If you run these often, put the command on your PATH:
+- **Global install (recommended).** Put `plex` on your PATH once, then use plain commands:
 
   ```bash
   npm install -g @sshanzel/plex
   plex doctor
   ```
 
-The examples below use the bare `plex`; prepend `npx @sshanzel/` if you skipped the global install.
+- **No install.** Use npx, but be explicit. This package ships two binaries (`plex` and `plex-mcp`), so a bare `npx @sshanzel/plex …` cannot pick one on a fresh machine (you will see `sh: plex: command not found`). Name the package and the binary:
+
+  ```bash
+  npx -p @sshanzel/plex plex doctor
+  ```
+
+The examples below use the bare `plex`. If you skipped the global install, replace `plex` with `npx -p @sshanzel/plex plex`.
 
 ## Commands
 
