@@ -15,36 +15,24 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 
 ## Quick start
 
-Install the engine, add the plugin, then set it up in your repo.
-
-**1. Install Plex** (the engine):
-
-```bash
-npm install -g @sshanzel/plex
-```
-
-**2. Add the plugin** in Claude Code. The plugin is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP server it runs on (bundled with the plugin, so there's nothing to register by hand).
+**1. Add the plugin** in Claude Code. This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP engine it runs on (fetched on demand, nothing else to install).
 
 ```
 /plugin marketplace add sshanzel/plugins
 /plugin install plex@sshanzel
 ```
 
-**3. Open the repo** you want reviewed:
+**2. Add an embedding key** (highly recommended), from inside your repo. This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and mining. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
 
 ```bash
-cd your-repo
+npx @sshanzel/plex init
 ```
 
-**4. Set it up** for that repo:
+It saves the key to `~/.plex/config.json` and offers to index the repo. A running review picks the key up on the next pass, no reload.
 
-```bash
-plex init
-```
+**3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
-`init` asks for an optional embedding key (it powers the knowledge base and the semantic signals, the parts that learn across reviews) and then offers to index the repo.
-
-That's the whole setup. Run **`/plex:review`** in Claude Code, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the code graph keeps itself fresh as the repo changes.
+Plex still reviews without a key, just without the learning layer, and it reminds you once per review until you add one.
 
 ### Using Codex
 
@@ -58,32 +46,27 @@ Then run the `plex-review` skill (through `/skills` or `$plex-review`). Everythi
 
 > Updating: the plugin updates with a marketplace pull. Claude: `/plugin marketplace update` then `/reload-plugins`. Codex: `codex plugin marketplace upgrade`. The engine updates on its own through npm.
 
-## CLI and maintenance
+## Embeddings
 
-The plugin is the reviewer. The CLI is the same engine for the jobs that aren't the review itself: setup, building the code graph, and growing the knowledge base. There is no `plex review`, because a review always runs through the agent in its own context. Run any command from inside the repo; they default to the current git repo.
+Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
 
-| Command | What it does |
-|---|---|
-| `plex init` | Interactive setup: optional embedding key, then offer to index the current repo. |
-| `plex index [--incremental]` | Build or refresh the code graph. `--incremental` re-reads only the files that changed. |
-| `plex mine [--oldest] [--limit N] [--threshold 0..1]` | Turn this repo's PR-review history into pitfalls. Runs on your `claude` subscription. |
-| `plex seed [--file plex.md]` | Seed pitfalls from a markdown file. |
-| `plex promote` | Propose promoting high-confidence pitfalls into `plex.md` or rules. |
-| `plex reconcile` | Auto-accept earlier findings that your pushed commits have since fixed. |
-| `plex eval` | Offline check of how well the ranking matches the outcomes you recorded (nDCG). Reports only; it never changes anything. |
-| `plex blast --files a.ts,b.ts` | Print the blast radius (coupled files) for the given files. |
-| `plex verdict <id> <accept\|reject\|waive\|acknowledge>` | Record a verdict on a finding. |
-| `plex verdicts` | List the verdicts recorded for this repo. |
-| `plex doctor` | Show the embedding and graph status, and whether a newer build is waiting on disk. |
+- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality.
+- **With a key:** all of that, plus the knowledge layer. Plex pulls relevant past pitfalls into each review, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
 
-Per-repo data lives outside your repo, at `~/.plex/repos/<id>/`, so there's nothing to add to `.gitignore`. If you switch embedding providers the stored vectors no longer match (ADR-13), so remove `~/.plex/knowledge` and re-seed or re-mine.
+So add one. Set it with `npx @sshanzel/plex init` (or edit `~/.plex/config.json`); it takes effect on the next review, no reload.
 
-### From source (contributors)
+**Providers:**
 
-```bash
-pnpm install && pnpm build         # builds dist/plex.js and dist/plex-mcp.js (run under node; ADR-19)
-node dist/plex.js index            # build the graph for the current repo
-```
+- **Voyage** (recommended). Code-specialized embeddings, and the free tier is plenty to start. It is what I use day to day. Set `voyage` and a `VOYAGE_API_KEY`.
+- **OpenAI.** `text-embedding-3-small` is cheap and solid. Set `openai` and `OPENAI_API_KEY`.
+- **Gemini.** Set `gemini` and `GEMINI_API_KEY`.
+- **Ollama.** Fully local, no key, good for private repos. Set `ollama` (needs Ollama running with an embedding model such as `nomic-embed-text`).
+
+Switching providers later invalidates the stored vectors, since they are not comparable across models (ADR-13). If you change, remove `~/.plex/knowledge` and re-seed or re-mine.
+
+## Command-line use (optional)
+
+You do not need a terminal CLI for normal use: the plugin runs the reviewer, and `npx @sshanzel/plex init` sets your key. If you also want to run Plex's maintenance and knowledge commands yourself (in CI, a script, or by hand), they are documented in **[docs/cli.md](docs/cli.md)**.
 
 ## How it works
 
