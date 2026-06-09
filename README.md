@@ -80,6 +80,16 @@ Either way it takes effect on the next review, no reload.
 
 Switching providers later invalidates the stored vectors, since they are not comparable across models (ADR-13). If you change, remove `~/.plex/knowledge` and re-seed or re-mine.
 
+## Bootstrap from your PR history
+
+Plex gets sharper as you review, but you can give it a head start by mining your past PR reviews into pitfalls. From inside the repo, with an embedding key set and the GitHub CLI (`gh`) authenticated:
+
+```bash
+npx @sshanzel/plex mine --oldest --limit 50
+```
+
+That pulls the review comments from your first 50 PRs, clusters the recurring themes, and distills them into knowledge. It rides your Claude subscription (via the `claude` CLI, no API key needed) and is incremental, so re-run it to keep working through your history. Drop `--oldest` to mine your most recent PRs instead.
+
 ## Command-line use (optional)
 
 You do not need a terminal CLI for normal use: the plugin runs the reviewer, and `plex init` sets your key. If you also want to run Plex's maintenance and knowledge commands yourself (in CI, a script, or by hand), they are documented in **[docs/cli.md](docs/cli.md)**.
