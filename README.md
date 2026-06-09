@@ -63,7 +63,7 @@ Then, inside any repo, run **`/plex:review`** — or just ask *"review my change
 
 ### …or register just the MCP (no plugin)
 
-Prefer your own agent setup? Install the package and point your agent at the MCP server:
+Prefer to wire Plex into your own agent? Install the package and register the MCP:
 
 ```bash
 npm i -g @sshanzel/plex
@@ -71,17 +71,17 @@ plex init                       # registers the MCP for you …or do it manually
 claude mcp add plex -- plex-mcp
 ```
 
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Restart Claude Code, then inside a repo ask *"review my changes with Plex."* The `plex-reviewer` subagent + `plex-parallel-review` skill also ship under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)).
+The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Restart Claude Code, then inside a repo ask *"review my changes with Plex."* A review is **still driven by an agent** — here it's your *general* assistant rather than the dedicated reviewer subagent. `get_review_context` hands it enough guidance to behave like a reviewer, but you lose the plugin's **automatic fresh context** (start a new chat so it isn't the session that wrote the code — that's the anti-bias mechanism) and its fuller methodology, so the plugin is the recommended path. The `plex-reviewer` subagent + `plex-parallel-review` skill ship under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)) — copy them into your own setup if you skip the plugin.
 
-## CLI (optional — indexing, mining, headless review)
+## CLI (optional — indexing, mining, context assembly)
 
-The MCP server is how an agent uses Plex; the CLI is that same engine for humans and CI — building knowledge, or running a review with no agent attached. **Run it inside your repo** — every command defaults to the current git repo.
+The MCP server is how an *agent* uses Plex; the CLI is that same engine for humans and CI. It does everything **except the reasoning** — the first-principles review is the LLM's job, driven through the MCP. So `plex review` here **assembles and prints the review context** (blast radius + deterministic checks + retrieved knowledge + the notes an agent reasons over) — it is *not* the full agent review. Use it to inspect what the reviewer sees, gate CI on the deterministic findings, or pipe the context (`--json`) into your own LLM call. **Run it inside your repo** — every command defaults to the current git repo.
 
 ```bash
 npm i -g @sshanzel/plex          # or run ad-hoc: npx @sshanzel/plex <cmd>
 
 cd your-repo
-plex review --staged             # headless review. or: --branch main · --pr 123 · --html <file>
+plex review --staged             # print the review CONTEXT + deterministic findings (grounding, not the LLM review). or: --branch main · --pr 123 · --html <file>
 plex index                       # (re)index — add --incremental for just changed files
 plex mine                        # build knowledge from this repo's PR history (rides your claude sub)
 plex seed                        # seed pitfalls from ./plex.md
