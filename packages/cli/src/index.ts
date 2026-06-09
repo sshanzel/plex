@@ -46,12 +46,12 @@ function isGitRepo(dir: string): boolean {
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
-const USAGE = `plex — local-first code review context
+const USAGE = `plex, local-first code review context
 
-Run inside your repo — commands default to the current git repo (an explicit [repoPath] still works).
+Run inside your repo. Commands default to the current git repo (an explicit [repoPath] still works).
 
 Usage:
-  plex init                                              # one-command setup (run in your repo): embedding key + MCP + offer to index
+  plex init                                              # setup (run in your repo): embedding key + offer to index
   plex doctor [repoPath]                                 # check embeddings + graph
   plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
@@ -169,43 +169,35 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** One-command setup (ADR-29/30): optional embedding key → config, register MCP, index. */
+/** One-command setup: optional embedding key (saved to config), then offer to index. The MCP is
+ *  provided by the Plex plugin, so init does NOT register one — that avoids a duplicate `plex`
+ *  server now that the plugin is the install path. */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
-  out.write('Plex setup — embedded (no Docker, no services).\n\n');
+  out.write('Plex setup (embedded: no Docker, no services).\n\n');
 
-  // 1. Embedding provider + key (optional — enables semantic knowledge + brain signals).
-  //    Stored once in ~/.plex/config.json; the MCP server reads it (no secrets in the registration).
-  out.write('An embedding provider powers knowledge retrieval + the semantic review signals (optional).\n');
+  // 1. Embedding key (optional). Saved to ~/.plex/config.json; the MCP server reads it at review time.
+  out.write('An embedding key powers knowledge retrieval and the semantic review signals (optional).\n');
   const provider = (await ask('Embedding provider [voyage/openai/gemini/ollama/none] (voyage): ')) || 'voyage';
   if (provider !== 'none') {
     const apiKey = provider === 'ollama' ? undefined : await ask(`API key for ${provider} (Enter to skip): `);
     writeHomeConfig({ embedding: { provider: provider as never, ...(apiKey ? { apiKey } : {}) } });
-    out.write(`✓ Saved config to ${homeConfigPath()}\n`);
+    out.write(`Saved config to ${homeConfigPath()}\n`);
   }
 
-  // 2. Register the MCP with Claude Code (reads the config file).
-  const mcpEntry = path.join(path.dirname(process.argv[1] ?? ''), 'plex-mcp.js');
-  if (existsSync(mcpEntry)) {
-    spawnSync('claude', ['mcp', 'remove', 'plex'], { stdio: 'ignore' });
-    const reg = spawnSync('claude', ['mcp', 'add', 'plex', '--', 'node', mcpEntry], { stdio: 'ignore' });
-    out.write(reg.status === 0 ? '✓ Registered Plex MCP with Claude Code\n' : `! Auto-register failed — run: claude mcp add plex -- node ${mcpEntry}\n`);
-  } else {
-    out.write('! MCP entry not found beside the CLI — register it manually.\n');
-  }
-
-  // 3. Index this repo — only when run inside a git repo (Plex needs git history for co-change).
-  //    Reviews also auto-index on first use and auto-refresh on drift, so this is optional.
+  // 2. Index this repo, only inside a git repo (Plex needs git history for co-change). Reviews also
+  //    auto-index on first use and refresh on drift, so this step is optional.
   if (!isGitRepo(repoPath)) {
-    out.write('\n○ Not a git repo here — skipping index. Run `plex index` inside a repo later (or just review it; the first review auto-indexes).\n');
+    out.write('\nNot a git repo here, so skipping the index. Run `plex index` inside a repo later, or just review it (the first review auto-indexes).\n');
   } else if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
     const res = await withSpinner(
-      `Indexing ${path.basename(path.resolve(repoPath))} — first index walks git history, large repos take a bit`,
+      `Indexing ${path.basename(path.resolve(repoPath))} (the first index walks git history, so large repos take a moment)`,
       () => indexRepo(repoPath, loadConfig()),
     );
-    out.write(`✓ Indexed ${res.files} files · ${res.symbols} symbols · ${res.coChangePairs} co-change pairs\n`);
+    out.write(`Indexed ${res.files} files, ${res.symbols} symbols, ${res.coChangePairs} co-change pairs.\n`);
   }
-  out.write('\nDone. Restart Claude Code, then ask it to "review my changes with Plex".\n');
+
+  out.write('\nDone. Install the Plex plugin if you have not, then run `/plex:review` in your agent (or say "review my changes with Plex").\n');
   return 0;
 }
 
@@ -223,9 +215,9 @@ async function main(): Promise<number> {
       const graphed = existsSync(repoPaths(repoPath, config.dataDir).graphDir);
       const line = (ok: boolean, label: string, detail: string) =>
         process.stdout.write(`  ${ok ? '✓' : '○'} ${label.padEnd(12)} ${detail}\n`);
-      process.stdout.write('plex doctor (embedded — no services)\n');
-      line(emb, 'embeddings', emb ? `provider: ${config.embedding.provider}` : 'not configured (optional) — run `plex init`');
-      line(graphed, 'graph', graphed ? 'indexed' : 'not indexed — run `plex index` (reviews also auto-index)');
+      process.stdout.write('plex doctor (embedded, no services)\n');
+      line(emb, 'embeddings', emb ? `provider: ${config.embedding.provider}` : 'not configured (optional). run `plex init`');
+      line(graphed, 'graph', graphed ? 'indexed' : 'not indexed. run `plex index` (reviews also auto-index)');
       return 0;
     }
     case 'index': {
