@@ -15,7 +15,7 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 
 ## Quick start
 
-**1. Add the plugin** in Claude Code. This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP engine it runs on.
+**1. Add the plugin** in Claude Code (once — it then works in every repo you open). This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP engine it runs on.
 
 ```
 /plugin marketplace add sshanzel/plugins
@@ -28,7 +28,7 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 npx -p @sshanzel/plex plex init
 ```
 
-It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. If you'll use the CLI a lot, `npm install -g @sshanzel/plex` gives you a plain `plex` command.
+It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. Want a CLI for full visibility (`doctor`, `eval`, mining, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
