@@ -8,20 +8,20 @@ There is no `plex review` command. A review always runs through the agent, in it
 
 Two ways, same engine. Run them from inside your repo; every command defaults to the current git repo.
 
-- **Global install (recommended).** Put `plex` on your PATH once, then use plain commands:
+- **No install.** Prefix any command with `npx @sshanzel/plex`. npx fetches the package once and caches it:
+
+  ```bash
+  npx @sshanzel/plex doctor
+  ```
+
+- **Global install (for a bare `plex`).** If you run these often, put it on your PATH:
 
   ```bash
   npm install -g @sshanzel/plex
   plex doctor
   ```
 
-- **No install.** Use npx, but be explicit. This package ships two binaries (`plex` and `plex-mcp`), so a bare `npx @sshanzel/plex …` cannot pick one on a fresh machine (you will see `sh: plex: command not found`). Name the package and the binary:
-
-  ```bash
-  npx -p @sshanzel/plex plex doctor
-  ```
-
-The examples below use the bare `plex`. If you skipped the global install, replace `plex` with `npx -p @sshanzel/plex plex`.
+The examples below use the bare `plex`. Without a global install, prefix with `npx @sshanzel/plex` (e.g. `npx @sshanzel/plex mine`).
 
 ## Commands
 
@@ -52,5 +52,7 @@ pnpm install && pnpm build         # builds dist/plex.js and dist/plex-mcp.js (r
 node dist/plex.js index            # build the graph for the current repo
 node dist/plex.js doctor           # check status
 ```
+
+**Heads-up:** don't test the *published* package with `npx @sshanzel/plex …` from inside this repo. The repo's own `package.json` is named `@sshanzel/plex`, so npx resolves to the local copy (whose bin isn't linked) and you get `sh: plex: command not found`. Use `node dist/plex.js …` here, or run the npx command from any other directory.
 
 See [`AGENTS.md`](../AGENTS.md) for the full contributor workflow.
