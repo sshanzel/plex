@@ -39,7 +39,7 @@ import { reviewTargetFor } from './target';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
-import { buildKnowledgeQuery, getRelevantKnowledge } from './knowledge';
+import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady } from './knowledge';
 import { recordFixAccepts } from './reconcile';
 
 /**
@@ -511,6 +511,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     notes: [
       ...AGENT_NOTES,
       ...BRAIN_NOTES,
+      ...(embeddingReady(opts.config)
+        ? []
+        : [
+            'ONBOARDING: embeddings are OFF (no provider configured), so the knowledge/learning layer (retrieved pitfalls, semantic signals, mining) is disabled this review. Close your reply with EXACTLY this one line, on its own: "_Embeddings are off, so Plex isn\'t learning from these reviews yet. Turn it on: `npx @sshanzel/plex init`._"',
+          ]),
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,

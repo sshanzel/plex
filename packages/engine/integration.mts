@@ -241,6 +241,12 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
     assert.ok(ctx.blastRadius.some((n) => String(n.node.props.path) === 'src/db.ts'));
     assert.ok(ctx.reviewPlan, 'reviewPlan present');
     assert.equal(ctx.reviewPlan!.strategy, 'single', 'a 1-file change stays single (below minFiles)');
+    // No embedding provider configured here → the context carries the one-line onboarding nudge
+    // for the agent to surface (points at `plex init`, never asks for the key in chat).
+    assert.ok(
+      ctx.notes.some((n) => n.includes('embeddings are OFF') && n.includes('npx @sshanzel/plex init')),
+      'embeddings-off onboarding note is present when no provider is configured',
+    );
     await recordVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'file' }, config);
     const verdicts = await readVerdicts(repo, config);
     assert.equal(verdicts.length, 1);
