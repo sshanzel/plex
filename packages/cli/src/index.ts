@@ -54,7 +54,6 @@ Usage:
   plex init                                              # one-command setup (run in your repo): embedding key + MCP + offer to index
   plex doctor [repoPath]                                 # check embeddings + graph
   plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
-  plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
   plex eval [repoPath]                                   # offline: how well does ranking match outcomes (nDCG)? measurement only
   plex blast [repoPath] --files <a.ts,b.ts>
@@ -258,6 +257,12 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    // `review` is intentionally OMITTED from USAGE. The CLI can only ASSEMBLE the review context
+    // (assembleReviewContext) — it has no LLM, so it can't produce the first-principles findings a
+    // real review needs, and a review MUST run in the isolated reviewer agent (anti-bias), not here.
+    // The handler stays for the --html graph viz, --json context piping, and the brain E2E
+    // (scripts/brain-check.mjs). Document it as a true headless `review` only once an API-key path
+    // lets the CLI run the reasoning itself.
     case 'review': {
       const repoPath = positionals[1] ?? process.cwd();
       const mode: LocalDiffMode | undefined = flags.staged

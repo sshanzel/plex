@@ -42,7 +42,7 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
 
 ## Quick start
 
-Plex plugs into the coding agent you already use — **install the plugin once, then review from inside any repo.** One marketplace add bootstraps **everything**: the reviewer agent, the parallel-review orchestrator, a `/plex:review` command, and the MCP engine itself (auto-fetched from npm via `npx` — no separate install). It's **fully embedded** (Kùzu): no Docker, no services, nothing to run.
+The whole point of Plex is that a review runs in a **separate, unbiased context** — a dedicated reviewer *agent*, never raw MCP calls in the chat that wrote the code (that would just reintroduce the bias). So the agent and the MCP engine it runs on are **one system**, and installing the plugin sets up both:
 
 **Claude Code**
 
@@ -57,48 +57,38 @@ Plex plugs into the coding agent you already use — **install the plugin once, 
 codex plugin marketplace add sshanzel/plex
 ```
 
-Then, inside any repo, run **`/plex:review`** — or just ask *"review my changes with Plex."* (Codex: the `plex-review` skill via `/skills` or `$plex-review`.) The reviewer is **on-demand** — it runs at review checkpoints, not on every edit. The **first review auto-indexes** the repo and the graph **auto-refreshes** on drift, so there's no setup step. An embedding provider is **optional** (adds semantic knowledge + review signals) — configure it in `~/.plex/config.json` (or `plex init`).
+One install brings the three pieces that *are* the reviewer: the **fresh-context agent** (`plex-reviewer` / the `plex-review` skill), the **`/plex:review` command**, and the **MCP engine** it calls (auto-run via `npx` — nothing else to install). Fully embedded (Kùzu): no Docker, no services.
+
+**Set an embedding key** to power the knowledge base + semantic signals — the part that *learns* across reviews: run `npx @sshanzel/plex init`, or edit `~/.plex/config.json`.
+
+Then, in any repo, run **`/plex:review`** — or just ask *"review my changes with Plex."* (Codex: the `plex-review` skill via `/skills` or `$plex-review`.) The reviewer is **on-demand**; the **first review auto-indexes** the repo and the graph **auto-refreshes** on drift.
 
 > Updates are a `git push` to the marketplace. Claude: `/plugin marketplace update` + `/reload-plugins`. Codex: `codex plugin marketplace upgrade`. The MCP engine updates separately on npm.
 
-### …or register just the MCP (no plugin)
+## CLI (setup & maintenance)
 
-Prefer to wire Plex into your own agent? Install the package and register the MCP:
-
-```bash
-npm i -g @sshanzel/plex
-plex init                       # registers the MCP for you …or do it manually:
-claude mcp add plex -- plex-mcp
-```
-
-The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the registration. Restart Claude Code, then inside a repo ask *"review my changes with Plex."* A review is **still driven by an agent** — here it's your *general* assistant rather than the dedicated reviewer subagent. `get_review_context` hands it enough guidance to behave like a reviewer, but you lose the plugin's **automatic fresh context** (start a new chat so it isn't the session that wrote the code — that's the anti-bias mechanism) and its fuller methodology, so the plugin is the recommended path. The `plex-reviewer` subagent + `plex-parallel-review` skill ship under [`plugin/`](plugin) (symlinked into [`.claude/`](.) / [`.agents/`](.)) — copy them into your own setup if you skip the plugin.
-
-## CLI (optional — indexing, mining, context assembly)
-
-The MCP server is how an *agent* uses Plex; the CLI is that same engine for humans and CI. It does everything **except the reasoning** — the first-principles review is the LLM's job, driven through the MCP. So `plex review` here **assembles and prints the review context** (blast radius + deterministic checks + retrieved knowledge + the notes an agent reasons over) — it is *not* the full agent review. Use it to inspect what the reviewer sees, gate CI on the deterministic findings, or pipe the context (`--json`) into your own LLM call. **Run it inside your repo** — every command defaults to the current git repo.
+The plugin *is* the reviewer; the CLI is that same engine for the **non-review** jobs — setting the embedding key, (re)building the code graph, and growing the knowledge base. A review always runs through the isolated agent, so there is no CLI `review`. **Run it inside your repo** — every command defaults to the current git repo.
 
 ```bash
 npm i -g @sshanzel/plex          # or run ad-hoc: npx @sshanzel/plex <cmd>
 
 cd your-repo
-plex review --staged             # print the review CONTEXT + deterministic findings (grounding, not the LLM review). or: --branch main · --pr 123 · --html <file>
-plex index                       # (re)index — add --incremental for just changed files
+plex init                        # set the embedding key + offer to index (interactive setup)
+plex index                       # (re)index the code graph — add --incremental for just changed files
 plex mine                        # build knowledge from this repo's PR history (rides your claude sub)
 plex seed                        # seed pitfalls from ./plex.md
 plex doctor                      # embeddings + graph status
 ```
 
-Full command list: `init · doctor · index [--incremental] · review · reconcile · eval · blast · verdict · verdicts · seed · promote · mine`.
+Full command list: `init · doctor · index [--incremental] · seed · mine · promote · reconcile · eval · blast · verdict · verdicts`.
 
 > Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` — nothing to `.gitignore`. Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine.
-
-**`plex review --html`** writes a single self-contained Cytoscape file — the changed symbols and their blast-radius neighbors — to inspect what the reviewer saw. No services, nothing to run.
 
 ### From source (contributors)
 
 ```bash
 pnpm install && pnpm build         # → dist/plex.js, dist/plex-mcp.js (run under node; ADR-19)
-node dist/plex.js review --staged  # from inside a git repo
+node dist/plex.js index            # build the graph for the current repo
 ```
 
 ## MCP tools (15)
