@@ -1,16 +1,13 @@
 # Plex
 
-**A local-first AI code reviewer.** Plex isn't another LLM that reviews your code — it's an **MCP server + CLI** that makes whatever coding agent you already use (Claude Code, Codex, …) dramatically more **rigorous** and **unbiased**, and gets better the more you use it.
+**A local-first AI code reviewer.** Plex isn't another LLM — it's an **MCP server + CLI** that makes the coding agent you already use (Claude Code, Codex, …) far more **rigorous** and **unbiased**, and sharper the more you use it.
 
-It does that by:
+- **Unbiased** — reviews in a **fresh process**, so it never anchors on the reasoning of whoever wrote the code, even across rounds.
+- **Grounded** — a **blast-radius map** (git co-change + imports + precise TS edges) shows what *else* a change can break, not just the diff.
+- **Compounding** — review **knowledge** that grows globally (across your repos) and per-project, reweighted by your verdicts and mined from PR history.
+- **One stream** — first-principles reasoning, learned pitfalls, and deterministic checks, merged and ranked by severity × confidence × blast.
 
-- running review in a **fresh process**, separate from whoever wrote the code — no self-review bias, even across rounds;
-- grounding the review in a **blast-radius map** of your codebase (git co-change + imports + precise TS edges) so it sees what *else* a change can break;
-- focusing it with **accumulated review knowledge** that compounds **globally** (across all your repos) and **per-project** (tailored to one codebase);
-- merging the agent's first-principles reasoning, learned pitfalls, and deterministic checks into **one severity- and confidence-ranked stream**;
-- **learning** from your accept / reject / waive / acknowledge verdicts and from mining your PR-review history.
-
-The reasoning stays the frontier model's; Plex's job is to feed it the right context and remember what it learns. (RAG, not fine-tuning.)
+The reasoning stays the frontier model's; Plex feeds it the right context and remembers what it learns. (RAG, not fine-tuning.)
 
 ## Why
 
@@ -45,30 +42,27 @@ Copilot review hits limits, the Claude solo plan has no review, and the agent th
 
 ## Quick start
 
-Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run. A review works against any git repo with zero setup; an embedding provider is **optional** (it adds semantic knowledge + the semantic review signals). Native deps ship prebuilt, so install needs no compiler.
+Plex is **fully embedded** (Kùzu) — no Docker, no services, nothing to run; native deps ship prebuilt (no compiler). **Run it inside your repo** — every command defaults to the current git repo.
 
 ```bash
-npm i -g @sshanzel/plex            # or run any command ad-hoc with: npx @sshanzel/plex <cmd>
+npm i -g @sshanzel/plex          # or run ad-hoc: npx @sshanzel/plex <cmd>
 
-# Optional: one-command setup (asks for an embedding key, registers the MCP, indexes this repo)
-plex init
+cd your-repo                     # any git repo
+plex init                        # one-time: optional embedding key, register the MCP, and —
+                                 # since you're in a git repo — offer to index it
 
-# …or just review — the first review AUTO-INDEXES the repo, no prior step needed:
-plex review /path/to/repo --staged        # or --branch main / --pr 123 / --html nb.html
-
-# The graph stays fresh on its own — a review auto-refreshes it when it has drifted behind HEAD.
-#   (manual refresh is also O(changed files):  plex index /path/to/repo --incremental)
-
-# Optional: an embedding provider (semantic knowledge + brain signals). Set once in
-# ~/.plex/config.json via `init`, or export:
-export PLEX_EMBEDDING_PROVIDER=voyage              # voyage | openai | gemini | ollama
-export VOYAGE_API_KEY=...                           # or OPENAI_API_KEY / GEMINI_API_KEY; ollama needs none
-plex mine /path/to/repo                # build knowledge from PR history (rides your claude sub)
-#   --oldest = chronological (PR #1 up) · --limit N = N PRs/run · --threshold 0..1 = cluster tightness
-plex seed /path/to/repo               # seed from <repo>/plex.md
+plex review --staged             # review the change. or: --branch main · --pr 123 · --html nb.html
 ```
 
-> Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` (nothing to `.gitignore`). Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
+`init` is optional too — the **first review auto-indexes** the repo, and the graph **auto-refreshes** when it drifts behind HEAD. An embedding provider is **optional** (adds semantic knowledge + review signals); set it during `init` or in `~/.plex/config.json`.
+
+```bash
+plex index                       # (re)index the current repo — add --incremental for just changed files
+plex mine                        # build knowledge from this repo's PR history (rides your claude sub)
+plex seed                        # seed pitfalls from ./plex.md
+```
+
+> Per-repo data lives **outside your repo** at `~/.plex/repos/<id>/` — nothing to `.gitignore`. Switching embedding providers invalidates stored vectors (ADR-13): `rm -rf ~/.plex/knowledge` and re-seed/-mine. `plex doctor` shows status.
 
 ### Use it from Claude Code or Codex — install the plugin (recommended)
 
@@ -110,7 +104,7 @@ The MCP reads `~/.plex/config.json` (your embedding key) — no secrets in the r
 
 ```bash
 pnpm install && pnpm build         # → dist/plex.js, dist/plex-mcp.js (run under node; ADR-19)
-node dist/plex.js review . --staged
+node dist/plex.js review --staged  # from inside a git repo
 ```
 
 ## Inspecting a review (optional)

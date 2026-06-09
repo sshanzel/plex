@@ -36,12 +36,24 @@ import { parse } from './parse';
 
 type LocalDiffMode = 'working' | 'staged' | 'branch';
 
+/**
+ * True when `dir` is inside a git work tree (handles subdirectories + git worktrees, not just a bare
+ * `.git` check). This is the validity gate for `index`/`init`: Plex's blast radius is built from git
+ * co-change history, so a non-git folder simply can't be indexed — run inside the repo and it's valid.
+ */
+function isGitRepo(dir: string): boolean {
+  const r = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() === 'true';
+}
+
 const USAGE = `plex — local-first code review context
 
+Run inside your repo — commands default to the current git repo (an explicit [repoPath] still works).
+
 Usage:
-  plex init [repoPath]                                   # one-command setup: embedding key + MCP + index
+  plex init                                              # one-command setup (run in your repo): embedding key + MCP + offer to index
   plex doctor [repoPath]                                 # check embeddings + graph
-  plex index [repoPath] [--incremental]                  # --incremental: refresh only changed files (ADR-25)
+  plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
   plex review [repoPath] [--staged | --branch <base>] [--pr <n>] [--json] [--html <file>]
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
   plex eval [repoPath]                                   # offline: how well does ranking match outcomes (nDCG)? measurement only
@@ -183,8 +195,11 @@ async function runInit(repoPath: string): Promise<number> {
     out.write('! MCP entry not found beside the CLI — register it manually.\n');
   }
 
-  // 3. Index this repo (optional — reviews also auto-index on first use and auto-refresh on drift).
-  if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
+  // 3. Index this repo — only when run inside a git repo (Plex needs git history for co-change).
+  //    Reviews also auto-index on first use and auto-refresh on drift, so this is optional.
+  if (!isGitRepo(repoPath)) {
+    out.write('\n○ Not a git repo here — skipping index. Run `plex index` inside a repo later (or just review it; the first review auto-indexes).\n');
+  } else if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
     const res = await withSpinner(
       `Indexing ${path.basename(path.resolve(repoPath))} — first index walks git history, large repos take a bit`,
       () => indexRepo(repoPath, loadConfig()),
@@ -216,6 +231,13 @@ async function main(): Promise<number> {
     }
     case 'index': {
       const repoPath = positionals[1] ?? process.cwd();
+      if (!isGitRepo(repoPath)) {
+        process.stderr.write(
+          `Not a git repository: ${path.resolve(repoPath)}\n` +
+            'Run `plex index` from inside a git repo — Plex builds its blast radius from git co-change history.\n',
+        );
+        return 1;
+      }
       const res = await withSpinner(
         `${flags.incremental ? 'Refreshing' : 'Indexing'} ${path.basename(path.resolve(repoPath))}`,
         () => indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) }),
