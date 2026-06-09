@@ -514,7 +514,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
       ...(embeddingReady(opts.config)
         ? []
         : [
-            'ONBOARDING: embeddings are OFF (no provider configured), so the knowledge/learning layer (retrieved pitfalls, semantic signals, mining) is disabled this review. Close your reply with EXACTLY this one line, on its own: "_Embeddings are off, so Plex isn\'t learning from these reviews yet. Turn it on: `npx @sshanzel/plex init`._"',
+            'The learning layer is off this review: embeddings are OFF (no provider configured), so no lessons from the user\'s review history were available. In your closing "what Plex brought" line you may note this and point them to `npx @sshanzel/plex init` (one short clause; never ask for the key in chat).',
           ]),
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
