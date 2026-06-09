@@ -17,13 +17,13 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 
 Install the engine, add the plugin, then set it up in your repo.
 
-**1. Install Plex** (the engine and the `plex` CLI):
+**1. Install Plex** (the engine):
 
 ```bash
 npm install -g @sshanzel/plex
 ```
 
-**2. Add the plugin** in Claude Code. This is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the connection to the MCP engine.
+**2. Add the plugin** in Claude Code. The plugin is the reviewer itself: a fresh-context agent, the `/plex:review` command, and the MCP server it runs on (bundled with the plugin, so there's nothing to register by hand).
 
 ```
 /plugin marketplace add sshanzel/plugins
