@@ -6,7 +6,7 @@ import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
 import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince } from './co-change';
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
-import { getMeta } from './query';
+import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -37,12 +37,26 @@ export interface BuildResult {
   commits: number;
 }
 
+/** Raw graph edges of files an update DELETED, read before their nodes were removed —
+ *  the engine weights these into the deleted-neighbors sidecar (a deleted module's
+ *  dependents must outlive its node). Raw on purpose: weighting (association strength)
+ *  lives upstream in @plex/neighborhood, which this package cannot depend on. */
+export interface DeletedFileEdges {
+  deletedPaths: string[];
+  co: { src: string; dst: string; weight: number }[];
+  imports: { src: string; dst: string }[];
+  refs: { src: string; dst: string }[];
+  coDegrees: Record<string, number>;
+}
+
 /** Outcome of an incremental update — file counts reflect only what changed (ADR-25). */
 export interface UpdateResult extends BuildResult {
   incremental: true;
   added: number;
   modified: number;
   deleted: number;
+  /** Present when the update deleted files (captured BEFORE their DETACH DELETE). */
+  deletedEdges?: DeletedFileEdges;
 }
 
 /** Reason an incremental update couldn't run and a full rebuild is required. */
@@ -224,7 +238,21 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     const fileSet = new Set(relFiles);
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
 
-    // 1. Deleted (and rename-from): remove the File node + its Symbols (and dangling edges).
+    // 1. Deleted (and rename-from): capture each file's edges FIRST — within THIS open;
+    //    re-opening the same Kùzu dir later in one process SIGSEGVs — then remove the File
+    //    node + its Symbols (and dangling edges). The engine persists the capture to the
+    //    deleted-neighbors sidecar so a deleted module's dependents stay in the blast
+    //    radius on every later review round.
+    let deletedEdges: DeletedFileEdges | undefined;
+    if (delta.deleted.length > 0) {
+      const [co, imports, refs] = await Promise.all([
+        getCoChangeEdges(db, delta.deleted),
+        getImportEdges(db, delta.deleted),
+        getRefEdges(db, delta.deleted),
+      ]);
+      const deg = await getCoChangeDegrees(db, [...new Set(co.flatMap((e) => [e.src, e.dst]))]);
+      deletedEdges = { deletedPaths: delta.deleted, co, imports, refs, coDegrees: Object.fromEntries(deg) };
+    }
     for (const rel of delta.deleted) {
       await db.run('MATCH (f:File {id:$id})-[:Declares]->(s:Symbol) DETACH DELETE s', { id: rel });
       await db.run('MATCH (f:File {id:$id}) DETACH DELETE f', { id: rel });
@@ -377,6 +405,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       refs: refCount,
       coChangePairs,
       commits,
+      deletedEdges,
     };
   } finally {
     await db.close();

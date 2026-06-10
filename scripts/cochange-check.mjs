@@ -9,7 +9,7 @@
 // Asserts: a pair coupling ONCE per incremental window (never reaching minPairCount within
 // one) stages in CoChangePending, stays invisible to reads, and PROMOTES to a real
 // CoChange edge once its accumulated cnt crosses the threshold — visible in `plex blast`.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, appendFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -69,6 +69,48 @@ try {
     b2.neighbors.some((n) => String(n.node?.props?.path ?? n.node?.id ?? '') === 'src/d.ts'),
     'window 2: the promoted pair is a real CoChange edge (visible in blast)',
   );
+
+  // Eviction: a staged pair that does NOT recur within a half-life ages out instead of
+  // promoting at full undecayed weight. Stage e-f once (window 3), backdate its `ts`
+  // beyond the half-life, then co-change it once more (window 4): with eviction the lane
+  // was swept first, so the pair restarts at cnt 1 — no promotion. (Without eviction the
+  // backdated cnt-1 row would reach cnt 2 and promote.)
+  for (const f of ['e', 'f']) writeFileSync(join(repo, `src/${f}.ts`), `export const ${f} = 1;\n`);
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'w3 add ef'); // e-f coupled once → staged
+  cli(['index', repo, '--incremental'], repo);
+
+  // Backdate the pending lane in a CHILD node process: the Kùzu addon can SIGSEGV at
+  // process exit after direct use, so the child's exit code is ignored — if the backdate
+  // silently failed, the eviction assertion below fails loudly anyway.
+  // Written into the repo root (not tmpdir) so the bare `kuzu` import resolves against
+  // this repo's node_modules.
+  const backdate = resolve(`.ccp-backdate-${process.pid}.tmp.mjs`);
+  writeFileSync(
+    backdate,
+    `import { Database, Connection } from 'kuzu';
+const db = new Database(${JSON.stringify(join(repo, '.plex', 'graph.kuzu'))});
+const conn = new Connection(db);
+const prep = await conn.prepare('MATCH (a:File)-[p:CoChangePending]->(b:File) SET p.ts = $ts');
+await conn.execute(prep, { ts: 1.0 });
+await conn.close();
+await db.close();
+console.log('backdated');
+`,
+  );
+  const bd = spawnSync(process.execPath, [backdate], { cwd: resolve('.'), stdio: 'pipe' });
+  rmSync(backdate, { force: true });
+  if (!String(bd.stdout).includes('backdated')) {
+    console.error(`✗ backdate helper did not run: ${bd.stderr}`);
+    process.exit(1);
+  }
+
+  appendFileSync(join(repo, 'src/e.ts'), '// w4\n');
+  appendFileSync(join(repo, 'src/f.ts'), '// w4\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'w4');
+  const u4 = cli(['index', repo, '--incremental'], repo);
+  assert(/\(0 pairs\)/.test(u4), 'eviction: a pair staged a half-life ago ages out — no stale promotion');
 
   console.log('cochange-check: all assertions passed.');
 } finally {

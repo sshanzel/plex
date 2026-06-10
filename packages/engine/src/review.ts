@@ -20,13 +20,12 @@ import {
   FullRebuildRequired,
   getMeta,
   commitsBehind,
-  changedSourceFilesSince,
   getCoChangeEdges,
-  getCoChangeDegrees,
   getCouplingDegrees,
   getImportEdges,
   getRefEdges,
   type BuildResult,
+  type DeletedFileEdges,
 } from '@plex/code-graph';
 import { computeNeighborhood, associationStrength } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
@@ -66,21 +65,21 @@ export async function indexRepo(
       /* best-effort */
     }
   };
-  if (opts.incremental && existsSync(p.graphDir)) {
-    // Capture deleted files' direct dependents into the sidecar BEFORE the update
-    // DETACH-DELETEs their nodes — reviews consult it on any later round. Best-effort:
-    // one short extra Kùzu open ahead of the update's own (fine under node, ADR-19).
-    try {
-      const indexedSha = readIndexedSha(p.headShaFile);
-      const delta = indexedSha ? await changedSourceFilesSince(p.repoPath, indexedSha) : null;
-      if (delta && delta.deleted.length > 0) {
-        mergeDeletedNeighborsSidecar(p.reviewerDir, await captureDeletedNeighbors(p.graphDir, delta.deleted));
+  // Persist dependents of files an update DELETED into the sidecar — reviews consult it on
+  // any later round (the update captures the edges inside its own Kùzu open, pre-delete).
+  const persistDeleted = (res: { deletedEdges?: DeletedFileEdges }): void => {
+    if (res.deletedEdges) {
+      try {
+        mergeDeletedNeighborsSidecar(p.reviewerDir, weightDeletedNeighbors(res.deletedEdges));
+      } catch {
+        /* best-effort */
       }
-    } catch {
-      /* best-effort */
     }
+  };
+  if (opts.incremental && existsSync(p.graphDir)) {
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+      persistDeleted(res);
       await stamp();
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
@@ -106,6 +105,7 @@ export async function indexRepo(
         mkdirSync(path.dirname(p.graphDir), { recursive: true });
         cpSync(base.graphDir, p.graphDir, { recursive: true });
         const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+        persistDeleted(res);
         await stamp();
         return { ...res, graphDir: p.graphDir, seeded: true };
       } catch {
@@ -405,47 +405,38 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 }
 
 /**
- * Direct dependents of files the diff DELETES, read from the graph BEFORE their nodes are
- * removed, grouped per deleted file. Weighted like the walk's edges (association strength
- * for co-change, the fixed import/ref base weights), distance 1 — a deleted module's blast
- * is dominated by its direct importers anyway.
+ * Weight the raw edges `updateCodeGraph` captured for DELETED files into per-file neighbor
+ * entries (association strength for co-change, the fixed import/ref base weights, distance
+ * 1 — a deleted module's blast is dominated by its direct importers anyway). Pure: the
+ * capture happens inside the update's own Kùzu open (re-opening the same dir in one
+ * process SIGSEGVs).
  */
-async function captureDeletedNeighbors(graphDir: string, deleted: string[]): Promise<Map<string, NeighborEntry[]>> {
-  const db = new CodeGraphDB(graphDir);
-  try {
-    const [co, imp, refs] = await Promise.all([
-      getCoChangeEdges(db, deleted),
-      getImportEdges(db, deleted),
-      getRefEdges(db, deleted),
-    ]);
-    const coDeg = await getCoChangeDegrees(db, [...new Set(co.flatMap((e) => [e.src, e.dst]))]);
-    const deletedSet = new Set(deleted);
-    const best = new Map<string, Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>>();
-    const add = (src: string, dst: string, w: number, via: NeighborEntry['via'][number]): void => {
-      if (deletedSet.has(dst) || w <= 0) return;
-      const perFile = best.get(src) ?? new Map();
-      const cur = perFile.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
-      cur.score = Math.max(cur.score, Math.min(1, w));
-      cur.via.add(via);
-      perFile.set(dst, cur);
-      best.set(src, perFile);
-    };
-    for (const e of co) add(e.src, e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
-    for (const e of imp) add(e.src, e.dst, 0.4, 'import');
-    for (const e of refs) add(e.src, e.dst, 0.5, 'precise-ref');
-    const out = new Map<string, NeighborEntry[]>();
-    for (const [src, perFile] of best) {
-      out.set(src, [...perFile].map(([id, v]) => ({
-        node: { id, label: 'File' as const, props: { path: id } },
-        score: v.score,
-        via: [...v.via],
-        distance: 1,
-      })));
-    }
-    return out;
-  } finally {
-    await db.close();
+function weightDeletedNeighbors(raw: DeletedFileEdges): Map<string, NeighborEntry[]> {
+  const deletedSet = new Set(raw.deletedPaths);
+  const best = new Map<string, Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>>();
+  const add = (src: string, dst: string, w: number, via: NeighborEntry['via'][number]): void => {
+    if (deletedSet.has(dst) || w <= 0) return;
+    const perFile = best.get(src) ?? new Map();
+    const cur = perFile.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
+    cur.score = Math.max(cur.score, Math.min(1, w));
+    cur.via.add(via);
+    perFile.set(dst, cur);
+    best.set(src, perFile);
+  };
+  const deg = (f: string, fallback: number): number => raw.coDegrees[f] ?? fallback;
+  for (const e of raw.co) add(e.src, e.dst, associationStrength(e.weight, deg(e.src, e.weight), deg(e.dst, e.weight)), 'co-change');
+  for (const e of raw.imports) add(e.src, e.dst, 0.4, 'import');
+  for (const e of raw.refs) add(e.src, e.dst, 0.5, 'precise-ref');
+  const out = new Map<string, NeighborEntry[]>();
+  for (const [src, perFile] of best) {
+    out.set(src, [...perFile].map(([id, v]) => ({
+      node: { id, label: 'File' as const, props: { path: id } },
+      score: v.score,
+      via: [...v.via],
+      distance: 1,
+    })));
   }
+  return out;
 }
 
 // --- deleted-neighbors sidecar -----------------------------------------------------------
