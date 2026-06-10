@@ -51,6 +51,9 @@ recency      = 0.5 ^ (ageSec / (halfLifeDays · 86400))   // halfLifeDays ≤ 0 
 sizeFactor   = 1 / (n − 1)                               // 2-file commit = strong evidence; 25-file ≈ noise
 ```
 
+Generated artifacts (`isGeneratedArtifact`, `@plex/core`) are filtered from each commit's
+file list **before** `n` is counted — a 2-source-file commit that also regenerates
+`pnpm-lock.yaml` is n=2 evidence, not n=3.
 Age is clamped `Math.max(0, now − ts)` (future-dated commits contribute 1, never > 1).
 Pairs with `count < minPairCount` are dropped — kills singleton N² noise. Defaults
 (`@plex/core` `defaultConfig.coChange`): `maxCommitFiles: 25`, `halfLifeDays: 365`,

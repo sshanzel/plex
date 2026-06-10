@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { CoChangeConfig } from '@plex/core';
+import { isGeneratedArtifact, type CoChangeConfig } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
@@ -57,7 +57,7 @@ async function discoverFiles(root: string): Promise<string[]> {
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
         await walk(full);
-      } else if (e.isFile() && isSupportedSource(e.name) && !e.name.endsWith('.d.ts')) {
+      } else if (e.isFile() && isSupportedSource(e.name) && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
         out.push(full);
       }
     }

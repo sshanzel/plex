@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { aggregateCoChange, parseNameStatus, resolveRenameArtifact, type CommitRecord } from './co-change';
 
+describe('aggregateCoChange — generated artifacts', () => {
+  it('excludes lockfiles from the commit BEFORE the size factor and pairs', () => {
+    const commits: CommitRecord[] = [
+      { tsSec: 1_000_000, files: ['src/a.ts', 'src/b.ts', 'pnpm-lock.yaml'] },
+    ];
+    const pairs = aggregateCoChange(commits, opts);
+    // n = 2 after the filter → the a-b pair gets full 1/(2-1) weight, and no lockfile pairs exist.
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toMatchObject({ a: 'src/a.ts', b: 'src/b.ts', weight: 1 });
+  });
+});
+
 describe('resolveRenameArtifact', () => {
   it('passes plain paths through untouched', () => {
     expect(resolveRenameArtifact('src/db.ts')).toBe('src/db.ts');

@@ -20,7 +20,11 @@ also carries the small `gh` write path (posting a review back to a PR, ADR-34).
 
 ## The logic
 
-**Normalization (`normalizeUnifiedDiff`, pure).** Each parsed file becomes a `DiffFile`:
+**Normalization (`normalizeUnifiedDiff`, pure).** Generated artifacts (lockfiles,
+`*.min.*`, source maps, snapshots — `isGeneratedArtifact`, `@plex/core`) are **dropped
+here, at the single entry point**: they never reach the review context, the deterministic
+runner, or the brain's bookkeeping; `addedTextByFile` skips them too (a regenerated
+lockfile is never embedded). Each surviving parsed file becomes a `DiffFile`:
 
 - `path` = the to-side unless it's `/dev/null` (then the from-side); `oldPath` only when
   it's a real rename.

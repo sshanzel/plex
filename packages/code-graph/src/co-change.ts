@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isGeneratedArtifact } from '@plex/core';
 import { isSupportedSource } from './extract-ts';
 
 const pexec = promisify(execFile);
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 
-const isIndexable = (p: string): boolean => isSupportedSource(p) && !p.endsWith('.d.ts');
+const isIndexable = (p: string): boolean =>
+  isSupportedSource(p) && !p.endsWith('.d.ts') && !isGeneratedArtifact(p);
 
 export interface CommitRecord {
   /** Author/commit time in seconds since epoch. */
@@ -49,7 +51,10 @@ export function aggregateCoChange(commits: CommitRecord[], opts: AggregateOption
   const acc = new Map<string, { a: string; b: string; weight: number; count: number }>();
 
   for (const commit of commits) {
-    const files = [...new Set(commit.files)];
+    // Generated artifacts (lockfiles, bundles) are excluded BEFORE the size factor: a
+    // 2-source-file commit that also regenerates pnpm-lock.yaml is n=2 evidence, not n=3 —
+    // the lockfile rides along mechanically and would dilute every real pair's weight.
+    const files = [...new Set(commit.files)].filter((f) => !isGeneratedArtifact(f));
     const n = files.length;
     if (n < 2 || n > opts.maxCommitFiles) continue;
 

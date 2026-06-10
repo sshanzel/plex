@@ -18,7 +18,8 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
 - `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) and `CompletionProvider`
   (offline mining only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
   null-on-failure so callers degrade instead of failing), `cosineSimilarity`,
-  `cosineBackground`/`adaptiveFloor` (anisotropy-aware thresholds,
+  `isGeneratedArtifact` (lockfiles/minified bundles/source maps/snapshots — the
+  ignore-list every ingestion edge applies), `cosineBackground`/`adaptiveFloor` (anisotropy-aware thresholds,
   [`docs/design/tuning.md`](../../docs/design/tuning.md) §6), `slugify`, `hashId`.
 - `src/errors.ts` — `RepoBusyError` + `isLockError`: translate Kùzu's single-writer file-lock
   IOException into an actionable message.

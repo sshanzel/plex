@@ -45,7 +45,9 @@ Lines are 1-based via `getLineAndCharacterOfPosition`. `scriptKind` maps the ext
 
 ## The runner (`src/runner.ts`)
 
-For each diff file (skipping `status === 'deleted'` and unsupported extensions):
+For each diff file (skipping `status === 'deleted'`, unsupported extensions, and generated
+artifacts — a `.min.js` IS a supported extension, so the `isGeneratedArtifact` skip is
+belt-and-suspenders for hand-built diffs; normalization already drops them):
 
 1. Read the file's **current text from disk** (`repoPath + file.path`) — not the diff hunks; a read
    failure (file missing on disk) skips the file silently.

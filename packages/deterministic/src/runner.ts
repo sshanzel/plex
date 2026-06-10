@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Finding, NormalizedDiff, LineRange } from '@plex/core';
+import { isGeneratedArtifact, type Finding, type NormalizedDiff, type LineRange } from '@plex/core';
 import { analyzeSource, isSupportedSource, type RawFinding } from './builtin';
 
 export interface DeterministicOptions {
@@ -36,7 +36,7 @@ async function listSourceFiles(root: string, cap: number): Promise<string[]> {
     for (const e of entries) {
       if (e.isDirectory()) {
         if (!e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) queue.push(path.join(dir, e.name));
-      } else if (isSupportedSource(e.name) && !e.name.endsWith('.d.ts')) {
+      } else if (isSupportedSource(e.name) && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
         out.push(path.join(dir, e.name));
         if (out.length >= cap) break;
       }
@@ -103,7 +103,9 @@ export async function runDeterministic(
   const out: Finding[] = [];
 
   for (const f of diff.files) {
-    if (f.status === 'deleted' || !isSupportedSource(f.path)) continue;
+    // Generated artifacts are dropped at diff normalization, but this runner is also called
+    // with hand-built diffs — keep the belt-and-suspenders skip (a .min.js IS "supported").
+    if (f.status === 'deleted' || !isSupportedSource(f.path) || isGeneratedArtifact(f.path)) continue;
     let text: string;
     try {
       text = await fs.readFile(path.join(repoPath, f.path), 'utf8');

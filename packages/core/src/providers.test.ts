@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cosineSimilarity, slugify, hashId, safeEmbed, cosineBackground, adaptiveFloor, type EmbeddingProvider } from './providers';
+import { cosineSimilarity, slugify, hashId, safeEmbed, cosineBackground, adaptiveFloor, type EmbeddingProvider, isGeneratedArtifact } from './providers';
 
 // Anisotropy-aware thresholds: measure a batch's baseline cosine, then raise a fixed suppression
 // cutoff UPWARD only (never below the hand-tuned floor — the safe direction). (m: tuning.md §6.)
@@ -79,6 +79,26 @@ describe('safeEmbed', () => {
 
 // slugify + hashId build collision-free ids for pitfalls/incidents. The hash is what
 // rescues distinct-but-same-slug (or empty-slug) titles from colliding.
+describe('isGeneratedArtifact', () => {
+  it('matches lockfiles by basename, case-insensitively, anywhere in the tree', () => {
+    for (const f of ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'Gemfile.lock', 'go.sum', 'apps/web/pnpm-lock.yaml']) {
+      expect(isGeneratedArtifact(f)).toBe(true);
+    }
+  });
+
+  it('matches minified bundles, source maps, and snapshots', () => {
+    for (const f of ['vendor/lib.min.js', 'dist-src/app.min.css', 'src/app.js.map', '__snapshots__/a.test.ts.snap']) {
+      expect(isGeneratedArtifact(f)).toBe(true);
+    }
+  });
+
+  it('never matches real source or config', () => {
+    for (const f of ['src/lock.ts', 'src/minify.js', 'package.json', 'src/sum.go', 'docs/lockfiles.md', 'src/map.ts']) {
+      expect(isGeneratedArtifact(f)).toBe(false);
+    }
+  });
+});
+
 describe('slugify', () => {
   it('lowercases, collapses non-alphanumerics to dashes, trims, and caps length', () => {
     expect(slugify('Always validate Tenant ID!')).toBe('always-validate-tenant-id');
