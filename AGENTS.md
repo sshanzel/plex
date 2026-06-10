@@ -119,9 +119,11 @@ the general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel
 (npm) ship in **lockstep**: publishing a new npm version reaches no one until the plugin's pin is
 bumped, and updating the plugin delivers the matching engine. The exact pin also dodges npx's stale
 `latest` cache (a new version = a new spec = a fresh fetch). **Releasing:** `pnpm release
-<patch|minor|major|X.Y.Z>` does the lockstep dance — gates (typecheck/test/e2e) → bump BOTH
-`package.json` and the `plugin/.mcp.json` pin → commit + tag → `npm publish` → push → `gh release`
-(run it locally; `npm publish` needs your auth/OTP). An un-bumped pin would leave users on the old
+<patch|minor|major|X.Y.Z>` does the lockstep dance — deterministic gates (typecheck/test/build) →
+bump BOTH `package.json` and the `plugin/.mcp.json` pin → commit + tag → `npm publish` → push →
+`gh release` (run it locally; `npm publish` needs your auth/OTP). The gate skips the kuzu-native
+E2Es (known ~1-in-N indexing flake) since CI runs them on every push — so the release command stays
+reliable. An un-bumped pin would leave users on the old
 engine even after a plugin update, which is exactly the step the script keeps you from forgetting.
 
 ## Local services (must remember)

@@ -10,9 +10,14 @@
  *   pnpm release <patch|minor|major|X.Y.Z> [--skip-tests] [--dry-run]
  *
  * `npm publish` needs your npm auth (and an OTP under 2FA), so run this LOCALLY, never in CI.
- * Steps: preflight (clean tree, on main, tag free, pin present) → gates (typecheck, test, e2e) →
+ * Steps: preflight (clean tree, on main, tag free, pin present) → gates (typecheck, test, build) →
  * bump package.json + plugin/.mcp.json → commit + tag → npm publish (prepack rebuilds) →
  * push (commit + tag) → gh release create --generate-notes.
+ *
+ * The gate is intentionally DETERMINISTIC: it omits the kuzu-native E2Es (`pnpm test:e2e`), which
+ * carry a known intermittent ~1-in-N indexing crash (see scripts/worktree-seed-check.mjs). Those run
+ * in CI on every push, so a release cut from a pushed, CI-green commit is already E2E-covered —
+ * re-running them here would only make `pnpm release` flaky without adding real safety.
  */
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -61,8 +66,8 @@ if (tagExists) die(`tag ${tag} already exists`);
 if (!pinRe.test(readFileSync(mcpPath, 'utf8'))) die(`no @sshanzel/plex@<version> pin found in plugin/.mcp.json`);
 
 // --- gates (what CI runs) ---
-if (skipTests) console.log('⚠ --skip-tests: skipping typecheck/test/e2e\n');
-else { sh('pnpm typecheck'); sh('pnpm test'); sh('pnpm test:e2e'); }
+if (skipTests) console.log('⚠ --skip-tests: skipping typecheck/test/build gates\n');
+else { sh('pnpm typecheck'); sh('pnpm test'); sh('pnpm build'); }
 
 if (dryRun) {
   console.log(`\n✓ DRY RUN ok — would bump to ${next}, commit, tag ${tag}, npm publish, push, gh release.\n`);
