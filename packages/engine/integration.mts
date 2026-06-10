@@ -621,7 +621,8 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
       const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i]!);
 
       const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
-      assert.equal(accepted, 1, `only the bug is auto-accepted; the awareness flag is skipped (got ${accepted})`);
+      assert.equal(accepted.length, 1, `only the bug is auto-accepted; the awareness flag is skipped (got ${accepted.length})`);
+      assert.ok(accepted[0]!.matchedBy === 'semantic' || accepted[0]!.matchedBy === 'locality', 'the accept names which signal matched');
       const remaining = (await brain.loadRoundState(target)).priorFindings;
       assert.equal(remaining.length, 1, 'the awareness flag stays open for an explicit acknowledge');
       assert.equal(remaining[0]!.severity, 'awareness', 'and it is the awareness one that remains');

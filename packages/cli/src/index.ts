@@ -290,6 +290,11 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
       process.stdout.write(`  ${res.reason}\n`); // always explain the outcome — esp. why accepted is 0
+      // The audit trail: WHAT was accepted and WHICH signal matched — a locality false-accept
+      // should be visible here, not a silent disappearance from the stream.
+      for (const a of res.acceptedFindings ?? []) {
+        process.stdout.write(`  ✓ ${a.title} (${a.file ?? '?'}:${a.line ?? '?'} — ${a.matchedBy})\n`);
+      }
       return 0;
     }
     case 'eval': {

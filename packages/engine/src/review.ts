@@ -40,7 +40,7 @@ import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady } from './knowledge';
-import { recordFixAccepts } from './reconcile';
+import { recordFixAccepts, type AcceptedFix } from './reconcile';
 
 /**
  * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
@@ -224,6 +224,9 @@ export interface ReviewContext {
   unexplainedChanges?: AttributedChange[];
   /** PR-thread comments ingested this round (facts). */
   openComments?: PrComment[];
+  /** Prior-round findings auto-accepted as FIXED by this round's changes (ADR-28) — facts,
+   *  each naming the signal that matched (`semantic` | `locality`) so auto-accepts are auditable. */
+  inferredAccepts?: import('./reconcile').AcceptedFix[];
   /**
    * Parallel-review advice (parallel-review.md): `single` (one reviewer) or `parallel` (fan
    * out one reviewer per coupled cluster — the `units`), decided from the coupling graph. The
@@ -292,7 +295,7 @@ interface BrainContext {
   unexplainedChanges: AttributedChange[];
   openComments: PrComment[];
   /** Prior findings auto-accepted this round because a change addressed them (ADR-28). */
-  inferredOutcomes: number;
+  inferredAccepts: AcceptedFix[];
 }
 
 /**
@@ -339,7 +342,7 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
     // accept-loop the responder's `reconcile` would — `priorFindings` is already filtered to
     // un-outcomed findings (brain.ts), so neither path double-accepts the other's.
     let unexplainedChanges: AttributedChange[] = [];
-    let inferredOutcomes = 0;
+    let inferredAccepts: AcceptedFix[] = [];
     if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
       const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
       if (changed.length > 0) {
@@ -375,13 +378,13 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
           }
         }
         // Always run fix inference — locality reconciles restructuring fixes with no provider (ADR-30).
-        inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
+        inferredAccepts = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
       }
     }
 
     await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef }, comments);
 
-    return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredOutcomes };
+    return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredAccepts };
   } finally {
     await brain.close();
   }
@@ -507,6 +510,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     priorRounds: brain.priorRounds,
     unexplainedChanges: brain.unexplainedChanges,
     openComments: brain.openComments,
+    inferredAccepts: brain.inferredAccepts.length > 0 ? brain.inferredAccepts : undefined,
     reviewPlan: plan,
     notes: [
       ...AGENT_NOTES,
