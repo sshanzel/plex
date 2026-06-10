@@ -15,7 +15,7 @@ packages/
   code-graph/    Kùzu per-repo graph: TS symbols/imports + git co-change   [M1]
   neighborhood/  diff→symbols→blast radius (Kùzu) [M1]
   findings/      merge / dedup / rank / triage                            [M2]
-  deterministic/ Semgrep / ast-grep runner                                [M2]
+  deterministic/ built-in TS-AST codified checks                          [M2]
   knowledge/     knowledge graph + retrieval + plex.md                [M3]
   mcp-server/    MCP tool surface + orchestration
   cli/           `reviewer index | review`                                [M1]
@@ -136,6 +136,7 @@ plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex
 - **Pure core, impure edges:** keep scoring/ranking/co-change math as pure functions (unit-tested without I/O); isolate git/Kùzu calls at the boundaries.
 - **Tests prefer real fixtures:** diff/graph tests build a throwaway git repo + in-memory/temp Kùzu DB rather than synthetic strings (a hand-written multi-file diff already fooled `parse-diff` once — see M0 notes).
 - **Provenance is mandatory** on knowledge: every Pitfall links its source Incidents; every graph edge carries `provenance` + `weight`.
+- **Quality floors are part of the test suite** ([`docs/design/evals.md`](docs/design/evals.md)): `ranking-quality.test.ts` and `retrieval-quality.test.ts` assert nDCG/recall floors over frozen labeled corpora. A change that trips a floor is a finding about the change — don't lower the floor to pass; a change that raises the score should ratchet the floor up in the same commit.
 - **Document as you go:** each milestone gets a `docs/milestones/MN.md` (intent → acceptance criteria → what was built → verification). New decisions/deviations get an ADR. This is the user's explicit "always check we did what we intended" requirement — honor it.
 
 ## Must-remember invariants (easy to get wrong)
@@ -158,7 +159,7 @@ plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex
 
 Incremental cursor lives at `~/.plex/repos/<id>/mining-state.json` (in-repo at `.plex/mining-state.json` only with the `PLEX_DATA_DIR=.plex` opt-in). Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
 
-**Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so `fixed`/`reverted` (and the `reverted: 1.5` weight) are unrealized. Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
+**Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so mining never produces `fixed`/`reverted` (the `outcomeWeight` table — accepted/fixed 1, reverted 1.5 — IS applied in knowledge consolidation; it bites only on review-driven incidents until mining emits richer outcomes). Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
 
 ## Scope
 

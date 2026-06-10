@@ -64,4 +64,18 @@ describe('runDeterministic', () => {
     const def = await runDeterministic(repo, diff(file()));
     expect(def[0]!.location.repo).toBe(join(repo).split('/').pop());
   });
+
+  it('stamps MEASURED rule prevalence: fraction of sampled files with a hit (ADR-05)', async () => {
+    // 4 source files, 2 of them console-logging → no-console prevalence 0.5.
+    writeFileSync(join(repo, 'src/b.ts'), "console.log('more debug');\n");
+    writeFileSync(join(repo, 'src/c.ts'), 'export const clean = 1;\n');
+    writeFileSync(join(repo, 'src/d.ts'), 'export const alsoClean = 2;\n');
+    const out = await runDeterministic(repo, diff(file()));
+    expect(out[0]!.prevalence).toBeCloseTo(0.5, 5);
+  });
+
+  it('skips the prevalence scan when disabled', async () => {
+    const out = await runDeterministic(repo, diff(file()), { rulePrevalence: false });
+    expect(out[0]!.prevalence).toBeUndefined();
+  });
 });

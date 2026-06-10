@@ -159,10 +159,18 @@ export async function computeNeighborhood(
   const changedFileIds: string[] = [];
 
   for (const f of diff.files) {
-    if (f.status === 'deleted') continue;
     const id = f.path;
     if (!(await fileExists(db, id))) continue;
     changedFileIds.push(id);
+
+    // A DELETED file is blast signal, not silence: its dependents now import a missing
+    // module. The graph (indexed pre-deletion) still has the node and its edges, so keep
+    // it as a PPR seed — the walk pulls the dependents into the radius. It has no
+    // newRanges/symbols to record beyond a file-level marker.
+    if (f.status === 'deleted') {
+      changed.push({ repo, file: id, startLine: 1, endLine: 1 });
+      continue;
+    }
 
     const ranges = f.hunks.flatMap((h) => h.newRanges);
     const touched = symbolsTouchedByRanges(await getSymbolsInFile(db, id), ranges);

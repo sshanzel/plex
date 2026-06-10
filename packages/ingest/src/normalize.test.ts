@@ -103,6 +103,27 @@ describe('normalizeUnifiedDiff', () => {
     expect(d.files).toEqual([]);
     expect(d.headRef).toBe('feat');
   });
+
+  it('drops generated artifacts (lockfiles) at the entry point — never reviewed', () => {
+    const LOCKFILE = `diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 1111111..2222222 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1,3 +1,4 @@
+ lockfileVersion: '9.0'
++  added-dep: 1.0.0
+ settings:
+   autoInstallPeers: true
+`;
+    const d = normalizeUnifiedDiff(LOCKFILE, 'main');
+    expect(d.files).toEqual([]);
+    expect(d.generatedPaths).toEqual(['pnpm-lock.yaml']); // the FACT survives (supply-chain signal)
+    expect(addedTextByFile(LOCKFILE)).toEqual([]); // and never embedded for attribution
+    // a source file is untouched by the filter (and carries no generatedPaths)
+    const clean = normalizeUnifiedDiff(SINGLE, 'main');
+    expect(clean.files).toHaveLength(1);
+    expect(clean.generatedPaths).toBeUndefined();
+  });
 });
 
 describe('addedTextByFile', () => {

@@ -60,10 +60,10 @@ After that, reviews use the cached graph and refresh only what changed. (If you 
 
 Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
 
-- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality.
-- **With a key:** all of that, plus the knowledge layer. Plex pulls relevant past pitfalls into each review, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
+- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality, you can still seed `plex.md` guidance into the knowledge base, and stored pitfalls are still retrieved — by keyword match rather than semantically.
+- **With a key:** all of that, plus the full knowledge layer. Plex pulls relevant past pitfalls into each review *semantically*, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
 
-So add one: run `npx @sshanzel/plex init`, or just create `~/.plex/config.json` yourself:
+So add one: run `npx @sshanzel/plex init`, create `~/.plex/config.json` yourself, or set the environment variable pair (`PLEX_EMBEDDING_PROVIDER=voyage` + the provider's key, e.g. `VOYAGE_API_KEY` — env overrides the file):
 
 ```json
 { "embedding": { "provider": "voyage", "apiKey": "YOUR_KEY" } }
@@ -110,7 +110,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
         ▼  record_outcome (accept / reject / waive / acknowledge)  →  knowledge sharpens
 ```
 
-**Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST checks, plus optional Semgrep or ast-grep). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
+**Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST rules). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
 
 **Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling, its repo-scoped pitfalls, and its `plex.md` instructions; it tailors the review to one codebase.
 

@@ -34,4 +34,20 @@ describe('reviewContextToHtml', () => {
     expect(html).toContain('c.ts\\n0.42'); // label is `<path>\n<score.toFixed(2)>`
     expect(html).toContain('co-change,import'); // via joined onto the edge label
   });
+
+  it('escapes interpolated markup (repo/ref are user data) and the JSON payload', () => {
+    const hostile = {
+      repo: '"><script>alert(1)</script>',
+      baseRef: "feat/<img onerror='x'>",
+      changed: [{ file: 'a</script><script>.ts' }],
+      blastRadius: [],
+    } as unknown as ReviewContext;
+    const out = reviewContextToHtml(hostile);
+    expect(out).not.toContain('<script>alert(1)</script>');
+    expect(out).toContain('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(out).toContain('feat/&lt;img onerror=&#39;x&#39;&gt;');
+    // the file path inside the JSON payload cannot close the script block
+    expect(out).not.toContain('a</script>');
+    expect(out).toContain('a\\u003c/script>'); // `<` alone is enough to prevent the breakout
+  });
 });

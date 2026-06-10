@@ -1,7 +1,65 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateCoChange, type CommitRecord } from './co-change';
+import { aggregateCoChange, parseNameStatus, resolveRenameArtifact, type CommitRecord } from './co-change';
+
+describe('aggregateCoChange — generated artifacts', () => {
+  it('excludes lockfiles from the commit BEFORE the size factor and pairs', () => {
+    const commits: CommitRecord[] = [
+      { tsSec: 1_000_000, files: ['src/a.ts', 'src/b.ts', 'pnpm-lock.yaml'] },
+    ];
+    const pairs = aggregateCoChange(commits, opts);
+    // n = 2 after the filter → the a-b pair gets full 1/(2-1) weight, and no lockfile pairs exist.
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]).toMatchObject({ a: 'src/a.ts', b: 'src/b.ts', weight: 1 });
+  });
+});
+
+describe('resolveRenameArtifact', () => {
+  it('passes plain paths through untouched', () => {
+    expect(resolveRenameArtifact('src/db.ts')).toBe('src/db.ts');
+  });
+
+  it('resolves the plain rename form to the new path', () => {
+    expect(resolveRenameArtifact('src/old.ts => src/new.ts')).toBe('src/new.ts');
+  });
+
+  it('resolves the brace form WITHOUT dropping the shared prefix', () => {
+    expect(resolveRenameArtifact('packages/{old => new}/src/file.ts')).toBe('packages/new/src/file.ts');
+  });
+
+  it('handles an empty new segment (a directory level removed)', () => {
+    expect(resolveRenameArtifact('packages/{nested => }/file.ts')).toBe('packages/file.ts');
+  });
+
+  it('a root-position emptied segment leaves no leading slash (ids are repo-relative)', () => {
+    expect(resolveRenameArtifact('{src => }/file.ts')).toBe('file.ts');
+  });
+});
 
 const opts = { maxCommitFiles: 25, halfLifeDays: 365, minPairCount: 1, nowSec: 1_000_000 };
+
+describe('parseNameStatus', () => {
+  it('classifies adds, deletes, modifies, renames, and copies', () => {
+    const out = [
+      'A\tsrc/new.ts',
+      'M\tsrc/mod.ts',
+      'D\tsrc/gone.ts',
+      'R095\tsrc/old.ts\tsrc/renamed.ts',
+      'C080\tsrc/source.ts\tsrc/copy.ts', // emitted when copy detection is on (diff.renames=copies)
+      'M\treadme.md', // not indexable — dropped
+    ].join('\n');
+    expect(parseNameStatus(out)).toEqual({
+      added: ['src/new.ts', 'src/renamed.ts', 'src/copy.ts'],
+      modified: ['src/mod.ts'],
+      deleted: ['src/gone.ts', 'src/old.ts'],
+    });
+  });
+
+  it('a copy never marks its unchanged source as modified', () => {
+    const res = parseNameStatus('C100\tsrc/source.ts\tsrc/copy.ts');
+    expect(res.modified).toEqual([]);
+    expect(res.added).toEqual(['src/copy.ts']);
+  });
+});
 
 describe('aggregateCoChange', () => {
   it('weights small commits more than large ones (sizeFactor)', () => {

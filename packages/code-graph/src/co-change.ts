@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isGeneratedArtifact } from '@plex/core';
 import { isSupportedSource } from './extract-ts';
 
 const pexec = promisify(execFile);
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 
-const isIndexable = (p: string): boolean => isSupportedSource(p) && !p.endsWith('.d.ts');
+const isIndexable = (p: string): boolean =>
+  isSupportedSource(p) && !p.endsWith('.d.ts') && !isGeneratedArtifact(p);
 
 export interface CommitRecord {
   /** Author/commit time in seconds since epoch. */
@@ -49,7 +51,10 @@ export function aggregateCoChange(commits: CommitRecord[], opts: AggregateOption
   const acc = new Map<string, { a: string; b: string; weight: number; count: number }>();
 
   for (const commit of commits) {
-    const files = [...new Set(commit.files)];
+    // Generated artifacts (lockfiles, bundles) are excluded BEFORE the size factor: a
+    // 2-source-file commit that also regenerates pnpm-lock.yaml is n=2 evidence, not n=3 —
+    // the lockfile rides along mechanically and would dilute every real pair's weight.
+    const files = [...new Set(commit.files)].filter((f) => !isGeneratedArtifact(f));
     const n = files.length;
     if (n < 2 || n > opts.maxCommitFiles) continue;
 
@@ -92,6 +97,22 @@ const RECORD = '';
  * co-change — ADR-26). Merge commits are excluded. This is the only impure part of
  * co-change.
  */
+/**
+ * Resolve a rename artifact from git's path output to the NEW path. Pure. Handles both the
+ * plain form (`old.ts => new.ts`) and the brace form (`dir/{old => new}/file.ts`, where the
+ * shared prefix/suffix sit OUTSIDE the braces — the old strip regex dropped that prefix).
+ * Defensive: `git log --name-only` without -M emits plain paths today, but a `-M`/config
+ * change must not silently corrupt co-change file ids.
+ */
+export function resolveRenameArtifact(line: string): string {
+  if (!line.includes(' => ')) return line;
+  return line
+    .replace(/\{([^{}]*) => ([^{}]*)\}/g, '$2') // brace segments → the new segment
+    .replace(/^.* => /, '') // plain "old => new" (no braces left) → the new path
+    .replace(/\/{2,}/g, '/') // an empty new segment ("{old => }") leaves a doubled slash
+    .replace(/^\//, ''); // …and a root-position one leaves a leading slash — ids are repo-relative
+}
+
 export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {
   const args = ['log', '--no-merges', '--name-only', `--pretty=format:${RECORD}%ct`];
   if (maxCommits > 0) args.push('-n', String(maxCommits));
@@ -105,9 +126,7 @@ export async function readCommits(cwd: string, maxCommits: number, sinceRef?: st
       current = { tsSec: Number(line.slice(1)) || 0, files: [] };
       commits.push(current);
     } else if (line.trim() !== '' && current) {
-      // strip rename artifacts like "old => new" -> keep the new path
-      const file = line.includes(' => ') ? line.replace(/.*=>\s*/, '').replace(/[}]/g, '') : line;
-      current.files.push(file.trim());
+      current.files.push(resolveRenameArtifact(line).trim());
     }
   }
   return commits;
@@ -130,18 +149,8 @@ export interface ChangedFiles {
   deleted: string[];
 }
 
-/**
- * Source files changed since `sha` (`git diff --name-status -M sha HEAD`). Renames split
- * into delete(old)+add(new). Returns `null` when the diff can't be computed (e.g. the sha
- * is no longer in history after a force-push) — the caller should fall back to a full build.
- */
-export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
-  let stdout: string;
-  try {
-    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
-  } catch {
-    return null;
-  }
+/** Parse `git diff --name-status` output into added/modified/deleted. Pure (unit-tested). */
+export function parseNameStatus(stdout: string): ChangedFiles {
   const added: string[] = [];
   const modified: string[] = [];
   const deleted: string[] = [];
@@ -154,6 +163,13 @@ export async function changedSourceFilesSince(cwd: string, sha: string): Promise
       const newP = parts[2];
       if (oldP && isIndexable(oldP)) deleted.push(oldP);
       if (newP && isIndexable(newP)) added.push(newP);
+    } else if (status.startsWith('C')) {
+      // Copy (emitted when the user's gitconfig enables copy detection, e.g.
+      // diff.renames=copies): the source is untouched; index only the new path. The old
+      // else-branch mis-filed these — parts[1] is the UNCHANGED source (landed in
+      // `modified`) and the new copy was dropped entirely.
+      const newP = parts[2];
+      if (newP && isIndexable(newP)) added.push(newP);
     } else {
       const p = parts[1];
       if (!p || !isIndexable(p)) continue;
@@ -163,6 +179,22 @@ export async function changedSourceFilesSince(cwd: string, sha: string): Promise
     }
   }
   return { added, modified, deleted };
+}
+
+/**
+ * Source files changed since `sha` (`git diff --name-status -M sha HEAD`). Renames split
+ * into delete(old)+add(new); copies index the new path. Returns `null` when the diff can't
+ * be computed (e.g. the sha is no longer in history after a force-push) — the caller
+ * should fall back to a full build.
+ */
+export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
+  } catch {
+    return null;
+  }
+  return parseNameStatus(stdout);
 }
 
 /** How many commits HEAD is ahead of `sha` (the graph's staleness). -1 if unknown. */

@@ -21,7 +21,7 @@ via `engine/src/reconcile.ts`. Decision log: [`docs/adr/README.md`](../../docs/a
 | `src/signal.ts` | `computeSignal` — the ranking formula and `defaultWeights` |
 | `src/rank.ts` | `rankFindings` — dedupe → signal → waivers → triage → sorted stream |
 | `src/waivers.ts` | `waiverMatches`/`isWaived` — scope matching + semantic match (ADR-27) |
-| `src/rounds.ts` | `classifyChanges` (feedback-driven vs unexplained, ADR-23); `findingAddressed[At]` (ADR-28 fix matching for reconcile/auto-accept) |
+| `src/rounds.ts` | `classifyChanges` (feedback-driven vs unexplained, ADR-23); `findingAddressed[At]` / `findingAddressMatch` (ADR-28 fix matching for reconcile/auto-accept, with the matched-signal audit trail) |
 | `src/review-plan.ts` | `partitionByCoupling` (union-find) + `reviewPlan` — single vs parallel fan-out guardrail |
 | `src/eval.ts` | nDCG ranking quality vs outcome labels + `READINESS`/`rankingReadiness` re-weight gates |
 | `src/index.ts` | Barrel |
@@ -48,7 +48,8 @@ Severity and confidence are **separate axes** (ADR-04) — they multiply; never 
 bug" into a lower severity.
 
 **Prevalence** (`Finding.prevalence`, 0..1 "how common in the repo") is *supplied*, not computed
-here — the agent passes it on `submit_findings`. It's read twice, **by severity** (ADR-05):
+here — the agent passes it on `submit_findings` for its own findings, and `@plex/deterministic`
+stamps a **measured** per-rule prevalence on codified findings. It's read twice, **by severity** (ADR-05):
 continuously in `deviation` (non-bugs only) and discretely in triage at
 `prevalenceThreshold` (default **0.5**, `rank.ts`): common + `bug` → **`systemic-migration`**
 (escalated), common + non-bug → **`convention`** (demoted). Suppression must never silence
@@ -76,8 +77,10 @@ findings have no embeddings, so only identity matching (line/file/pattern/catego
 — adapted **upward only** (`max(0.82, μ + 3σ)`) so an anisotropic embedding model suppresses *less*,
 never more.
 
-**Round matching (ADR-28, `rounds.ts`) — what reconcile runs.** `findingAddressedAt` says a prior
-finding was fixed when EITHER:
+**Round matching (ADR-28, `rounds.ts`) — what reconcile runs.** `findingAddressMatch` says a prior
+finding was fixed — and by WHICH signal (`'semantic' | 'locality'`, the auto-accept audit trail
+surfaced as reconcile's `acceptedFindings` / the review context's `inferredAccepts`);
+`findingAddressedAt` is its boolean wrapper. A finding counts as addressed when EITHER:
 1. **Semantic** — some changed region's content has `cosine ≥ semanticThreshold` (default **0.6**;
    engine adapts upward via `adaptiveFloor`) to the finding title. Catches relocated/cross-file fixes.
 2. **Locality** — the finding's own file changed and its line falls in
@@ -109,7 +112,9 @@ ranking re-weight: ≥25 evaluable rounds, ≥50 positives (EPV ≈10×5 feature
   `deviation = 1` *and* escalate to `systemic-migration` — never demoted/silenced by being common.
 - **Deterministic findings flow through the same `rankFindings` stream** — dedupe corroborates an
   agent finding at the same file:line:title (noisy-OR bumps confidence, `agreedSources` grows).
-- The locality window is a hard-won **±5** — see the `rounds.ts` comment before widening it.
+- The locality window is a hard-won **±5** — a deliberate KEEP (revisited): the residual
+  clustered-findings false-accept risk is mitigated by the surfaced `matchedBy` audit trail,
+  not by tightening (tighter re-opens the missed-fix class). See the `rounds.ts` comment.
 - Keep this package **pure** (root "pure core, impure edges" convention): embedding/git/Kùzu happen
   in `packages/engine`; new logic here must be testable with literal vectors.
 - Default `semanticThreshold` of 1.01 in `waiverMatches` is intentional — it disables semantic

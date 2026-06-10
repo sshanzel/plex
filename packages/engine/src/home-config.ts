@@ -5,7 +5,7 @@ import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
 
 /**
  * Persistent global config at `~/.plex/config.json` — written by `plex init`, read by the
- * MCP server and CLI, so a user enters their FalkorDB URL + embedding key **once** instead
+ * MCP server and CLI, so a user enters their embedding key **once** instead
  * of per-MCP-registration. Env vars still override it. The file is chmod 600 (it can hold
  * an API key); the key never enters `ReviewerConfig` serialization paths beyond the
  * embedding provider that needs it.

@@ -18,12 +18,15 @@ couplings that imports miss; no single edge source is trusted alone.
 
 ## The algorithm (`src/compute.ts`)
 
-**1. Changed symbols.** For each non-deleted diff file that has a graph node
+**1. Changed symbols.** For each diff file that has a graph node
 (`fileExists` — a brand-new file has no node until reindex, a known blind spot noted to
 the agent), intersect the hunks' `newRanges` with the file's symbol spans
 (`symbolsTouchedByRanges`, inclusive 1-based overlap). Touched symbols become
 `CodeLocation`s; if no symbol overlaps, the whole changed span (min start … max end) is
-recorded file-level.
+recorded file-level. **Deleted files stay seeds**: their node + edges are still in the
+(pre-deletion) graph, so the walk surfaces their dependents — deleting a widely-imported
+module is the strongest breakage signal, not an empty radius (a file-level `1..1` marker
+is recorded as the changed location).
 
 **2. Edge weighting.** The walk's `expand(frontier)` closure fetches the frontier's
 undirected co-change/import/ref edges plus co-change degrees, and weights them:
@@ -74,9 +77,9 @@ history for every knob: `docs/design/tuning.md` §blast-radius.
   `aggregateCoChange` (halfLife ≤ 0).
 - `associationStrength` clamps with `max(co, deg)` and `min(1, …)` so a stale/mis-reported
   degree below the pair weight can never push a score above 1.
-- Deleted files are excluded as seeds; files absent from the graph contribute nothing —
-  a stale graph silently shrinks the radius, which is why reviews auto-refresh on drift
-  (ADR-25).
+- Deleted files SEED the walk (their pre-deletion node/edges surface dependents); files
+  absent from the graph contribute nothing — a stale graph silently shrinks the radius,
+  which is why reviews auto-refresh on drift (ADR-25).
 - The walk is bounded three ways: `maxHops` iterations, `minScore` floor, `maxNeighbors`
   cap — all three matter on big monorepos.
 

@@ -1,7 +1,7 @@
 export { CodeGraphDB } from './db';
 export { initSchema, DDL } from './schema';
 export { buildCodeGraph, updateCodeGraph, FullRebuildRequired } from './build';
-export type { BuildOptions, BuildResult, UpdateResult } from './build';
+export type { BuildOptions, BuildResult, UpdateResult, DeletedFileEdges } from './build';
 export {
   extractFromSource,
   resolveRelativeImport,

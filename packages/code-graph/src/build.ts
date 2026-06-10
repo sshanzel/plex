@@ -1,12 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { CoChangeConfig } from '@plex/core';
+import { isGeneratedArtifact, type CoChangeConfig } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
 import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince } from './co-change';
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
-import { getMeta } from './query';
+import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
 const SKIP_DIRS = new Set([
   'node_modules',
@@ -37,12 +37,26 @@ export interface BuildResult {
   commits: number;
 }
 
+/** Raw graph edges of files an update DELETED, read before their nodes were removed —
+ *  the engine weights these into the deleted-neighbors sidecar (a deleted module's
+ *  dependents must outlive its node). Raw on purpose: weighting (association strength)
+ *  lives upstream in @plex/neighborhood, which this package cannot depend on. */
+export interface DeletedFileEdges {
+  deletedPaths: string[];
+  co: { src: string; dst: string; weight: number }[];
+  imports: { src: string; dst: string }[];
+  refs: { src: string; dst: string }[];
+  coDegrees: Record<string, number>;
+}
+
 /** Outcome of an incremental update — file counts reflect only what changed (ADR-25). */
 export interface UpdateResult extends BuildResult {
   incremental: true;
   added: number;
   modified: number;
   deleted: number;
+  /** Present when the update deleted files (captured BEFORE their DETACH DELETE). */
+  deletedEdges?: DeletedFileEdges;
 }
 
 /** Reason an incremental update couldn't run and a full rebuild is required. */
@@ -57,7 +71,7 @@ async function discoverFiles(root: string): Promise<string[]> {
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
         await walk(full);
-      } else if (e.isFile() && isSupportedSource(e.name) && !e.name.endsWith('.d.ts')) {
+      } else if (e.isFile() && isSupportedSource(e.name) && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
         out.push(full);
       }
     }
@@ -224,7 +238,21 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     const fileSet = new Set(relFiles);
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
 
-    // 1. Deleted (and rename-from): remove the File node + its Symbols (and dangling edges).
+    // 1. Deleted (and rename-from): capture each file's edges FIRST — within THIS open;
+    //    re-opening the same Kùzu dir later in one process SIGSEGVs — then remove the File
+    //    node + its Symbols (and dangling edges). The engine persists the capture to the
+    //    deleted-neighbors sidecar so a deleted module's dependents stay in the blast
+    //    radius on every later review round.
+    let deletedEdges: DeletedFileEdges | undefined;
+    if (delta.deleted.length > 0) {
+      const [co, imports, refs] = await Promise.all([
+        getCoChangeEdges(db, delta.deleted),
+        getImportEdges(db, delta.deleted),
+        getRefEdges(db, delta.deleted),
+      ]);
+      const deg = await getCoChangeDegrees(db, [...new Set(co.flatMap((e) => [e.src, e.dst]))]);
+      deletedEdges = { deletedPaths: delta.deleted, co, imports, refs, coDegrees: Object.fromEntries(deg) };
+    }
     for (const rel of delta.deleted) {
       await db.run('MATCH (f:File {id:$id})-[:Declares]->(s:Symbol) DETACH DELETE s', { id: rel });
       await db.run('MATCH (f:File {id:$id}) DETACH DELETE f', { id: rel });
@@ -307,13 +335,57 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
           'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
         strong.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
-      // weak: accumulate into ALREADY-stored pairs only — never create singletons (keeps
-      // the N² denoising of ADR-06). A pair below threshold in every window stays pruned.
+      // weak: a CoChange singleton is never created from one window (ADR-06 denoising), but
+      // sub-threshold evidence is no longer FORGOTTEN between windows either. ALL weak
+      // pairs are STAGED in CoChangePending (a lane read queries never traverse); the
+      // promotion below immediately folds staged weight onto pairs that already have a
+      // real CoChange edge (the `nowStored` arm — same accumulate arithmetic, same window)
+      // and PROMOTES the rest once their cross-window total reaches minPairCount. Without
+      // the staging, a coupling landing one commit per window (e.g. a review-triggered
+      // refresh after every commit) stayed invisible until the next full rebuild. Pending
+      // resets on a full rebuild.
+      // Evict stale staged pairs FIRST (this window's staging refreshes ts below): without
+      // eviction the lane grows monotonically with every never-promoted singleton — the N²
+      // noise ADR-06 prunes — and two occurrences YEARS apart would promote at full
+      // undecayed weight. A pair that hasn't recurred within one co-change half-life would
+      // carry ~half its weight anyway; age it out of the lane on the same horizon.
+      const nowSec = Date.now() / 1000;
+      if (opts.coChange.halfLifeDays > 0) {
+        await db.run(
+          'MATCH (a:File)-[p:CoChangePending]->(b:File) WHERE p.ts IS NULL OR p.ts < $cutoff DELETE p',
+          { cutoff: nowSec - opts.coChange.halfLifeDays * 86400 },
+        );
+      }
       await db.insertMany(
-        'MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
-        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[p:CoChangePending]->(b) ' +
+          'ON CREATE SET p.weight = $weight, p.cnt = $cnt, p.ts = $ts ' +
+          'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt, p.ts = $ts',
+        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count, ts: nowSec })),
       );
-      coChangePairs = strong.length;
+      // Promote: staged pairs that crossed the threshold, plus any pending residue for a
+      // pair that has since gained a real edge (its evidence belongs on the edge now).
+      const crossed = await db.run(
+        'MATCH (a:File)-[p:CoChangePending]->(b:File) WHERE p.cnt >= $min RETURN a.id AS a, b.id AS b, p.weight AS weight, p.cnt AS cnt',
+        { min: opts.coChange.minPairCount },
+      );
+      const nowStored = await db.run(
+        'MATCH (a:File)-[p:CoChangePending]->(b:File), (a)-[c:CoChange]->(b) RETURN a.id AS a, b.id AS b, p.weight AS weight, p.cnt AS cnt',
+      );
+      const promotable = [...new Map([...crossed, ...nowStored].map((r) => [`${r.a}\t${r.b}`, r])).values()];
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[c:CoChange]->(b) ' +
+          'ON CREATE SET c.weight = $weight, c.cnt = $cnt ' +
+          'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
+        promotable.map((r) => ({ a: String(r.a), b: String(r.b), weight: Number(r.weight), cnt: Number(r.cnt) })),
+      );
+      await db.insertMany(
+        'MATCH (a:File {id:$a})-[p:CoChangePending]->(b:File {id:$b}) DELETE p',
+        promotable.map((r) => ({ a: String(r.a), b: String(r.b) })),
+      );
+      // Count UNIQUE pairs: a pair that crosses the threshold within the window (strong arm)
+      // and also carries pending residue shows up in both `strong` and `promotable` — naive
+      // length addition double-counted it in the "(N pairs)" the CLI prints.
+      coChangePairs = new Set([...strong.map((p) => `${p.a}\t${p.b}`), ...promotable.map((r) => `${r.a}\t${r.b}`)]).size;
     } catch {
       // not a git repo / no history
     }
@@ -333,6 +405,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       refs: refCount,
       coChangePairs,
       commits,
+      deletedEdges,
     };
   } finally {
     await db.close();

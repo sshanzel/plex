@@ -51,6 +51,9 @@ recency      = 0.5 ^ (ageSec / (halfLifeDays · 86400))   // halfLifeDays ≤ 0 
 sizeFactor   = 1 / (n − 1)                               // 2-file commit = strong evidence; 25-file ≈ noise
 ```
 
+Generated artifacts (`isGeneratedArtifact`, `@plex/core`) are filtered from each commit's
+file list **before** `n` is counted — a 2-source-file commit that also regenerates
+`pnpm-lock.yaml` is n=2 evidence, not n=3.
 Age is clamped `Math.max(0, now − ts)` (future-dated commits contribute 1, never > 1).
 Pairs with `count < minPairCount` are dropped — kills singleton N² noise. Defaults
 (`@plex/core` `defaultConfig.coChange`): `maxCommitFiles: 25`, `halfLifeDays: 365`,
@@ -72,10 +75,18 @@ best-effort: a non-git dir simply has no co-change layer.
    whole-repo TS parse.
 4. **Co-change merges only the new commits** (`readCommits(…, sinceRef)`), aggregated with
    `minPairCount: 1` then split: pairs reaching the threshold **within the window**
-   create-or-accumulate (`MERGE … ON CREATE/ON MATCH`); sub-threshold pairs accumulate
-   into **already-stored** pairs only (`MATCH … SET`) — never new singletons, preserving
-   the ADR-06 denoising. No epoch bookkeeping: the age clamp gives new commits full
-   recency, and decay re-baselines on every full build (ADR-26).
+   create-or-accumulate (`MERGE … ON CREATE/ON MATCH`); ALL sub-threshold pairs are
+   **staged in `CoChangePending`** — a lane read queries never traverse — and the same
+   update then promotes (a) staged pairs whose cross-window `cnt` reached `minPairCount`
+   and (b) staged residue for pairs that already have a real edge (folded onto the edge,
+   same accumulate arithmetic, same window). A `CoChange` singleton is still never created
+   from one window (ADR-06 denoising), but a coupling landing one commit per window (a
+   review-triggered refresh after every commit) is no longer forgotten. The lane is
+   bounded: each staged row carries `ts` (refreshed on recurrence) and rows older than one
+   `halfLifeDays` are evicted before staging — never-promoted singletons age out instead
+   of accumulating, and two occurrences a half-life apart never promote at full undecayed
+   weight. Pending resets on a full rebuild. No epoch bookkeeping: the age clamp gives new
+   commits full recency, and decay re-baselines on every full build (ADR-26).
 No stored sha / undiffable sha (force-push) ⇒ `FullRebuildRequired` — callers fall back to
 `buildCodeGraph`. Worktree note (ADR-32): a secondary worktree's graph is seeded by
 *copying* the base graph then running this incremental path — the copy carries the BASE
@@ -96,8 +107,8 @@ meta (root `AGENTS.md` invariant).
   querying or inserting.
 - Read queries (`query.ts`) traverse edges **undirected** (`-[c:CoChange]-`, `-[:Imports]-`)
   and expand frontiers with `WHERE a.id IN $ids` — coupling has no direction.
-- `getCouplingDegrees` counts only File↔File edges (the `(a:File)-[r]-(b:File)` pattern
-  excludes `Declares`).
+- `getCouplingDegrees` enumerates rel types explicitly (`[r:CoChange|Imports|Refs]`) —
+  `CoChangePending` is a staging lane that reads must NEVER count or traverse.
 
 ## Testing
 

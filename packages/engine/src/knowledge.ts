@@ -1,9 +1,20 @@
 import path from 'node:path';
-import { safeEmbed, type ReviewerConfig, type CodeLocation, type Finding, type IncidentOutcome } from '@plex/core';
+import {
+  safeEmbed,
+  cosineSimilarity,
+  cosineBackground,
+  adaptiveFloor,
+  type ReviewerConfig,
+  type CodeLocation,
+  type Finding,
+  type IncidentOutcome,
+} from '@plex/core';
 import {
   KnowledgeStore,
   createEmbeddingProvider,
   retrieveRelevant,
+  retrieveRelevantLexical,
+  lexicalScores,
   seedFromMarkdown,
   recordIncident,
   consolidatePitfalls,
@@ -12,7 +23,7 @@ import {
   type ConsolidateResult,
   type Promotions,
 } from '@plex/knowledge';
-import { recordVerdict, type VerdictInput, type StoredVerdict } from './verdicts';
+import { recordVerdict, readVerdicts, type VerdictInput, type StoredVerdict } from './verdicts';
 import { Brain } from './brain';
 import { logAudit } from './audit';
 
@@ -48,8 +59,9 @@ export function embeddingReady(config: ReviewerConfig): boolean {
 
 /**
  * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
- * Degrades gracefully: with no embedding provider configured, returns nothing (review
- * still runs on blast radius + deterministic checks).
+ * Degrades gracefully: with no embedding provider configured, falls back to lexical
+ * (IDF-weighted token overlap) retrieval — weaker ranking, but a key-less install still
+ * gets its plex.md guidance and accumulated pitfalls back instead of nothing.
  */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,
@@ -58,14 +70,75 @@ export async function getRelevantKnowledge(
   repo?: string,
 ): Promise<RetrievedPitfall[]> {
   if (!queryText.trim()) return [];
+  const store = knowledgeStore(config);
   const provider = createEmbeddingProvider(config.embedding);
-  if (!provider) return [];
-  return retrieveRelevant(knowledgeStore(config), provider, queryText, topK, 0.05, repo);
+  if (!provider) return retrieveRelevantLexical(store, queryText, topK, 0.05, repo);
+  return retrieveRelevant(store, provider, queryText, topK, 0.05, repo);
 }
 
-/** Seed the knowledge base from markdown (cold start — ADR-09). */
+/**
+ * Seed the knowledge base from markdown (cold start — ADR-09). Embeds when a provider is
+ * configured; otherwise stores vectorless pitfalls (retrievable lexically — seeding from
+ * plex.md must not require an API key).
+ */
 export async function seedKnowledge(config: ReviewerConfig, md: string): Promise<number> {
-  return seedFromMarkdown(knowledgeStore(config), requireEmbeddings(config), md);
+  return seedFromMarkdown(knowledgeStore(config), createEmbeddingProvider(config.embedding), md);
+}
+
+// Floors for retroactively linking an accepted finding to a pitfall. Conservative on purpose:
+// a wrong link feeds one pitfall's confidence with another issue's evidence, which is worse
+// than learning nothing. The embed floor adapts UPWARD on anisotropic models (tuning.md §6);
+// lexical scores run lower than cosine, hence the lower bar.
+const INFER_EMBED_FLOOR = 0.7;
+const INFER_LEXICAL_FLOOR = 0.45;
+
+/**
+ * Best-effort: find the pitfall an accepted finding instantiates, so the accept reinforces it
+ * (ADR-10). Most agent findings are first-principles and carry no pitfallId — without this, an
+ * explicit "this is a real issue" verdict taught the knowledge base nothing. Embedding cosine
+ * where vectors exist; lexical IDF overlap for vectorless pitfalls (and key-less installs).
+ * Returns undefined on any failure — inference is enrichment, never a verdict blocker.
+ */
+export async function inferPitfallId(
+  config: ReviewerConfig,
+  title: string | undefined,
+  repo?: string,
+): Promise<string | undefined> {
+  if (!title?.trim()) return undefined;
+  try {
+    const pitfalls = (await knowledgeStore(config).pitfalls()).filter(
+      (p) => (p.scope ?? 'global') !== 'repo' || p.repo === repo,
+    );
+    if (pitfalls.length === 0) return undefined;
+    const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
+    const provider = createEmbeddingProvider(config.embedding);
+    let judgedSemantically = false;
+    if (provider && embedded.length > 0) {
+      const q = (await safeEmbed(provider, [title]))?.[0];
+      if (q) {
+        judgedSemantically = true;
+        const floor = adaptiveFloor(INFER_EMBED_FLOOR, cosineBackground(embedded.map((p) => p.embedding!)));
+        let best: { id: string; score: number } | undefined;
+        for (const p of embedded) {
+          const score = cosineSimilarity(q, p.embedding!);
+          if (score >= floor && (best == null || score > best.score)) best = { id: p.id, score };
+        }
+        if (best) return best.id;
+      }
+    }
+    // Lexical pass over what the semantic pass could NOT judge (vectorless pitfalls; everything
+    // when no provider) — never second-guess a semantic "not similar" with a keyword match.
+    const candidates = judgedSemantically ? pitfalls.filter((p) => !p.embedding || p.embedding.length === 0) : pitfalls;
+    if (candidates.length === 0) return undefined;
+    const lex = lexicalScores(title, candidates);
+    let bi = -1;
+    for (let i = 0; i < candidates.length; i++) {
+      if (lex[i]! >= INFER_LEXICAL_FLOOR && (bi < 0 || lex[i]! > lex[bi]!)) bi = i;
+    }
+    return bi >= 0 ? candidates[bi]!.id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
@@ -121,12 +194,30 @@ export async function submitVerdict(
       }
     }
   }
+  // Learning-side idempotency: a re-accept of an already-accepted finding (an agent retry, or
+  // reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a second
+  // incident — duplicated evidence inflates the pitfall's Beta posterior. Checked BEFORE the
+  // append below so the new verdict can't match itself; the verdict line itself is still
+  // recorded (the log is append-only bookkeeping).
+  const alreadyAccepted =
+    input.kind === 'accept' &&
+    input.findingId != null &&
+    (await readVerdicts(repoPath, config)).some((v) => v.kind === 'accept' && v.findingId === input.findingId);
   const stored = await recordVerdict(repoPath, enriched, config);
-  if (input.kind === 'accept') {
+  if (input.kind === 'accept' && !alreadyAccepted) {
+    const repoName = path.basename(path.resolve(repoPath));
+    // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
+    // similarity — so first-principles accepts (the common case) reinforce knowledge too.
+    // EXCEPT for inferred (auto) accepts: a locality fix-match feeding a title-similarity
+    // pitfall match would stack two inferences into the Beta posterior — a false locality
+    // accept silently inflating a pitfall is worse than learning nothing. Inferred accepts
+    // still record their incident (provenance), but only an explicit `pattern` links them.
+    const pitfallId = input.pattern ?? (input.inferred ? undefined : await inferPitfallId(config, input.title, repoName));
     await learnIncident(config, {
+      repo: repoName,
       file: input.file,
       snippet: input.title,
-      pitfallId: input.pattern,
+      pitfallId,
       outcome: 'accepted',
     });
   }
@@ -140,6 +231,15 @@ export async function submitVerdict(
         findingId: input.findingId, kind: input.kind, scope: input.scope,
         title: input.title, file: input.file, line: input.line, ts: stored.ts,
       });
+      // Project the disposition onto the brain Finding so it leaves `priorFindings`: an
+      // explicitly dispositioned finding must not be re-matched by later fix inference
+      // (reconcile / the next review), which would re-accept it and learn the same evidence
+      // twice. recordFixAccepts overwrites accept→'fixed' right after — same family, finer term.
+      const outcomeByKind: Record<string, string> = {
+        accept: 'accepted', reject: 'rejected', waive: 'waived', acknowledge: 'acknowledged',
+      };
+      const projected = outcomeByKind[input.kind];
+      if (projected) await brain.markFindingOutcome(input.findingId, projected);
     } finally {
       if (!sharedBrain) await brain.close();
     }

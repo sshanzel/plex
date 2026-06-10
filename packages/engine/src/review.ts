@@ -25,8 +25,9 @@ import {
   getImportEdges,
   getRefEdges,
   type BuildResult,
+  type DeletedFileEdges,
 } from '@plex/code-graph';
-import { computeNeighborhood } from '@plex/neighborhood';
+import { computeNeighborhood, associationStrength } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
 import { classifyChanges, reviewPlan, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
@@ -40,7 +41,7 @@ import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady } from './knowledge';
-import { recordFixAccepts } from './reconcile';
+import { recordFixAccepts, type AcceptedFix } from './reconcile';
 
 /**
  * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
@@ -55,8 +56,8 @@ export async function indexRepo(
   const p = repoPaths(repoPath, config.dataDir);
   ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
   const stamp = async (): Promise<void> => {
-    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16): a second
-    // Kùzu open in a process that also spawns the FalkorDB worker risks SIGSEGV.
+    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25): the
+    // review budget is two opens (neighborhood + brain, ADR-17) — staleness must not spend one.
     try {
       mkdirSync(path.dirname(p.headShaFile), { recursive: true });
       writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
@@ -64,9 +65,21 @@ export async function indexRepo(
       /* best-effort */
     }
   };
+  // Persist dependents of files an update DELETED into the sidecar — reviews consult it on
+  // any later round (the update captures the edges inside its own Kùzu open, pre-delete).
+  const persistDeleted = (res: { deletedEdges?: DeletedFileEdges }): void => {
+    if (res.deletedEdges) {
+      try {
+        mergeDeletedNeighborsSidecar(p.reviewerDir, weightDeletedNeighbors(res.deletedEdges));
+      } catch {
+        /* best-effort */
+      }
+    }
+  };
   if (opts.incremental && existsSync(p.graphDir)) {
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+      persistDeleted(res);
       await stamp();
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
@@ -92,6 +105,7 @@ export async function indexRepo(
         mkdirSync(path.dirname(p.graphDir), { recursive: true });
         cpSync(base.graphDir, p.graphDir, { recursive: true });
         const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+        persistDeleted(res);
         await stamp();
         return { ...res, graphDir: p.graphDir, seeded: true };
       } catch {
@@ -210,8 +224,8 @@ export interface ReviewContext {
   reviewerMd?: string;
   /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
   graphStale?: GraphStaleness;
-  // --- PR brain (M6, ADR-22/23) — present when FalkorDB is enabled ---
-  /** Stable target id / FalkorDB graph name for this review. */
+  // --- PR brain (M6/M11, ADR-30 — embedded Kùzu) ---
+  /** Stable brain target id for this review (reviewTargetFor). */
   target?: string;
   /** This review's round number (1-based). */
   round?: number;
@@ -224,6 +238,9 @@ export interface ReviewContext {
   unexplainedChanges?: AttributedChange[];
   /** PR-thread comments ingested this round (facts). */
   openComments?: PrComment[];
+  /** Prior-round findings auto-accepted as FIXED by this round's changes (ADR-28) — facts,
+   *  each naming the signal that matched (`semantic` | `locality`) so auto-accepts are auditable. */
+  inferredAccepts?: import('./reconcile').AcceptedFix[];
   /**
    * Parallel-review advice (parallel-review.md): `single` (one reviewer) or `parallel` (fan
    * out one reviewer per coupled cluster — the `units`), decided from the coupling graph. The
@@ -273,7 +290,7 @@ export interface AssembleOptions extends DiffSource {
 const AGENT_NOTES = [
   'You did NOT write this code. Review it with fresh, skeptical eyes.',
   'Report bugs, potential bugs, improvements, and nits. Severity (bug|improvement|nit) and confidence (0..1) are independent axes you set on `submit_findings`: a high-severity, low-confidence item is a "potential bug". Confidence is an INTERNAL ranking input — NEVER display it (no numeric score, no "high/low confidence" wording, no certainty self-rating, in prose OR a table). Surface genuine uncertainty only by calling it a potential bug and hedging the claim itself ("may", "if X then…").',
-  '`blastRadius` lists files coupled to the change (co-change = historical, import = structural). Inspect them for breakage the diff might cause.',
+  '`blastRadius` lists files coupled to the change (co-change = historical, import = structural). Inspect them for breakage the diff might cause. If it is EMPTY the change is isolated — focus on the changed files and do not go hunting; if you expected coupling and see none, check the staleness note (the graph may be behind HEAD).',
   '`deterministic` findings are already computed — incorporate them, do not re-derive them.',
   '`changeContext` is the author\'s STATED intent (PR title/description or commit subjects) — NOT ground truth. Check the code against it: flag where the diff does less than it claims, does something the description omits, or contradicts the stated motivation.',
   'A pattern repeated across many files is likely a convention (demote) — unless it is a bug, in which case it is systemic (escalate as a migration).',
@@ -292,7 +309,7 @@ interface BrainContext {
   unexplainedChanges: AttributedChange[];
   openComments: PrComment[];
   /** Prior findings auto-accepted this round because a change addressed them (ADR-28). */
-  inferredOutcomes: number;
+  inferredAccepts: AcceptedFix[];
 }
 
 /**
@@ -339,7 +356,7 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
     // accept-loop the responder's `reconcile` would — `priorFindings` is already filtered to
     // un-outcomed findings (brain.ts), so neither path double-accepts the other's.
     let unexplainedChanges: AttributedChange[] = [];
-    let inferredOutcomes = 0;
+    let inferredAccepts: AcceptedFix[] = [];
     if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
       const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
       if (changed.length > 0) {
@@ -375,19 +392,92 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
           }
         }
         // Always run fix inference — locality reconciles restructuring fixes with no provider (ADR-30).
-        inferredOutcomes = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
+        inferredAccepts = await recordFixAccepts(opts.repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
       }
     }
 
     await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef }, comments);
 
-    return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredOutcomes };
+    return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredAccepts };
   } finally {
     await brain.close();
   }
 }
 
-/** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
+/**
+ * Weight the raw edges `updateCodeGraph` captured for DELETED files into per-file neighbor
+ * entries (association strength for co-change, the fixed import/ref base weights, distance
+ * 1 — a deleted module's blast is dominated by its direct importers anyway). Pure: the
+ * capture happens inside the update's own Kùzu open (re-opening the same dir in one
+ * process SIGSEGVs).
+ */
+function weightDeletedNeighbors(raw: DeletedFileEdges): Map<string, NeighborEntry[]> {
+  const deletedSet = new Set(raw.deletedPaths);
+  const best = new Map<string, Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>>();
+  const add = (src: string, dst: string, w: number, via: NeighborEntry['via'][number]): void => {
+    if (deletedSet.has(dst) || w <= 0) return;
+    const perFile = best.get(src) ?? new Map();
+    const cur = perFile.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
+    cur.score = Math.max(cur.score, Math.min(1, w));
+    cur.via.add(via);
+    perFile.set(dst, cur);
+    best.set(src, perFile);
+  };
+  const deg = (f: string, fallback: number): number => raw.coDegrees[f] ?? fallback;
+  for (const e of raw.co) add(e.src, e.dst, associationStrength(e.weight, deg(e.src, e.weight), deg(e.dst, e.weight)), 'co-change');
+  for (const e of raw.imports) add(e.src, e.dst, 0.4, 'import');
+  for (const e of raw.refs) add(e.src, e.dst, 0.5, 'precise-ref');
+  const out = new Map<string, NeighborEntry[]>();
+  for (const [src, perFile] of best) {
+    out.set(src, [...perFile].map(([id, v]) => ({
+      node: { id, label: 'File' as const, props: { path: id } },
+      score: v.score,
+      via: [...v.via],
+      distance: 1,
+    })));
+  }
+  return out;
+}
+
+// --- deleted-neighbors sidecar -----------------------------------------------------------
+// The incremental update DETACH-DELETEs a deleted file's node, after which its dependents
+// are unrecoverable from the graph. So `indexRepo` captures them at deletion time into this
+// sidecar, and reviews consult it for the diff's deleted files on ANY later round — the
+// in-review pre-refresh capture (the first fix) only covered the single round that happened
+// to trigger the refresh (the dogfood round-2 catch). Best-effort JSON; capped.
+
+const DELETED_SIDECAR_CAP = 500;
+interface DeletedSidecarEntry {
+  ts: number;
+  neighbors: NeighborEntry[];
+}
+
+function deletedSidecarFile(reviewerDir: string): string {
+  return path.join(reviewerDir, 'deleted-neighbors.json');
+}
+
+function readDeletedNeighborsSidecar(reviewerDir: string): Record<string, DeletedSidecarEntry> {
+  try {
+    return JSON.parse(readFileSync(deletedSidecarFile(reviewerDir), 'utf8')) as Record<string, DeletedSidecarEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function mergeDeletedNeighborsSidecar(reviewerDir: string, captured: Map<string, NeighborEntry[]>): void {
+  try {
+    const sidecar = readDeletedNeighborsSidecar(reviewerDir);
+    const now = Date.now();
+    for (const [file, neighbors] of captured) sidecar[file] = { ts: now, neighbors };
+    const entries = Object.entries(sidecar).sort((a, b) => b[1].ts - a[1].ts).slice(0, DELETED_SIDECAR_CAP);
+    mkdirSync(reviewerDir, { recursive: true });
+    writeFileSync(deletedSidecarFile(reviewerDir), JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    /* best-effort — a missing sidecar degrades to the old (empty) behavior */
+  }
+}
+
+/** Assemble the review context: diff → neighborhood → deterministic findings → knowledge → brain round. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
   const [diff, changeContext] = await Promise.all([
@@ -414,6 +504,9 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     const indexedSha = readIndexedSha(p.headShaFile);
     const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
+      // NOTE: a refresh DETACH-DELETEs committed deletions' nodes — their dependents are
+      // preserved by `indexRepo`'s sidecar capture (which the refresh child runs) and
+      // merged into the neighborhood after the walk below.
       const refreshed = indexIsolated(p.repoPath, true);
       graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
@@ -436,6 +529,33 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     couplingDeg = await getCouplingDegrees(db, changedPaths); // for per-finding blast enrichment
   } finally {
     await db.close();
+  }
+
+  // Merge dependents of COMMITTED deletions from the sidecar — their nodes were
+  // DETACH-DELETEd by whichever incremental update ingested the deletion (this round's
+  // refresh or an earlier one), so the walk above couldn't see them on ANY round. Direct
+  // (1-hop) entries, deduped against what the walk did find, re-sorted and re-capped.
+  // (Uncommitted deletions keep their node and were already seeded by the walk itself.)
+  const deletedDiffFiles = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
+  if (deletedDiffFiles.length > 0) {
+    const sidecar = readDeletedNeighborsSidecar(p.reviewerDir);
+    const captured = deletedDiffFiles.flatMap((f) => sidecar[f]?.neighbors ?? []);
+    if (captured.length > 0) {
+      const have = new Set(nb.neighbors.map((n) => String(n.node.props.path)));
+      const changedSet = new Set(changedPaths);
+      for (const n of captured) {
+        const pth = String(n.node.props.path);
+        if (!have.has(pth) && !changedSet.has(pth)) {
+          nb.neighbors.push(n);
+          have.add(pth);
+        }
+      }
+      nb.neighbors.sort((a, b) => b.score - a.score);
+      nb.neighbors = nb.neighbors.slice(0, opts.config.neighborhood.maxNeighbors);
+      for (const f of deletedDiffFiles) {
+        if (!nb.changed.some((c) => c.file === f)) nb.changed.push({ repo, file: f, startLine: 1, endLine: 1 });
+      }
+    }
   }
 
   // Persist a per-file blast map for submit_findings to enrich each finding's `blast` (tuning.md §5):
@@ -507,6 +627,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     priorRounds: brain.priorRounds,
     unexplainedChanges: brain.unexplainedChanges,
     openComments: brain.openComments,
+    inferredAccepts: brain.inferredAccepts.length > 0 ? brain.inferredAccepts : undefined,
     reviewPlan: plan,
     notes: [
       ...AGENT_NOTES,
@@ -514,11 +635,16 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
       ...(embeddingReady(opts.config)
         ? []
         : [
-            'The learning layer is off this review: embeddings are OFF (no provider configured), so no lessons from the user\'s review history were available. In your closing "what Plex brought" line you may note this and point them to `npx @sshanzel/plex init` (one short clause; never ask for the key in chat).',
+            'Embeddings are OFF (no provider configured): lessons from review history were retrieved by keyword match only (weaker than semantic retrieval), and the semantic signals (change attribution, semantic waiver matching) were skipped. In your closing "what Plex brought" line you may note this and point them to `npx @sshanzel/plex init` (one short clause; never ask for the key in chat).',
           ]),
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,
+      ...(diff.generatedPaths?.length
+        ? [
+            `${diff.generatedPaths.length} machine-generated file(s) changed in this diff but are excluded from review (${diff.generatedPaths.join(', ')}). Mention this as a fact; a lockfile change with NO matching manifest edit can be a supply-chain signal worth confirming.`,
+          ]
+        : []),
       ...(graphStale?.refreshed
         ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
         : graphStale

@@ -89,22 +89,40 @@ export function findingAddressedAt(
   regionEmbeddings: number[][],
   opts: { semanticThreshold?: number; lineWindow?: number } = {},
 ): boolean {
+  return findingAddressMatch(finding, findingEmbedding, regions, regionEmbeddings, opts) != null;
+}
+
+/**
+ * Like `findingAddressedAt`, but says WHICH signal matched — the auto-accept audit trail.
+ * Consumers surface this per accepted finding (reconcile's `acceptedFindings`, the review
+ * context's `inferredAccepts`) so a locality false-accept is visible and contestable
+ * instead of a silent disappearance.
+ */
+export function findingAddressMatch(
+  finding: { file?: string; line?: number },
+  findingEmbedding: number[],
+  regions: ReadonlyArray<ChangedRegion>,
+  regionEmbeddings: number[][],
+  opts: { semanticThreshold?: number; lineWindow?: number } = {},
+): 'semantic' | 'locality' | null {
   const semanticThreshold = opts.semanticThreshold ?? 0.6;
   // Drift tolerance, NOT a search radius — the changed region already spans the fix; this only
   // absorbs the few lines a finding's RECORDED line may have shifted (edits above it). ±30 was far
   // too loose: in a churning file almost any later edit lands within 30 lines of a prior finding,
-  // silently auto-accepting (and burying) a live bug. Tight keeps locality honest; semantic carries
-  // relocated fixes.
+  // silently auto-accepting (and burying) a live bug. ±5 is a DELIBERATE keep (revisited): the
+  // residual risk (several clustered findings absorbed by one nearby edit) is mitigated by the
+  // surfaced per-accept audit trail (`matchedBy`), not by tightening — tighter re-opens the
+  // missed-fix class this exists to catch. Semantic carries relocated fixes.
   const lineWindow = opts.lineWindow ?? 5;
   if (findingEmbedding.length > 0 && findingAddressed(findingEmbedding, regionEmbeddings, semanticThreshold)) {
-    return true;
+    return 'semantic';
   }
   if (finding.file != null && finding.line != null) {
     for (const r of regions) {
       if (r.file === finding.file && finding.line >= r.start - lineWindow && finding.line <= r.end + lineWindow) {
-        return true;
+        return 'locality';
       }
     }
   }
-  return false;
+  return null;
 }

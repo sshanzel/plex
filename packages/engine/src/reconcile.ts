@@ -1,5 +1,5 @@
 import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type ChangedRegion } from '@plex/core';
-import { findingAddressedAt } from '@plex/findings';
+import { findingAddressMatch } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { repoPaths } from './paths';
@@ -8,10 +8,21 @@ import { reviewTargetFor } from './target';
 import { Brain, type BrainFinding } from './brain';
 import { submitVerdict } from './knowledge';
 
+/** One auto-accepted finding, with the signal that matched it — the audit trail that keeps
+ *  locality auto-accepts honest (a false accept is visible, not a silent disappearance). */
+export interface AcceptedFix {
+  findingId: string;
+  title: string;
+  file?: string;
+  line?: number;
+  matchedBy: 'semantic' | 'locality';
+}
+
 /**
  * Record an autonomous `accept` for each prior finding that one of `regionEmbeddings`
- * addressed (ADR-28). Shared by the review flow and standalone reconcile, using the
- * caller's open Brain handle so the per-repo Kùzu brain is opened once.
+ * addressed (ADR-28), returning WHAT was accepted and HOW it matched. Shared by the review
+ * flow and standalone reconcile, using the caller's open Brain handle so the per-repo Kùzu
+ * brain is opened once.
  */
 export async function recordFixAccepts(
   repoPath: string,
@@ -25,13 +36,13 @@ export async function recordFixAccepts(
    *  signal (ADR-28), which catches restructuring fixes that embeddings alone miss. Omit
    *  (default) to fall back to pure semantic matching. */
   changedRegions: ReadonlyArray<ChangedRegion> = [],
-): Promise<number> {
+): Promise<AcceptedFix[]> {
   // Adapt the semantic auto-accept cut UPWARD only (tuning.md §6): on an anisotropic model the
   // bar rises so a "fix" must be more clearly related before we auto-accept — never below the 0.6
   // floor, so it never auto-accepts (and thus silences) more than today's fixed value would. With
   // no embedder the embeddings are empty → background {0,0} → stays 0.6, and locality still works.
   const semanticThreshold = adaptiveFloor(0.6, cosineBackground([...regionEmbeddings, ...findingEmbeddings]));
-  let n = 0;
+  const accepts: AcceptedFix[] = [];
   for (let i = 0; i < priorFindings.length; i++) {
     const f = priorFindings[i]!;
     // `awareness` flags are never auto-accepted (ADR-31): an awareness item isn't a defect to be
@@ -39,13 +50,14 @@ export async function recordFixAccepts(
     // inferring "fixed" from a nearby change is semantically wrong and, worse, pre-empts the
     // acknowledge → semantic-waiver path that keeps it quiet until it MATERIALLY changes.
     if (f.severity === 'awareness') continue;
-    if (findingAddressedAt({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold })) {
-      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target, brain);
+    const matchedBy = findingAddressMatch({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold });
+    if (matchedBy) {
+      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', inferred: true, file: f.file, line: f.line, title: f.title }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
-      n++;
+      accepts.push({ findingId: f.id, title: f.title, file: f.file, line: f.line, matchedBy });
     }
   }
-  return n;
+  return accepts;
 }
 
 export interface ReconcileResult {
@@ -66,6 +78,8 @@ export interface ReconcileResult {
   toSha?: string;
   /** Files changed in that window. */
   changedFiles?: number;
+  /** What was auto-accepted and which signal matched it (the audit trail; present when accepted > 0). */
+  acceptedFindings?: AcceptedFix[];
 }
 
 /**
@@ -138,12 +152,13 @@ export async function reconcileOutcomes(
       }
     }
 
-    const accepted = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
+    const accepts = await recordFixAccepts(repoPath, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
+    const accepted = accepts.length;
     const reason =
       accepted > 0
-        ? `${healNote}accepted ${accepted} of ${checked} — a pushed change addressed them (semantic or file/line locality)`
+        ? `${healNote}accepted ${accepted} of ${checked} — a pushed change addressed them (see acceptedFindings for what matched and how)`
         : `${healNote}${changed.length} file(s) changed since ${state.lastHeadSha.slice(0, 8)} but none matched an open finding (no semantic match and no change near a finding's file:line)${embedder ? '' : '; no embedding provider, so only locality was tried'}`;
-    return { target, checked, accepted, reason, fromSha: state.lastHeadSha, toSha: head, changedFiles: changed.length };
+    return { target, checked, accepted, reason, fromSha: state.lastHeadSha, toSha: head, changedFiles: changed.length, ...(accepted > 0 ? { acceptedFindings: accepts } : {}) };
   } finally {
     await brain.close();
   }

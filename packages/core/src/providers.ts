@@ -9,6 +9,7 @@
  * provider must wrap an actual embedding endpoint.
  */
 import { createHash } from 'node:crypto';
+import type { IncidentOutcome } from './types';
 
 export interface EmbeddingProvider {
   readonly name: string;
@@ -44,6 +45,42 @@ export function slugify(s: string, maxLen = 48): string {
  */
 export function hashId(s: string, len = 8): string {
   return createHash('sha1').update(s).digest('hex').slice(0, len);
+}
+
+// Machine-written files that carry zero review signal and plenty of noise/cost: lockfiles
+// co-change with everything (distorting the 1/(n−1) commit-size weighting), minified
+// bundles and source maps explode token/embedding budgets, snapshots are test output.
+const GENERATED_BASENAMES = new Set([
+  'pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock',
+  'bun.lockb', 'bun.lock', 'deno.lock', 'cargo.lock', 'composer.lock',
+  'gemfile.lock', 'poetry.lock', 'uv.lock', 'pipfile.lock', 'go.sum',
+  'flake.lock', 'packages.lock.json', 'podfile.lock', 'pubspec.lock', 'mix.lock',
+]);
+const GENERATED_PATTERNS = [/\.min\.(js|mjs|cjs|css)$/, /\.(js|mjs|cjs|css)\.map$/, /\.snap$/];
+
+/**
+ * Is this path a machine-generated artifact Plex should never read? Applied at every
+ * ingestion edge: diff normalization (the file never reaches the review context),
+ * added-text extraction (never embedded), co-change aggregation (never counted toward a
+ * commit's size or pairs), graph discovery, and the deterministic runner. Pure;
+ * paths are repo-relative POSIX.
+ */
+export function isGeneratedArtifact(filePath: string): boolean {
+  const base = filePath.slice(filePath.lastIndexOf('/') + 1).toLowerCase();
+  return GENERATED_BASENAMES.has(base) || GENERATED_PATTERNS.some((p) => p.test(base));
+}
+
+/**
+ * Positive evidence weight of an incident outcome (ADR-11). `reverted` outweighs a plain
+ * accept: the change a pitfall warned about shipped anyway and was later reverted — the
+ * strongest confirmation the warning was right. `rejected` (and unknown) contribute 0 here;
+ * rejection is costed separately on the failure side of the Beta posterior (knowledge
+ * consolidation's `REJECT_COST`).
+ */
+export function outcomeWeight(o: IncidentOutcome | undefined): number {
+  if (o === 'reverted') return 1.5;
+  if (o === 'accepted' || o === 'fixed') return 1;
+  return 0;
 }
 
 /**

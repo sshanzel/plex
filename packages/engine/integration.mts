@@ -121,6 +121,20 @@ test('neighborhood', 'neighborhood: maps hunk to symbols and finds coupled neigh
       const dbN = nb.neighbors.find((n) => String(n.node.props.path) === 'src/db.ts');
       assert.ok(dbN, 'db.ts neighbor present');
       assert.deepEqual(dbN!.via.sort(), ['co-change', 'import']);
+
+      // A pure DELETION still produces a blast radius: the deleted file's node + edges are
+      // in the (pre-deletion) graph, so its dependents surface — deleting a widely-used
+      // module is the strongest breakage signal, not an empty radius. Same db handle (ADR-17).
+      const delDiff: NormalizedDiff = {
+        baseRef: 'HEAD',
+        files: [{ path: 'src/user.ts', status: 'deleted', hunks: [] }],
+      };
+      const nbDel = await computeNeighborhood(db, 'r', delDiff, { maxHops: 2, maxNeighbors: 40, minScore: 0.01 });
+      assert.equal(nbDel.changed[0]?.file, 'src/user.ts');
+      assert.ok(
+        nbDel.neighbors.some((n) => String(n.node.props.path) === 'src/db.ts'),
+        'deletion surfaces dependents',
+      );
     } finally {
       await db.close();
     }
@@ -244,7 +258,7 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
     // No embedding provider configured here → the context carries the one-line onboarding nudge
     // for the agent to surface (points at `plex init`, never asks for the key in chat).
     assert.ok(
-      ctx.notes.some((n) => n.includes('embeddings are OFF') && n.includes('npx @sshanzel/plex init')),
+      ctx.notes.some((n) => n.toLowerCase().includes('embeddings are off') && n.includes('npx @sshanzel/plex init')),
       'embeddings-off onboarding note is present when no provider is configured',
     );
     await recordVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'file' }, config);
@@ -607,7 +621,8 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
       const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i]!);
 
       const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
-      assert.equal(accepted, 1, `only the bug is auto-accepted; the awareness flag is skipped (got ${accepted})`);
+      assert.equal(accepted.length, 1, `only the bug is auto-accepted; the awareness flag is skipped (got ${accepted.length})`);
+      assert.ok(accepted[0]!.matchedBy === 'semantic' || accepted[0]!.matchedBy === 'locality', 'the accept names which signal matched');
       const remaining = (await brain.loadRoundState(target)).priorFindings;
       assert.equal(remaining.length, 1, 'the awareness flag stays open for an explicit acknowledge');
       assert.equal(remaining[0]!.severity, 'awareness', 'and it is the awareness one that remains');

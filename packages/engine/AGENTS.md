@@ -29,7 +29,7 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 - `src/findings.ts` — `getDeterministicFindings`; `rankReviewFindings`: merge agent + deterministic findings, blast enrichment from the sidecar, semantic waivers (ADR-27), rank, persist to brain, optional PR auto-comment.
 - `src/pr-comment.ts` — pure `buildReviewPayload` (dedup vs prior rounds, inline vs summary) + best-effort `postFindingsToPr` (ADR-34).
 - `src/verdicts.ts` — append-only `verdicts.jsonl`; `loadWaivers` turns `waive`/`acknowledge`/`reject` verdicts into suppression rules.
-- `src/knowledge.ts` — knowledge store wiring (retrieval, seed, consolidate, promotions) + `submitVerdict` (verdict → JSONL + incident-on-accept + brain projection + audit).
+- `src/knowledge.ts` — knowledge store wiring (retrieval, seed, consolidate, promotions) + `submitVerdict` (verdict → JSONL + incident-on-accept + brain projection + audit). An accept without an explicit `pattern` runs `inferPitfallId` (embedding cosine ≥ `adaptiveFloor(0.7, …)`, lexical ≥ 0.45 for vectorless/key-less; conservative — no match beats a wrong match) so first-principles accepts reinforce pitfalls too.
 
 **Mining, eval, audit**
 - `src/mining.ts` — incremental PR-history mining cursor; `mineRepo` (standalone LLM distillation), `scanForMining`/`addMinedPitfalls` (agent-driven path).
@@ -42,11 +42,11 @@ Order matters; each step feeds the next:
 
 1. **Diff + stated intent** in parallel (`resolveDiff`, `resolveChangeContext`).
 2. **Auto-index on first use** — no graph → `indexIsolated()` spawns `node dist/plex.js index` as a child. Isolation is the ADR-17 constraint: tsx (and to a lesser degree any single process) tolerates only a few Kùzu `Database` opens, and a review already needs **one open for the neighborhood + one for the brain**; indexing in-process would be a third. In dev/tsx `indexIsolated` no-ops (no built CLI beside `argv[1]`).
-3. **Staleness check + drift refresh (ADR-25/36)** — read the sidecar `head.sha` (no Kùzu open), and if HEAD is definitively ahead, refresh incrementally in the same isolated-child way. The review is the *only* refresh trigger (no git hooks, ADR-36).
+3. **Staleness check + drift refresh (ADR-25/36)** — read the sidecar `head.sha` (no Kùzu open), and if HEAD is definitively ahead, refresh incrementally in the same isolated-child way. The review is the *only* refresh trigger (no git hooks, ADR-36). Committed deletions: `indexRepo` captures a deleted file's direct dependents into the **`deleted-neighbors.json` sidecar** (`captureDeletedNeighbors`, one short extra open) BEFORE the update DETACH-DELETEs its node, and the review merges sidecar entries for the diff's deleted files after the walk — on ANY round, not just the one that triggered the refresh (dogfood round-1 caught the erased radius; round-2 caught that the first fix only covered the refresh-coinciding round).
 4. **One code-graph open** — repo meta, `computeNeighborhood` (blast radius), coupling *among* changed files (for the review plan), coupling degrees; then close. A `blast-map.json` sidecar is written here so `submit_findings` can enrich per-finding `blastRadius` later **without another Kùzu open**.
 5. **Review plan** — `reviewPlan()` (pure, `@plex/findings`) decides single vs parallel fan-out from the coupling graph ([`docs/design/parallel-review.md`](../../docs/design/parallel-review.md)).
 6. **Deterministic findings** (`@plex/deterministic`) on the changed lines.
-7. **Knowledge retrieval** — query built from changed symbols + deterministic titles + files; returns `[]` with no embedding provider (degrades, never fails).
+7. **Knowledge retrieval** — query built from changed symbols + deterministic titles + files; with no embedding provider it falls back to lexical (IDF token-overlap) retrieval (degrades, never fails).
 8. **Brain round** (`buildBrainContext`) — second and last Kùzu open: `healSplitTarget` → `loadRoundState` → ingest PR comments → if the head moved since the last round, attribute changes (semantic, embeddings-only) and run fix inference (`recordFixAccepts` — works locality-only without embeddings) → `recordRound`.
 9. **Audit log** (`context_assembled`) and the returned `ReviewContext` with `notes` — the agent guidance (fresh eyes, severity/confidence as separate axes, never display confidence, reviewPlan directive, staleness warnings, embeddings-off nudge).
 
@@ -75,16 +75,18 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 - **semantic**: cosine(finding-title embedding, changed-region embedding) ≥ `adaptiveFloor(0.6, batch background)` — adapts upward only on anisotropic models, never below 0.6; or
 - **locality**: a change landed in the finding's own file within a line window (`findingAddressedAt`, `@plex/findings`) — needs **no embeddings**, and catches restructuring fixes (try/catch wrap, moved lines) whose diff reads nothing like the title.
 
-`awareness` findings are never auto-accepted (ADR-31; only explicit `acknowledge`/`reject`). Every exit returns a `reason` so `accepted: 0` is diagnosable: no open findings / no prior round (the split-brain tell) / head unresolvable / head unchanged / nothing added / N files changed but none matched. The same `recordFixAccepts` runs inline on the **next review** (step 8 above), so a standalone install closes the accept-loop with no responder (ADR-36).
+`awareness` findings are never auto-accepted (ADR-31; only explicit `acknowledge`/`reject`). Every exit returns a `reason` so `accepted: 0` is diagnosable: no open findings / no prior round (the split-brain tell) / head unresolvable / head unchanged / nothing added / N files changed but none matched. When `accepted > 0`, **`acceptedFindings`** lists each auto-accepted finding with the signal that matched it (`semantic` | `locality`) — the audit trail that keeps locality accepts honest; the same list reaches the next review's context as **`inferredAccepts`** (the agent relays "N prior findings verified fixed" and can contest a wrong one). The same `recordFixAccepts` runs inline on the **next review** (step 8 above), so a standalone install closes the accept-loop with no responder (ADR-36).
+
+**Learning idempotency.** A finding feeds the knowledge base at most once: `submitVerdict` skips `learnIncident` when an accept verdict for the same `findingId` is already logged, and projects every explicit verdict onto the brain `Finding.outcome` (accept→`accepted`, reject→`rejected`, waive→`waived`, acknowledge→`acknowledged`) so a dispositioned finding leaves `priorFindings` and can't be re-accepted by later fix inference.
 
 ## Invariants & gotchas
 
 - **ADR-02**: nothing here ever feeds the reviewer prior reasoning — brain state, comments, and the audit log are facts/records only.
 - **ADR-17/19**: ship built JS under node (`pnpm build` → `dist/`), never tsx. A review process = 1 graph open + 1 brain open; anything more (index/refresh) goes through `indexIsolated`.
-- **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → `[]`; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
+- **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → lexical (keyword) fallback; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
 - **Best-effort everywhere on the bookkeeping edges**: audit logging, blast-map sidecar, PR auto-comment, and the `head.sha` stamp never throw out of a review.
 - `recordVerdict` persists the waiver embedding to disk but **strips it from the returned value** (the MCP echo would waste tokens no consumer reads).
-- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — knowledge must not store unsearchable noise.
+- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Seeding (`seedKnowledge`) does NOT: key-less seeds are stored vectorless and retrieved lexically.
 
 ## Testing
 

@@ -40,6 +40,12 @@ export interface NormalizedDiff {
   baseRef: string;
   headRef?: string;
   files: DiffFile[];
+  /**
+   * Machine-generated files (lockfiles, bundles — `isGeneratedArtifact`) the diff touched
+   * but normalization DROPPED from `files`. Kept as a fact so a lockfile-only change is
+   * still visible as a supply-chain signal, just never read line-by-line.
+   */
+  generatedPaths?: string[];
 }
 
 /**
@@ -143,7 +149,7 @@ export interface Finding {
 
 /** A finding after merge/dedup/ranking, with its computed signal and triage. */
 export interface RankedFinding extends Finding {
-  /** signal = severity × confidence × deviation-from-norm × blastRadius − waiverWeight (ADR-04). */
+  /** signal = severityWeight × confidence × blast × deviation × agreement (ADR-04/05 — the formula lives in @plex/findings signal.ts; waived findings are triaged `suppressed`, not subtracted). */
   signal: number;
   /** Sources that independently agreed on this finding (cross-source confidence boost). */
   agreedSources: FindingSource[];
@@ -176,6 +182,14 @@ export interface Verdict {
   kind: VerdictKind;
   scope?: WaiverScope;
   note?: string;
+  /**
+   * True when this verdict was INFERRED by fix matching (ADR-28 auto-accepts) rather than
+   * recorded explicitly. Inferred accepts skip retroactive pitfall inference — a ±5-line
+   * locality match feeding a title-similarity match would compound two inferences into
+   * knowledge confidence; explicit verdicts (or an explicit `pattern` link) are the only
+   * paths that move a pitfall.
+   */
+  inferred?: boolean;
 }
 
 /**
@@ -233,7 +247,7 @@ export interface Pitfall {
 }
 
 // ---------------------------------------------------------------------------
-// Review brain (M6) — per-PR working memory, persisted in FalkorDB (ADR-22/23)
+// Review brain (M6/M11) — per-PR working memory, persisted in the embedded Kùzu brain (ADR-30)
 // ---------------------------------------------------------------------------
 
 /** A review invocation on a target at a distinct head — rounds accumulate (ADR-23). */

@@ -1,4 +1,5 @@
 import parseDiff from 'parse-diff';
+import { isGeneratedArtifact } from '@plex/core';
 import type { NormalizedDiff, DiffFile, DiffFileStatus, DiffHunk, LineRange } from '@plex/core';
 
 /** Group a set of line numbers into contiguous inclusive ranges. */
@@ -39,6 +40,9 @@ export function addedTextByFile(diffText: string): ChangedFileText[] {
   const out: ChangedFileText[] = [];
   for (const f of parseDiff(diffText)) {
     const file = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
+    // A regenerated lockfile/bundle is not "what changed" in any reviewable sense —
+    // embedding 10k mechanical lines costs tokens and poisons change attribution.
+    if (isGeneratedArtifact(file)) continue;
     let min = Infinity;
     let max = -Infinity;
     let count = 0;
@@ -79,7 +83,20 @@ export function normalizeUnifiedDiff(
   baseRef: string,
   headRef?: string,
 ): NormalizedDiff {
-  const files = parseDiff(text);
+  // Generated artifacts (lockfiles, minified bundles, source maps, snapshots) are dropped
+  // HERE, at the single entry point of the review flow — they never reach the context the
+  // agent reads, the deterministic runner, or the brain's round bookkeeping. Their PATHS
+  // are kept as a fact (`generatedPaths`): a lockfile-only diff is a supply-chain signal
+  // worth a heads-up even though its content is never read.
+  const generatedPaths: string[] = [];
+  const files = parseDiff(text).filter((f) => {
+    const p = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
+    if (isGeneratedArtifact(p)) {
+      generatedPaths.push(p);
+      return false;
+    }
+    return true;
+  });
   const out: DiffFile[] = files.map((f) => {
     const path = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
     const oldPath = f.from && f.from !== '/dev/null' && f.from !== f.to ? f.from : undefined;
@@ -98,5 +115,5 @@ export function normalizeUnifiedDiff(
     });
     return { path, oldPath, status: statusOf(f), hunks };
   });
-  return { baseRef, headRef, files: out };
+  return { baseRef, headRef, files: out, ...(generatedPaths.length > 0 ? { generatedPaths } : {}) };
 }

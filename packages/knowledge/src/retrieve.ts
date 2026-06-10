@@ -6,10 +6,84 @@ export interface RetrievedPitfall {
   score: number;
 }
 
+// ---------------------------------------------------------------------------
+// Lexical scoring — the no-embeddings retrieval path.
+// ---------------------------------------------------------------------------
+
+// Words that match every query without carrying meaning for review knowledge.
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'not', 'with', 'this', 'that', 'from', 'into', 'when', 'then',
+  'else', 'are', 'was', 'were', 'has', 'have', 'had', 'can', 'will', 'should', 'must',
+  'never', 'always', 'use', 'using', 'used', 'your', 'our', 'its', 'all', 'any', 'each',
+]);
+
+/**
+ * Tokenize for lexical matching: split camelCase (so `getUserId` matches "user id"),
+ * lowercase, keep alphanumeric runs of ≥3 chars, drop stopwords.
+ */
+export function lexicalTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of text.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/)) {
+    if (t.length >= 3 && !STOPWORDS.has(t)) out.add(t);
+  }
+  return out;
+}
+
+const pitfallText = (p: Pitfall): string =>
+  [p.title, p.trigger, p.why, p.category].filter(Boolean).join(' ');
+
+/**
+ * Cosine over IDF-weighted token sets between the query and each pitfall's text
+ * (title + trigger + why + category). Pure; IDF is computed over the given pitfalls,
+ * so rare terms discriminate and boilerplate terms don't. Scores land in 0..1 like
+ * embedding cosine, but run lower — callers keep the same `minScore` floor.
+ */
+export function lexicalScores(queryText: string, pitfalls: Pitfall[]): number[] {
+  const docs = pitfalls.map((p) => lexicalTokens(pitfallText(p)));
+  const q = lexicalTokens(queryText);
+  const n = docs.length;
+  const df = new Map<string, number>();
+  for (const d of docs) for (const t of d) df.set(t, (df.get(t) ?? 0) + 1);
+  const idf = (t: string): number => Math.log(1 + (n + 1) / (1 + (df.get(t) ?? 0)));
+  const norm = (tokens: Set<string>): number =>
+    Math.sqrt([...tokens].reduce((s, t) => s + idf(t) ** 2, 0));
+  const qNorm = norm(q);
+  return docs.map((d) => {
+    if (q.size === 0 || d.size === 0 || qNorm === 0) return 0;
+    let dot = 0;
+    for (const t of d) if (q.has(t)) dot += idf(t) ** 2;
+    return dot / (qNorm * norm(d));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Retrieval
+// ---------------------------------------------------------------------------
+
+/** Scope filter (ADR-21): global pitfalls always apply; repo-scoped only in their origin repo. */
+const inScope = (p: Pitfall, repo?: string): boolean =>
+  (p.scope ?? 'global') !== 'repo' || p.repo === repo;
+
+// Rank, floor, cap — and drop the embedding from the RESULT: it powers the cosine but no
+// consumer ever reads it (the agent, CLI, and audit log use title/why/category/score). A
+// `voyage-code-3` vector is 1024 floats ≈ 16KB serialized PER pitfall — returning topK of
+// them ships ~80KB / tens of thousands of tokens into every review context that the model
+// can't use. The stored pitfall keeps its vector; only the retrieved copy is slimmed.
+const rankAndSlim = (scored: RetrievedPitfall[], topK: number, minScore: number): RetrievedPitfall[] =>
+  scored
+    .filter((r) => r.score >= minScore)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map(({ pitfall: { embedding: _embedding, ...pitfall }, score }) => ({ pitfall, score }));
+
 /**
  * Retrieve the pitfalls most relevant to a query (the diff's changed symbols, files, and
  * deterministic findings), ranked by embedding cosine similarity (ADR-01: grounded
  * retrieval, not fine-tuning).
+ *
+ * Hybrid: pitfalls stored WITHOUT a vector (seeded while no provider was configured) are
+ * scored lexically instead of being invisible, and if the query embedding itself fails
+ * (provider outage) the whole batch degrades to lexical rather than failing the review.
  *
  * Scope (ADR-21): global pitfalls always apply; repo-scoped pitfalls apply only when
  * reviewing their origin `repo`, so project-specific knowledge helps within that project
@@ -23,21 +97,44 @@ export async function retrieveRelevant(
   minScore = 0.05,
   repo?: string,
 ): Promise<RetrievedPitfall[]> {
-  const pitfalls = (await store.pitfalls()).filter(
-    (p) => p.embedding && p.embedding.length > 0 && ((p.scope ?? 'global') !== 'repo' || p.repo === repo),
-  );
+  const pitfalls = (await store.pitfalls()).filter((p) => inScope(p, repo));
   if (pitfalls.length === 0 || queryText.trim() === '') return [];
-  const [q] = await provider.embed([queryText]);
-  if (!q) return [];
-  return pitfalls
-    .map((pitfall) => ({ pitfall, score: cosineSimilarity(q, pitfall.embedding!) }))
-    .filter((r) => r.score >= minScore)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    // Drop the embedding from the RESULT: it powers the cosine above but no consumer ever reads
-    // it (the agent, CLI, and audit log use title/why/category/score). A `voyage-code-3` vector is
-    // 1024 floats ≈ 16KB serialized PER pitfall — returning topK of them ships ~80KB / tens of
-    // thousands of tokens into every review context that the model can't use. The stored pitfall
-    // keeps its vector (knowledge store is untouched); only the retrieved copy is slimmed.
-    .map(({ pitfall: { embedding: _embedding, ...pitfall }, score }) => ({ pitfall, score }));
+  let q: number[] | undefined;
+  try {
+    [q] = await provider.embed([queryText]);
+  } catch {
+    q = undefined; // transient provider failure → lexical for everything, never a failed review
+  }
+  if (!q) {
+    // Outage path: ONE lexical pass over the whole in-scope corpus — scoring embedded and
+    // vectorless pitfalls against separate IDF bases would make the merged ranking
+    // apples-to-oranges.
+    const lex = lexicalScores(queryText, pitfalls);
+    return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore);
+  }
+  const qv = q;
+  const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
+  const vectorless = pitfalls.filter((p) => !p.embedding || p.embedding.length === 0);
+  const scored: RetrievedPitfall[] = embedded.map((pitfall) => ({ pitfall, score: cosineSimilarity(qv, pitfall.embedding!) }));
+  const lex = lexicalScores(queryText, vectorless);
+  scored.push(...vectorless.map((pitfall, i) => ({ pitfall, score: lex[i]! })));
+  return rankAndSlim(scored, topK, minScore);
+}
+
+/**
+ * Retrieval without any embedding provider: IDF-weighted token overlap over every
+ * in-scope pitfall's text. Far weaker than embeddings, far better than nothing — a
+ * key-less install still gets its plex.md guidance and accumulated pitfalls back.
+ */
+export async function retrieveRelevantLexical(
+  store: KnowledgeStore,
+  queryText: string,
+  topK = 5,
+  minScore = 0.05,
+  repo?: string,
+): Promise<RetrievedPitfall[]> {
+  const pitfalls = (await store.pitfalls()).filter((p) => inScope(p, repo));
+  if (pitfalls.length === 0 || queryText.trim() === '') return [];
+  const lex = lexicalScores(queryText, pitfalls);
+  return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore);
 }

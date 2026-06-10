@@ -8,9 +8,11 @@
  * server stays model-agnostic and runs in a fresh process, separate from whoever
  * authored the code — which removes self-review bias.
  *
- * Implemented: index_repo, get_review_context (blast radius + deterministic findings +
- * plex.md), get_blast_radius, get_deterministic_findings, submit_findings (merged &
- * ranked stream), record_outcome (scoped verdicts). get_relevant_knowledge lands in M3.
+ * The 15 tools are registered below: the review flow (index_repo, get_review_context,
+ * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
+ * reconcile_outcomes), the knowledge base (get_relevant_knowledge, seed_knowledge,
+ * consolidate_knowledge, propose_promotions), mining (mine_scan, add_pitfalls,
+ * mine_history), and doctor.
  */
 import path from 'node:path';
 import { statSync, readFileSync } from 'node:fs';
@@ -107,11 +109,18 @@ const guard = async (fn: () => Promise<unknown>, label: string) => {
   }
 };
 
+// The diff-source axes, shared by every review-flow tool. Two mutually exclusive shapes:
+// `source: 'pr'` + `pr: <number>` reviews a GitHub PR; anything else is a LOCAL diff picked by
+// `mode` (`working` default) — `baseRef` applies only to `mode: 'branch'`. One review must use
+// the SAME source params across context → findings → outcomes → reconcile (they key the brain).
 const diffSourceShape = {
-  source: z.enum(['local', 'pr']).optional(),
-  mode: z.enum(['working', 'staged', 'branch']).optional(),
-  baseRef: z.string().optional(),
-  pr: z.union([z.string(), z.number()]).optional(),
+  source: z.enum(['local', 'pr']).optional().describe('"local" (default) or "pr" (requires `pr`).'),
+  mode: z
+    .enum(['working', 'staged', 'branch'])
+    .optional()
+    .describe('Local diffs only: working (default) | staged | branch (diff vs baseRef). Ignored when source is "pr".'),
+  baseRef: z.string().optional().describe('Base ref for mode "branch" (default "main").'),
+  pr: z.union([z.string(), z.number()]).optional().describe('GitHub PR number — required with source "pr".'),
 };
 
 server.tool(
@@ -123,7 +132,7 @@ server.tool(
 
 server.tool(
   'get_review_context',
-  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and guidance. Auto-indexes the repo on first use.',
+  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and `notes` — the agent guidance; read and follow them. Auto-indexes the repo on first use. Defaults: repoPath = cwd, local working diff; pass source:"pr" + pr for a GitHub PR, and the SAME source params on every other tool of this review.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
@@ -302,9 +311,15 @@ server.tool(
 // --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.
 server.tool(
   'mine_scan',
-  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls.',
-  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
-  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_scan'),
+  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls. `order: "oldest"` scans chronologically (PR #1 up); `limit` bounds fresh PRs this run (the cursor advances; the next call continues).',
+  {
+    repoPath: z.string().optional(),
+    reset: z.boolean().optional(),
+    state: z.enum(['merged', 'all']).optional(),
+    order: z.enum(['newest', 'oldest']).optional(),
+    limit: z.number().int().positive().optional(),
+  },
+  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_scan'),
 );
 
 server.tool(
@@ -334,9 +349,15 @@ server.tool(
 
 server.tool(
   'mine_history',
-  'One-shot standalone mining: scan + distill (heuristic, or the configured LLM if a key is set) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning.',
-  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
-  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_history'),
+  'One-shot standalone mining: scan + LLM-distill (local `claude` CLI by default, or the configured provider — errors with no LLM available) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning. Takes the same order/limit as mine_scan.',
+  {
+    repoPath: z.string().optional(),
+    reset: z.boolean().optional(),
+    state: z.enum(['merged', 'all']).optional(),
+    order: z.enum(['newest', 'oldest']).optional(),
+    limit: z.number().int().positive().optional(),
+  },
+  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_history'),
 );
 
 server.tool(

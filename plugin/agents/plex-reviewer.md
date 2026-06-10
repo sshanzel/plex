@@ -36,7 +36,7 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 ## Procedure
 
-1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus `source` / `mode` (`working|staged|branch`) / `baseRef` / `pr`.
+1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus the diff-source params — two mutually exclusive shapes: a GitHub PR is `source: 'pr'` + `pr: <number>` (no `mode`); anything else is local, picked by `mode` (`working` | `staged` | `branch`; `baseRef` applies only to `branch`, default `main`). Use the **same** source params on every Plex call of this review — they key the PR brain.
 
    **If the change is large** (many files / big surface), consider the **`plex-parallel-review`**
    skill instead — it asks Plex for a `reviewPlan` and, when the change splits into independent
@@ -45,12 +45,13 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 2. **Get grounding** — call `mcp__plex__get_review_context`. If it errors that the repo isn't indexed, call `mcp__plex__index_repo` once and retry (the first review also auto-indexes). It returns:
    - `changed` — the symbols the diff actually touches.
-   - `blastRadius` — files coupled to the change (`co-change` = historical, `import`/`precise-ref` = structural). **Inspect these for breakage the diff could cause elsewhere** — this is what an ordinary review misses.
+   - `blastRadius` — files coupled to the change (`co-change` = historical, `import`/`precise-ref` = structural). **Inspect these for breakage the diff could cause elsewhere** — this is what an ordinary review misses. Empty means the change is genuinely isolated: review the changed files and move on (but if you expected coupling, check the context's staleness note — the graph may be behind HEAD).
    - `deterministic` — codified findings already computed; incorporate them, do not re-derive them.
    - `knowledge` — relevant past pitfalls; weigh them against the change.
    - `changeContext` — the author's STATED intent (PR title/description or commit subjects). Treat it as a claim, not ground truth.
    - `unexplainedChanges` — regions that changed since the **last review round** with NO prior finding or PR comment explaining them (semantic match). **Scrutinize these first** — they were not requested by feedback and are where slipped-in changes hide.
    - `priorRounds` / `openComments` — FACTS from earlier rounds (not prior reasoning): use them to stay consistent without anchoring.
+   - `inferredAccepts` — prior-round findings this round's changes already FIXED (auto-accepted, each naming whether it matched semantically or by file/line locality). Don't re-raise them; a one-line "N prior findings verified fixed" in your summary is enough — and if one looks wrongly auto-accepted (the change near it didn't actually fix it), say so and re-raise it explicitly.
    - `plex.md` — project review guidance; honor it.
 
 3. **Reason from first principles** — as if reviewing this code for the FIRST time. Read the changed code AND the blast-radius files. Hunt for real bugs, potential bugs, edge cases, and breakage in coupled files. Severity ∈ {bug, improvement, nit, **awareness**} and confidence ∈ 0..1 are independent — a high-severity, low-confidence item is a "potential bug." Set `confidence` honestly (Plex ranks by it), but it's an **internal** axis: never surface the raw number when you present — a reader sees "0.4" as "weak/probably wrong", which is not what it means. Express uncertainty in words instead ("potential", "likely", "worth confirming").

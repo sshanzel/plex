@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
- * path for agents. Commands: index, review, blast, verdict, verdicts.
+ * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
+ * verdicts, seed, promote, mine (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
@@ -60,6 +61,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex seed [repoPath] [--file <markdown>]
+  plex promote [repoPath]                                # consolidate confidence + propose plex.md/rule promotions
   plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
@@ -288,6 +290,11 @@ async function main(): Promise<number> {
       });
       process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
       process.stdout.write(`  ${res.reason}\n`); // always explain the outcome — esp. why accepted is 0
+      // The audit trail: WHAT was accepted and WHICH signal matched — a locality false-accept
+      // should be visible here, not a silent disappearance from the stream.
+      for (const a of res.acceptedFindings ?? []) {
+        process.stdout.write(`  ✓ ${a.title} (${a.file ?? '?'}:${a.line ?? '?'} — ${a.matchedBy})\n`);
+      }
       return 0;
     }
     case 'eval': {

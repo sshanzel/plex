@@ -24,7 +24,7 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
    server this plugin configures via `.mcp.json`). If the Plex tools aren't visible, ensure the
    plex MCP server is enabled in your Codex config — never fall back to a hand review.
 
-2. **Pick the diff** (same surface as `plex-reviewer`): default staged; honor a named branch/PR.
+2. **Pick the diff** (same surface as `plex-review`): default staged; honor a named branch/PR.
    Thread the **same** `source` / `mode` / `baseRef` / `pr` through every Plex call below so they
    land on the same PR brain.
 
@@ -39,13 +39,13 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
 4. **Branch on the strategy:**
 
    ### `single` (the common case)
-   Do not spawn anything. Review the whole change yourself following the `plex-reviewer`
+   Do not spawn anything. Review the whole change yourself following the `plex-review`
    procedure (read changed code **and** the `blastRadius` files; reason from first principles;
    check code against `changeContext`; scrutinize `unexplainedChanges` first), then go to step 6
    with your findings.
 
    ### `parallel`
-   Fan out **one `plex-reviewer` subagent per unit, in parallel** (spawn them in a single batch
+   Fan out **one `plex-review` subagent per unit, in parallel** (spawn them in a single batch
    so they run concurrently). Give each subagent a **focused-unit** prompt:
    - `FOCUS FILES:` the unit's `files` — review only the changes in these.
    - The grounding it needs, sliced from the single `get_review_context` you already have:
@@ -57,7 +57,7 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
      you, the orchestrator, consolidate and submit once. (Re-calling `get_review_context` would
      bump the round N times and recompute the blast radius per unit — wasteful and wrong.)
 
-   See `plex-reviewer`'s **"Focused unit mode"** section — it's built for exactly this.
+   See `plex-review`'s **"Focused unit mode"** section — it's built for exactly this.
 
 5. **Consolidate (the whole point).** Collect every unit's findings into one list, then do a
    cross-unit pass yourself — this is the value parallelism would otherwise destroy:
@@ -71,7 +71,7 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
 6. **Submit once, then stop.** Make **one** `mcp__plex__submit_findings` call with the full
    consolidated list (and the same diff source). Plex merges with deterministic findings, applies
    scoped/semantic waivers, ranks, triages, and — when reviewing a PR with auto-comment on — posts
-   the single review to the PR. Present the returned stream using `plex-reviewer`'s **single
+   the single review to the PR. Present the returned stream using `plex-review`'s **single
    markdown table, exactly**: columns `Severity | Finding | Location`, one row per finding, ordered
    by severity (Bug → Improvement → Nit → Awareness) then by signal within each. The `Severity` cell
    IS the label; the `Location` is `file:line`. Do **not** add columns of your own (especially **not

@@ -20,17 +20,25 @@ function elementsFor(ctx: ReviewContext): CyElement[] {
   return els;
 }
 
+/** Minimal HTML-escape for values interpolated into markup (repo/branch names are user data). */
+const escapeHtml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 /**
  * Render a self-contained HTML visualization of the review neighborhood (M5 product
- * viz). Same data the ephemeral FalkorDB graph holds; Cytoscape loaded from a CDN.
+ * viz). Cytoscape loaded from a CDN. All interpolated strings are escaped — repo and
+ * ref names are user-controlled, and the JSON payload escapes `<` so a file path can
+ * never break out of the script block.
  */
 export function reviewContextToHtml(ctx: ReviewContext): string {
-  const elements = JSON.stringify(elementsFor(ctx));
+  const elements = JSON.stringify(elementsFor(ctx)).replace(/</g, '\\u003c');
+  const repo = escapeHtml(ctx.repo);
+  const baseRef = escapeHtml(ctx.baseRef);
   return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>reviewer — ${ctx.repo} (${ctx.baseRef})</title>
+<title>reviewer — ${repo} (${baseRef})</title>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <style>
   html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
@@ -40,7 +48,7 @@ export function reviewContextToHtml(ctx: ReviewContext): string {
 </style>
 </head>
 <body>
-<header><strong>reviewer</strong> &nbsp; ${ctx.repo} &nbsp; <small>base ${ctx.baseRef} · ${ctx.changed.length} changed · ${ctx.blastRadius.length} coupled</small></header>
+<header><strong>reviewer</strong> &nbsp; ${repo} &nbsp; <small>base ${baseRef} · ${ctx.changed.length} changed · ${ctx.blastRadius.length} coupled</small></header>
 <div id="cy"></div>
 <script>
   const elements = ${elements};
