@@ -45,7 +45,7 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 2. **Get grounding** — call `mcp__plex__get_review_context`. If it errors that the repo isn't indexed, call `mcp__plex__index_repo` once and retry (the first review also auto-indexes). It returns:
    - `changed` — the symbols the diff actually touches.
-   - `blastRadius` — files coupled to the change (`co-change` = historical, `import`/`precise-ref` = structural). **Inspect these for breakage the diff could cause elsewhere** — this is what an ordinary review misses.
+   - `blastRadius` — files coupled to the change (`co-change` = historical, `import`/`precise-ref` = structural). **Inspect these for breakage the diff could cause elsewhere** — this is what an ordinary review misses. Empty means the change is genuinely isolated: review the changed files and move on (but if you expected coupling, check the context's staleness note — the graph may be behind HEAD).
    - `deterministic` — codified findings already computed; incorporate them, do not re-derive them.
    - `knowledge` — relevant past pitfalls; weigh them against the change.
    - `changeContext` — the author's STATED intent (PR title/description or commit subjects). Treat it as a claim, not ground truth.
