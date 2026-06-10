@@ -60,10 +60,10 @@ After that, reviews use the cached graph and refresh only what changed. (If you 
 
 Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
 
-- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality.
-- **With a key:** all of that, plus the knowledge layer. Plex pulls relevant past pitfalls into each review, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
+- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality, you can still seed `plex.md` guidance into the knowledge base, and stored pitfalls are still retrieved — by keyword match rather than semantically.
+- **With a key:** all of that, plus the full knowledge layer. Plex pulls relevant past pitfalls into each review *semantically*, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
 
-So add one: run `npx @sshanzel/plex init`, or just create `~/.plex/config.json` yourself:
+So add one: run `npx @sshanzel/plex init`, create `~/.plex/config.json` yourself, or set the environment variable pair (`PLEX_EMBEDDING_PROVIDER=voyage` + the provider's key, e.g. `VOYAGE_API_KEY` — env overrides the file):
 
 ```json
 { "embedding": { "provider": "voyage", "apiKey": "YOUR_KEY" } }
