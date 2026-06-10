@@ -57,6 +57,13 @@ For each diff file (skipping `status === 'deleted'` and unsupported extensions):
 4. Convert to `Finding`: id `det:<rule>:<file>:<startLine>`, `source: 'deterministic'`,
    `tags: [rule]` — the tag is what a `pattern-repo` waiver's `pattern` matches against, so a user
    can waive a whole rule (e.g. `no-console`) for the repo.
+5. **Measured prevalence** (`rulePrevalence`, default on; only when something fired): each
+   finding is stamped with its rule's repo prevalence = the fraction of sampled source files
+   with ≥1 hit of the same rule (breadth-first sample, `prevalenceFileCap` default **400** —
+   a sample, not a census; `SKIP_DIRS` + dot-dirs + `.d.ts` excluded). This makes ADR-05's
+   prevalence-by-severity read rest on DATA for codified findings (a `no-console` in 40% of
+   files demotes to convention; a widespread `no-debugger` escalates as systemic) — agent
+   findings still carry agent-supplied prevalence.
 
 **Changed-line gotcha:** the filter short-circuits when `ranges.length === 0` — a file with **no
 captured ranges** (e.g. an added file whose hunks weren't captured) gets ALL its findings emitted,

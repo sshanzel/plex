@@ -48,7 +48,8 @@ Severity and confidence are **separate axes** (ADR-04) — they multiply; never 
 bug" into a lower severity.
 
 **Prevalence** (`Finding.prevalence`, 0..1 "how common in the repo") is *supplied*, not computed
-here — the agent passes it on `submit_findings`. It's read twice, **by severity** (ADR-05):
+here — the agent passes it on `submit_findings` for its own findings, and `@plex/deterministic`
+stamps a **measured** per-rule prevalence on codified findings. It's read twice, **by severity** (ADR-05):
 continuously in `deviation` (non-bugs only) and discretely in triage at
 `prevalenceThreshold` (default **0.5**, `rank.ts`): common + `bug` → **`systemic-migration`**
 (escalated), common + non-bug → **`convention`** (demoted). Suppression must never silence
