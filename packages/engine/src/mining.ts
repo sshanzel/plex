@@ -111,6 +111,8 @@ export async function scanForMining(
     repoName: repo,
     alreadyScanned: prior.scannedPrs,
     state: opts.state,
+    order: opts.order,
+    limit: opts.limit,
   });
   await saveMiningState(repoPath, config, { repo, scannedPrs: scan.scannedPrs, lastRun: new Date().toISOString() });
 

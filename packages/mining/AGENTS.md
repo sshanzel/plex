@@ -86,8 +86,6 @@ next run continues.
   `accepted`, else `rejected`); thread `isResolved` and the resolving diff are unused. The
   `outcomeWeight` table itself (core) IS applied by knowledge consolidation now; richer outcomes
   would make it bite on mined incidents too. See outcome-signals.md.
-- **`mine_scan` can't do `--oldest`/`--limit`**: `scanForMining` (engine) accepts `MineRepoOptions`
-  but only forwards `reset`/`state` to `scanHistory` — chronological/bounded mining is CLI-only.
 - **The cursor advances at scan time**, before the agent distills: if `mine_scan` clusters are never
   passed to `add_pitfalls`, those PRs won't be re-clustered without `--reset` (their Incidents are
   recorded, though).

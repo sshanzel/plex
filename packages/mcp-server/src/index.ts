@@ -302,9 +302,15 @@ server.tool(
 // --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.
 server.tool(
   'mine_scan',
-  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls.',
-  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
-  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_scan'),
+  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls. `order: "oldest"` scans chronologically (PR #1 up); `limit` bounds fresh PRs this run (the cursor advances; the next call continues).',
+  {
+    repoPath: z.string().optional(),
+    reset: z.boolean().optional(),
+    state: z.enum(['merged', 'all']).optional(),
+    order: z.enum(['newest', 'oldest']).optional(),
+    limit: z.number().int().positive().optional(),
+  },
+  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_scan'),
 );
 
 server.tool(
@@ -334,9 +340,15 @@ server.tool(
 
 server.tool(
   'mine_history',
-  'One-shot standalone mining: scan + distill (heuristic, or the configured LLM if a key is set) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning.',
-  { repoPath: z.string().optional(), reset: z.boolean().optional(), state: z.enum(['merged', 'all']).optional() },
-  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state }), 'mine_history'),
+  'One-shot standalone mining: scan + LLM-distill (local `claude` CLI by default, or the configured provider — errors with no LLM available) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning. Takes the same order/limit as mine_scan.',
+  {
+    repoPath: z.string().optional(),
+    reset: z.boolean().optional(),
+    state: z.enum(['merged', 'all']).optional(),
+    order: z.enum(['newest', 'oldest']).optional(),
+    limit: z.number().int().positive().optional(),
+  },
+  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_history'),
 );
 
 server.tool(

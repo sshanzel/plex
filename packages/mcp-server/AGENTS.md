@@ -26,9 +26,9 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 | `seed_knowledge` | `seedKnowledge` | — (`markdown`) |
 | `consolidate_knowledge` | `consolidateKnowledge` | — |
 | `propose_promotions` | `getPromotions` | — |
-| `mine_scan` | `scanForMining` | — (`reset`, `state`) |
+| `mine_scan` | `scanForMining` | — (`reset`, `state`, `order`, `limit`) |
 | `add_pitfalls` | `addMinedPitfalls` | — (`pitfalls[]`) |
-| `mine_history` | `mineRepo` | — (`reset`, `state`) |
+| `mine_history` | `mineRepo` | — (`reset`, `state`, `order`, `limit`) |
 | `doctor` | `buildDoctorReport` | — |
 
 **Diff-source params** (`diffSourceShape`, all optional): `source: 'local' | 'pr'`,
@@ -66,9 +66,9 @@ target (`reviewTargetFor(repoPath, src)`) agrees across context → findings →
   `.mcp.json` and the plugin's npx command both do). The tsx Kùzu open-limit (ADR-17) would crash a
   tsx-run server.
 - **Embeddings optional (ADR-30)**: tools degrade rather than fail — `get_relevant_knowledge`
-  returns `[]`; `reconcile_outcomes` falls back to locality-only. Exception: `seed_knowledge`,
-  `mine_scan`/`mine_history`/`add_pitfalls` error without a provider (knowledge writes must not
-  store unsearchable noise).
+  falls back to lexical (keyword) retrieval; `seed_knowledge` stores vectorless (lexically
+  searchable) pitfalls; `reconcile_outcomes` falls back to locality-only. Exception:
+  `mine_scan`/`mine_history`/`add_pitfalls` error without a provider (clustering needs vectors).
 - **`record_outcome` / `reconcile_outcomes` are internal learning-loop bookkeeping** — agents call
   them silently and best-effort (the `instructions` say so); a dropped call is recovered by the next
   review's locality-based fix inference (ADR-36). Never make an agent surface their success/failure.
