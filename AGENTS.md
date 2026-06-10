@@ -90,7 +90,7 @@ Downstream users install via a **plugin — Claude Code *or* Codex** — not by 
 plugin/                                     # the "plex" plugin — Claude AND Codex read this one dir
   .claude-plugin/plugin.json               # Claude manifest (NO version → git-SHA versioning; a push = an update)
   .codex-plugin/plugin.json                # Codex manifest → skills: ./codex/skills/
-  .mcp.json                                # launches the engine for BOTH: npx -y -p @sshanzel/plex plex-mcp
+  .mcp.json                                # launches the engine for BOTH: npx -y -p @sshanzel/plex@<pinned> plex-mcp
   commands/review.md                        # Claude: the /plex:review command
   agents/plex-reviewer.md                  # Claude: the reviewer subagent — REAL file, canonical
   skills/plex-parallel-review/SKILL.md     # the parallel-review orchestrator — REAL file, canonical
@@ -114,8 +114,13 @@ Install — Claude: `/plugin marketplace add sshanzel/plugins` → `/plugin inst
 Codex: `codex plugin marketplace add sshanzel/plex` (then the `plex-review` skill). **Naming rule:**
 `plex-*` (the reviewer agent/skill + `plex-parallel-review`) are Plex-coupled and ship in this plugin;
 the general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel/plugins`) and only
-*detect* Plex. The engine (npm `@sshanzel/plex`) updates separately from the plugin (git push). The
-plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex`).
+*detect* Plex. **The plugin pins the engine version** — `plugin/.mcp.json` launches
+`npx -y -p @sshanzel/plex@<version> plex-mcp` with an *exact* pin, so plugin (MD files) and engine
+(npm) ship in **lockstep**: publishing a new npm version reaches no one until the plugin's pin is
+bumped, and updating the plugin delivers the matching engine. The exact pin also dodges npx's stale
+`latest` cache (a new version = a new spec = a fresh fetch). **Release step (don't skip):** when you
+publish a new `@sshanzel/plex`, bump the pin in `plugin/.mcp.json` to match, then commit + push (the
+plugin update) — an un-bumped pin leaves users on the old engine even after they update the plugin.
 
 ## Local services (must remember)
 
