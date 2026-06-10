@@ -76,7 +76,7 @@ Blast radius ≈ **coupling**, not a precise call graph. Edges are unioned and t
 
 - **first-principles** (the spine — novel bugs, always on, from the agent's reasoning),
 - **knowledge-grounded** (recurring pitfalls retrieved semantically from the knowledge base),
-- **deterministic** (built-in TS-AST checks + Semgrep/ast-grep).
+- **deterministic** (built-in TS-AST checks; external scanners like Semgrep/ast-grep are a detected-but-unwired extension point — `detectExternalTools` has no caller yet).
 
 Ranked by `signal = severity × confidence × deviation-from-norm × blastRadius − waiverWeight`. Severity and confidence are **independent axes** (a "potential bug" = `bug` severity + low confidence). Cross-source agreement boosts confidence. Prevalence is read **by severity**: common *style* → convention (demote); common *bug* → systemic (escalate as a migration). Waivers suppress the same issue across rounds **by meaning** (semantic — survives line drift / rewording, ADR-27).
 
@@ -101,7 +101,7 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 | `ingest` | diff adapters (local git, gh PR) → normalized diff; head SHA + inter-round diff helpers | ✅ |
 | `code-graph` | Kùzu per-repo graph: symbols/imports/co-change + precise alias edges; incremental update | ✅ |
 | `neighborhood` | diff→symbols→blast-radius BFS over the code graph (multi-hop) | ✅ |
-| `deterministic` | built-in TS-AST checks + Semgrep/ast-grep detection | ✅ |
+| `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
 | `knowledge` | embeddings, JSON store, semantic retrieval, seeding, promotion (ADR-18) | ✅ |
 | `mining` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |

@@ -15,7 +15,7 @@ packages/
   code-graph/    Kùzu per-repo graph: TS symbols/imports + git co-change   [M1]
   neighborhood/  diff→symbols→blast radius (Kùzu) [M1]
   findings/      merge / dedup / rank / triage                            [M2]
-  deterministic/ Semgrep / ast-grep runner                                [M2]
+  deterministic/ built-in TS-AST codified checks                          [M2]
   knowledge/     knowledge graph + retrieval + plex.md                [M3]
   mcp-server/    MCP tool surface + orchestration
   cli/           `reviewer index | review`                                [M1]

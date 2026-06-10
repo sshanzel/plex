@@ -110,7 +110,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
         ▼  record_outcome (accept / reject / waive / acknowledge)  →  knowledge sharpens
 ```
 
-**Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST checks, plus optional Semgrep or ast-grep). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
+**Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST rules). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
 
 **Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling, its repo-scoped pitfalls, and its `plex.md` instructions; it tailors the review to one codebase.
 
