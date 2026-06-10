@@ -1,11 +1,14 @@
 # @plex/deterministic
 
 The **codified-checks source**: deterministic findings over a diff's changed files, restricted to
-changed lines. The always-available baseline is a set of built-in TS-AST rules (the TypeScript
-compiler API — ADR-15, no tree-sitter); Semgrep / ast-grep are *detected* as optional external
-scanners but their output is not parsed yet (extension point, see below). Output is plain
-`Finding[]` with `source: 'deterministic'` — these merge into the **same ranked stream** as the
-agent's findings. Decision log: [`docs/adr/README.md`](../../docs/adr/README.md) (ADR-03/15).
+changed lines, via a set of built-in TS-AST rules (the TypeScript compiler API — ADR-15, no
+tree-sitter). This is the **always-on structural layer** — the complement to the agent's judgment
+(ADR-03's third leg): 100% recall on each rule's pattern, ~free, reproducible, and what feeds
+measured prevalence. Output is plain `Finding[]` with `source: 'deterministic'` — these merge into
+the **same ranked stream** as the agent's findings. Decision log:
+[`docs/adr/README.md`](../../docs/adr/README.md) (ADR-03/15). (External-scanner integration —
+ast-grep/Semgrep — was removed in ADR-37; the future shape is `plex.json` config that *defers* to
+the linter you already run, not a runner Plex spawns.)
 
 Where it sits: `get_review_context` and `get_deterministic_findings` surface these to the reviewing
 agent up front; `submit_findings` (`engine/src/findings.ts#rankReviewFindings`,
@@ -19,7 +22,6 @@ confidence in `@plex/findings`), and a rule the agent missed still reaches the u
 |---|---|
 | `src/builtin.ts` | `analyzeSource` — the built-in TS-AST rules over one source file (pure); `isSupportedSource` |
 | `src/runner.ts` | `runDeterministic` — walk the diff's files, read from disk, scope to changed lines, `RawFinding` → `Finding` |
-| `src/external.ts` | `detectExternalTools` / `isAvailable` — probe for `semgrep` / `ast-grep` binaries |
 | `src/index.ts` | Barrel |
 
 ## The rules (`src/builtin.ts`)
@@ -75,15 +77,17 @@ not zero. That's deliberate (a brand-new file is entirely "changed") and pinned 
 `repoName` defaults to `basename(resolve(repoPath))` — the engine passes the same, keeping
 `Finding.location.repo` consistent with the agent findings it merges with.
 
-## External tools (`src/external.ts`) — graceful degradation
+## Why a deterministic layer at all (vs. the agent)
 
-`detectExternalTools()` probes `semgrep` and `ast-grep` by spawning `<bin> --version`
-(`execFile`; any failure including ENOENT → `false` — never throws). When present they are meant to
-become **additional deterministic sources** — the documented extension point is "parse their JSON
-output into `Finding[]` and merge". **That wiring does not exist yet**: nothing outside this
-package calls `detectExternalTools`, and `runDeterministic` runs only the built-in rules. The
-built-ins are the always-available baseline, so a review **never depends on either tool being
-installed** — no error, no degraded mode messaging; you simply get the built-in findings.
+Not redundant with the LLM — *complementary* (ADR-03's tripod). The agent is better at judgment;
+a structural pattern matcher is better at four things the agent structurally can't do well:
+**guarantee** (a rule fires 100% of the time on its pattern, no token spend, no "the agent was
+focused elsewhere" — vs. a retrieved pitfall, which is top-K *guidance* the agent may not surface);
+**cost/scale** (running a rule across 10k files is free — this is how prevalence is measured);
+**absence** (a rule encodes "this must NOT appear" and catches the violation regardless of what
+else is in the diff — retrieval is presence-keyed and misses absence-bugs); **reproducibility**
+(same rule, every PR, same result — CI's job, not an LLM's). That's why this layer stays even
+though the agent gets everything else.
 
 ## Invariants & gotchas
 
@@ -92,10 +96,8 @@ installed** — no error, no degraded mode messaging; you simply get the built-i
 - Deterministic findings enter the **same merge/dedup/rank stream** (`@plex/findings`) — never a
   separate report. Prevalence-by-severity (ADR-05) applies to them too: a widespread
   `no-debugger` hit escalates as systemic, it is not demoted as a convention.
-- Rules here are the **promotion target** for codifiable pitfalls (M5 `propose_promotions`
-  emits ast-grep-style rules) — keep each rule cheap, syntax-only, and pure.
 - `analyzeSource` is pure (string in, findings out); keep the fs/process work in
-  `runner.ts`/`external.ts` (root "pure core, impure edges" convention).
+  `runner.ts` (root "pure core, impure edges" convention).
 - Finding ids are positional (`det:<rule>:<file>:<startLine>`) — stable across runs only while the
   code doesn't move; cross-round identity is handled downstream (waivers/brain), not here.
 

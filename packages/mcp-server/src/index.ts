@@ -8,11 +8,10 @@
  * server stays model-agnostic and runs in a fresh process, separate from whoever
  * authored the code — which removes self-review bias.
  *
- * The 14 tools are registered below: the review flow (index_repo, get_review_context,
+ * The 13 tools are registered below: the review flow (index_repo, get_review_context,
  * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
  * reconcile_outcomes), the knowledge base (get_relevant_knowledge,
- * consolidate_knowledge, propose_promotions), mining (mine_scan, add_pitfalls,
- * mine_history), and doctor.
+ * consolidate_knowledge), mining (mine_scan, add_pitfalls, mine_history), and doctor.
  */
 import path from 'node:path';
 import { statSync, readFileSync } from 'node:fs';
@@ -29,7 +28,6 @@ import {
   rankReviewFindings,
   getRelevantKnowledge,
   consolidateKnowledge,
-  getPromotions,
   submitVerdict,
   reviewTargetFor,
   reconcileOutcomes,
@@ -86,7 +84,7 @@ const server = new McpServer(
       'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
       'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / ' +
-      'consolidate_knowledge / propose_promotions. `doctor` reports version + whether a newer build is on ' +
+      'consolidate_knowledge. `doctor` reports version + whether a newer build is on ' +
       'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
       'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
       '"disconnected" status is NEVER a reason to skip a step; just call the tool (the call reconnects), or ' +
@@ -157,7 +155,7 @@ server.tool(
 
 server.tool(
   'get_deterministic_findings',
-  'Codified (Semgrep/ast-grep-style) findings on the changed lines of a diff.',
+  'Codified (built-in TS-AST) findings on the changed lines of a diff.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
@@ -291,13 +289,6 @@ server.tool(
   'Recompute pitfall confidence from accumulated incident outcomes (the feedback loop).',
   {},
   () => guard(() => consolidateKnowledge(config), 'consolidate_knowledge'),
-);
-
-server.tool(
-  'propose_promotions',
-  'Propose graph→rule (ast-grep) promotions for codifiable pitfalls.',
-  {},
-  () => guard(() => getPromotions(config), 'propose_promotions'),
 );
 
 // --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.

@@ -33,8 +33,9 @@ function isNullish(node: ts.Expression): boolean {
 }
 
 /**
- * Deterministic, codifiable checks over a single source file via the TS AST (ADR-03,
- * tier: codifiable). These are the "promote a fuzzy lesson to a rule" target (M5). Pure.
+ * Deterministic checks over a single source file via the TS AST (ADR-03). The always-on
+ * structural-pattern layer: 100% recall on each rule's pattern, ~free, reproducible — the
+ * complement to the agent's judgment (and what feeds measured prevalence). Pure.
  */
 export function analyzeSource(file: string, text: string): RawFinding[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));

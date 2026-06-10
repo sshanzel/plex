@@ -76,7 +76,7 @@ Blast radius ≈ **coupling**, not a precise call graph. Edges are unioned and t
 
 - **first-principles** (the spine — novel bugs, always on, from the agent's reasoning),
 - **knowledge-grounded** (recurring pitfalls retrieved semantically from the knowledge base),
-- **deterministic** (built-in TS-AST checks; external scanners like Semgrep/ast-grep are a detected-but-unwired extension point — `detectExternalTools` has no caller yet).
+- **deterministic** (built-in TS-AST checks — the always-on structural layer; complements the agent's judgment with guaranteed, ~free, reproducible pattern detection, and feeds measured prevalence).
 
 Ranked by `signal = severityWeight × confidence × blast × deviation × agreement` (waived findings are triaged `suppressed`, not score-penalized). Severity and confidence are **independent axes** (a "potential bug" = `bug` severity + low confidence). Cross-source agreement boosts confidence. Prevalence is read **by severity**: common *style* → convention (demote); common *bug* → systemic (escalate as a migration). Waivers suppress the same issue across rounds **by meaning** (semantic — survives line drift / rewording, ADR-27).
 
@@ -87,11 +87,11 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 - a finding **addressed by a later change** → auto-`accept` on the next review (or via `reconcile`); an **explicit dismissal** → `reject` (responder); an `awareness` flag confirmed intentional → **`acknowledge`** (M12, no down-weight); **silence** → nothing.
 - accepted findings become **Incidents** → reweight **Pitfall** confidence (`consolidate_knowledge`); mining distills recurring PR-comment patterns into new pitfalls.
 - **closing the loop on a PR (ADR-34, opt-in `autoComment`):** reviewing a PR posts the ranked stream back as one GitHub review (inline + summary, deduped per round); **`/pr-master:respond`** triages it and records the outcomes above — so the loop runs on the PR itself, not just the terminal.
-- so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere. Codifiable high-confidence pitfalls can promote into deterministic ast-grep rule stubs (knowledge → rule).
+- so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere.
 
 ## Knowledge ⇄ markdown (ADR-09, ADR-10)
 
-The knowledge base is the learned engine — populated by mining PR history and the review feedback loop (no hand-authored markdown; ADR-37 retired `plex.md`). High-confidence *codifiable* lessons promote further into ast-grep rule stubs. Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s.
+The knowledge base is the learned engine — populated by mining PR history and the review feedback loop (no hand-authored markdown; ADR-37 retired `plex.md` and the knowledge→rule promotion path). Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s. A future committed `plex.json` is the planned home for human-authored review policy (incl. deferring to the linter's deterministic rules).
 
 ## Packages
 
@@ -103,7 +103,7 @@ The knowledge base is the learned engine — populated by mining PR history and 
 | `neighborhood` | diff→symbols→blast radius via a personalized-PageRank walk over the code graph | ✅ |
 | `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
-| `knowledge` | embeddings, JSON store, semantic retrieval, seeding, promotion (ADR-18) | ✅ |
+| `knowledge` | embeddings, JSON store, semantic retrieval, outcome consolidation (ADR-18) | ✅ |
 | `mining` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
 | `engine` | orchestration: index, assemble context, **Kùzu PR brain**, rank, verdicts, knowledge, reconcile, setup | ✅ |
 | `mcp-server` | the 14-tool MCP surface | ✅ |

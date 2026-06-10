@@ -292,7 +292,7 @@ export interface AttributedChange extends ChangedRegion {
   reason?: string;
 }
 
-export type IncidentSource = 'review' | 'mined' | 'seed';
+export type IncidentSource = 'review' | 'mined';
 export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted';
 
 export interface Incident {

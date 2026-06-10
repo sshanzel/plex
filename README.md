@@ -120,7 +120,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 ## MCP tools
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
 
 ## Architecture
 

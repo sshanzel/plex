@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Pitfall } from '@plex/core';
 import { KnowledgeStore } from './store';
-import { consolidatePitfalls, proposePromotions } from './promotion';
+import { consolidatePitfalls } from './promotion';
 
 function pf(over: Partial<Pitfall>): Pitfall {
   return {
@@ -86,19 +86,5 @@ describe('consolidatePitfalls', () => {
     await consolidatePitfalls(store); // one NEW reject moves it, exactly once
     expect((await store.pitfalls())[0]!.confidence).toBeCloseTo(3 / 5.5, 5); // Beta(1+2, 1+1.5)
     expect((await store.pitfalls())[0]!.incidentIds).toEqual(['i1', 'i2', 'i3']);
-  });
-});
-
-describe('proposePromotions', () => {
-  it('emits an ast-grep rule stub for each codifiable pitfall, and nothing for judgmental ones', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'kp2-'));
-    const store = new KnowledgeStore(dir);
-    await store.addPitfall(pf({ id: 'judg', title: 'Always validate tenant id', confidence: 0.9, tier: 'judgmental' }));
-    await store.addPitfall(pf({ id: 'cod', title: 'No debugger statements', confidence: 0.5, tier: 'codifiable', trigger: 'debugger' }));
-
-    const promo = await proposePromotions(store);
-    expect(promo.rules).toHaveLength(1);
-    expect(promo.rules[0]).toContain('No debugger statements');
-    expect(promo.rules.join('\n')).not.toContain('Always validate tenant id'); // judgmental → no rule
   });
 });

@@ -17,10 +17,8 @@ import {
   lexicalScores,
   recordIncident,
   consolidatePitfalls,
-  proposePromotions,
   type RetrievedPitfall,
   type ConsolidateResult,
-  type Promotions,
 } from '@plex/knowledge';
 import { recordVerdict, readVerdicts, type VerdictInput, type StoredVerdict } from './verdicts';
 import { Brain } from './brain';
@@ -148,10 +146,6 @@ export async function consolidateKnowledge(config: ReviewerConfig): Promise<Cons
   return consolidatePitfalls(knowledgeStore(config));
 }
 
-/** Propose graph → deterministic-rule (ast-grep) promotions for codifiable pitfalls. */
-export async function getPromotions(config: ReviewerConfig): Promise<Promotions> {
-  return proposePromotions(knowledgeStore(config));
-}
 
 /**
  * Record a verdict and close the feedback loop: an `accept` becomes a knowledge incident

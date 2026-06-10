@@ -35,7 +35,7 @@ storage (`~/.plex/repos/<id>`, the brain, the knowledge base) are shared. Built 
 - `mine [--reset] [--all] [--oldest] [--limit N] [--threshold X] [--min-cluster N]` — `mineRepo`,
   standalone LLM distillation (errors without an LLM, ADR-20); `--oldest` raises the PR fetch
   ceiling to find the chronological start.
-- `promote` — `consolidateKnowledge` + `getPromotions` (codifiable pitfalls → ast-grep rule stubs; also not listed in USAGE).
+- `consolidate` — `consolidateKnowledge`: recompute pitfall confidence from recorded incident outcomes.
 
 Diff-source flags map to the same `DiffSource` the MCP tools take: `--pr` → `source: 'pr'`,
 `--staged`/`--branch <base>` → local modes; default is local/`working`.

@@ -1,8 +1,7 @@
 # @plex/knowledge — AGENTS.md
 
 The knowledge base: a **JSON-backed Pitfall/Incident store** (ADR-18) plus the pure logic around
-it — embedding-based retrieval, outcome-driven confidence consolidation, and rule-promotion
-proposals. In the flow: **mining** (`@plex/mining`) and `add_pitfalls` populate it (knowledge is
+it — embedding-based retrieval and outcome-driven confidence consolidation. In the flow: **mining** (`@plex/mining`) and `add_pitfalls` populate it (knowledge is
 mined/learned, never hand-authored markdown — ADR-37 retired plex.md seeding), **reviews** retrieve
 from it (`get_review_context` → `retrieveRelevant`), and `record_outcome`/`consolidate_knowledge`
 close the loop (an `accept` becomes an Incident; consolidation recomputes confidence from Incidents).
@@ -18,7 +17,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | `src/embeddings.ts` | `EmbeddingProvider` impls (voyage / openai / gemini / ollama / fake) + `createEmbeddingProvider` (returns `null` when unusable) |
 | `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
-| `src/promotion.ts` | `consolidatePitfalls` (Beta-Bernoulli confidence) + `proposePromotions` (codifiable pitfalls → ast-grep rule stubs) |
+| `src/promotion.ts` | `consolidatePitfalls` — Beta-Bernoulli confidence recompute from incident outcomes |
 | `src/stats.ts` | Pure primitives: `betaPosteriorMean`, `wilsonLowerBound` |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
@@ -67,10 +66,12 @@ pure function of the counts → **idempotent** (re-running never drifts, unlike 
 review-driven incidents. Known gap: `wilsonLowerBound` (`stats.ts`, `z = 1.96`) is exported "for
 small-sample ranking" (tuning.md §1) but currently has **no consumer** outside its own tests.
 
-**Promotions (`promotion.ts`).** `proposePromotions(store)`: every `tier === 'codifiable'` pitfall
-→ an ast-grep stub with `pattern: TODO` (a human fills the pattern). The old markdown-promotion
-direction (graph → plex.md lines) was retired with plex.md (ADR-37) — knowledge is mined/learned,
-not promoted back into a hand-edited file.
+The whole **promotion** surface (graph → `plex.md` lines *and* graph → ast-grep rule stubs) was
+retired in ADR-37: the markdown half died with `plex.md`, and the rule half emitted
+`pattern: TODO` scaffolds for an external runner that was never wired (a human had to author the
+rule anyway). User-authored deterministic rules return — as committed `plex.json` config that
+*defers* to the linter you already run — when `plex.json` lands (backlog). The `tier` field stays
+on `Pitfall` (mining still sets it) but is now inert metadata: nothing reads it.
 
 **Incidents (`incidents.ts`).** `recordIncident` builds collision-safe ids
 `inc:<file-slug>:<hashId(snippet)>:<ts>` and is the learning loop's write path (an accepted finding

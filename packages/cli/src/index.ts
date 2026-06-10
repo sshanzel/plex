@@ -2,7 +2,7 @@
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, promote, mine (and an undocumented `review` — see the USAGE note).
+ * verdicts, consolidate, mine (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
@@ -23,7 +23,6 @@ import {
   readVerdicts,
   consolidateKnowledge,
   embeddingReady,
-  getPromotions,
   reviewContextToHtml,
   mineRepo,
   readHomeConfig,
@@ -59,7 +58,7 @@ Usage:
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
-  plex promote [repoPath]                                # consolidate confidence + propose ast-grep rule stubs
+  plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
   plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
@@ -368,16 +367,9 @@ async function main(): Promise<number> {
       );
       return 0;
     }
-    case 'promote': {
+    case 'consolidate': {
       const c = await consolidateKnowledge(config);
-      const promo = await getPromotions(config);
-      const out: string[] = [`Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes.`];
-      if (promo.rules.length) {
-        out.push('', 'Suggested ast-grep rule stubs:', ...promo.rules.map((r) => r.split('\n').map((l) => `  ${l}`).join('\n')));
-      } else {
-        out.push('No rule promotions suggested yet.');
-      }
-      process.stdout.write(out.join('\n') + '\n');
+      process.stdout.write(`Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes.\n`);
       return 0;
     }
     default:

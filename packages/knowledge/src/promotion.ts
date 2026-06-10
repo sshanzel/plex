@@ -1,4 +1,4 @@
-import { outcomeWeight, type Pitfall, type Incident } from '@plex/core';
+import { outcomeWeight, type Incident } from '@plex/core';
 import type { KnowledgeStore } from './store';
 import { betaPosteriorMean } from './stats';
 
@@ -50,33 +50,4 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
 
   await store.replacePitfalls(next);
   return { pitfalls: pitfalls.length, reinforced };
-}
-
-export interface Promotions {
-  /** ast-grep rule stubs for codifiable pitfalls (graph → deterministic rule). */
-  rules: string[];
-}
-
-function astGrepStub(p: Pitfall): string {
-  return [
-    `id: ${p.id}`,
-    `message: ${p.title}`,
-    'severity: warning',
-    'language: typescript',
-    'rule:',
-    `  pattern: TODO   # trigger: ${p.trigger}`,
-  ].join('\n');
-}
-
-/**
- * Propose graph → deterministic-rule promotions: every `codifiable` pitfall becomes an
- * ast-grep rule stub a human fills in. (The markdown-promotion direction was retired with
- * plex.md — knowledge is mined/learned, not promoted back into a hand-edited file.)
- */
-export async function proposePromotions(store: KnowledgeStore): Promise<Promotions> {
-  const rules: string[] = [];
-  for (const p of await store.pitfalls()) {
-    if (p.tier === 'codifiable') rules.push(astGrepStub(p));
-  }
-  return { rules };
 }

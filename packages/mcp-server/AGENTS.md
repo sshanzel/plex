@@ -11,7 +11,7 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 - `src/index.ts` — the server: version/build-mtime capture, `McpServer` + `instructions`, the per-call `guard`, and all 15 tool registrations.
 - `src/doctor.ts` — `buildDoctorReport()`: pure staleness/health report (unit-tested in `doctor.test.ts`).
 
-## The 14 tools
+## The 13 tools
 
 | Tool | Engine call | Diff-source params |
 |---|---|---|
@@ -24,7 +24,6 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 | `reconcile_outcomes` | `reconcileOutcomes` | yes |
 | `get_relevant_knowledge` | `getRelevantKnowledge` | — (`query`, `topK`) |
 | `consolidate_knowledge` | `consolidateKnowledge` | — |
-| `propose_promotions` | `getPromotions` (codifiable → ast-grep rule stubs) | — |
 | `mine_scan` | `scanForMining` | — (`reset`, `state`, `order`, `limit`) |
 | `add_pitfalls` | `addMinedPitfalls` | — (`pitfalls[]`) |
 | `mine_history` | `mineRepo` | — (`reset`, `state`, `order`, `limit`) |

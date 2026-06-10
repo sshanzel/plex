@@ -10,6 +10,6 @@ export { KnowledgeStore } from './store';
 export { retrieveRelevant, retrieveRelevantLexical, lexicalScores, lexicalTokens } from './retrieve';
 export type { RetrievedPitfall } from './retrieve';
 export { recordIncident } from './incidents';
-export { consolidatePitfalls, proposePromotions } from './promotion';
-export type { ConsolidateResult, Promotions } from './promotion';
+export { consolidatePitfalls } from './promotion';
+export type { ConsolidateResult } from './promotion';
 export { betaPosteriorMean, wilsonLowerBound } from './stats';

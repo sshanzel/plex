@@ -33,7 +33,6 @@ export {
   learnIncident,
   submitVerdict,
   consolidateKnowledge,
-  getPromotions,
 } from './knowledge';
 export { reviewContextToHtml } from './viz';
 export {
