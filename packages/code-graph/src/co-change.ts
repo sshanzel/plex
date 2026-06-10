@@ -130,18 +130,8 @@ export interface ChangedFiles {
   deleted: string[];
 }
 
-/**
- * Source files changed since `sha` (`git diff --name-status -M sha HEAD`). Renames split
- * into delete(old)+add(new). Returns `null` when the diff can't be computed (e.g. the sha
- * is no longer in history after a force-push) — the caller should fall back to a full build.
- */
-export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
-  let stdout: string;
-  try {
-    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
-  } catch {
-    return null;
-  }
+/** Parse `git diff --name-status` output into added/modified/deleted. Pure (unit-tested). */
+export function parseNameStatus(stdout: string): ChangedFiles {
   const added: string[] = [];
   const modified: string[] = [];
   const deleted: string[] = [];
@@ -154,6 +144,13 @@ export async function changedSourceFilesSince(cwd: string, sha: string): Promise
       const newP = parts[2];
       if (oldP && isIndexable(oldP)) deleted.push(oldP);
       if (newP && isIndexable(newP)) added.push(newP);
+    } else if (status.startsWith('C')) {
+      // Copy (emitted when the user's gitconfig enables copy detection, e.g.
+      // diff.renames=copies): the source is untouched; index only the new path. The old
+      // else-branch mis-filed these — parts[1] is the UNCHANGED source (landed in
+      // `modified`) and the new copy was dropped entirely.
+      const newP = parts[2];
+      if (newP && isIndexable(newP)) added.push(newP);
     } else {
       const p = parts[1];
       if (!p || !isIndexable(p)) continue;
@@ -163,6 +160,22 @@ export async function changedSourceFilesSince(cwd: string, sha: string): Promise
     }
   }
   return { added, modified, deleted };
+}
+
+/**
+ * Source files changed since `sha` (`git diff --name-status -M sha HEAD`). Renames split
+ * into delete(old)+add(new); copies index the new path. Returns `null` when the diff can't
+ * be computed (e.g. the sha is no longer in history after a force-push) — the caller
+ * should fall back to a full build.
+ */
+export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
+  } catch {
+    return null;
+  }
+  return parseNameStatus(stdout);
 }
 
 /** How many commits HEAD is ahead of `sha` (the graph's staleness). -1 if unknown. */

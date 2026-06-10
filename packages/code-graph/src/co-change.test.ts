@@ -1,7 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateCoChange, type CommitRecord } from './co-change';
+import { aggregateCoChange, parseNameStatus, type CommitRecord } from './co-change';
 
 const opts = { maxCommitFiles: 25, halfLifeDays: 365, minPairCount: 1, nowSec: 1_000_000 };
+
+describe('parseNameStatus', () => {
+  it('classifies adds, deletes, modifies, renames, and copies', () => {
+    const out = [
+      'A\tsrc/new.ts',
+      'M\tsrc/mod.ts',
+      'D\tsrc/gone.ts',
+      'R095\tsrc/old.ts\tsrc/renamed.ts',
+      'C080\tsrc/source.ts\tsrc/copy.ts', // emitted when copy detection is on (diff.renames=copies)
+      'M\treadme.md', // not indexable — dropped
+    ].join('\n');
+    expect(parseNameStatus(out)).toEqual({
+      added: ['src/new.ts', 'src/renamed.ts', 'src/copy.ts'],
+      modified: ['src/mod.ts'],
+      deleted: ['src/gone.ts', 'src/old.ts'],
+    });
+  });
+
+  it('a copy never marks its unchanged source as modified', () => {
+    const res = parseNameStatus('C100\tsrc/source.ts\tsrc/copy.ts');
+    expect(res.modified).toEqual([]);
+    expect(res.added).toEqual(['src/copy.ts']);
+  });
+});
 
 describe('aggregateCoChange', () => {
   it('weights small commits more than large ones (sizeFactor)', () => {
