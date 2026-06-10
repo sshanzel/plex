@@ -44,6 +44,21 @@ describe('consolidatePitfalls', () => {
     expect(byId['p1']!.incidentIds).toEqual(['i1', 'i2']);
   });
 
+  it('weights reverted incidents above plain accepts (ADR-11 outcomeWeight)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kp-rev-'));
+    const store = new KnowledgeStore(dir);
+    await store.addPitfall(pf({ id: 'pa', title: 'a', confidence: 0.4 }));
+    await store.addPitfall(pf({ id: 'pr', title: 'r', confidence: 0.4 }));
+    await store.addIncident({ id: 'i1', pitfallId: 'pa', source: 'review', outcome: 'accepted', ts: 't' });
+    await store.addIncident({ id: 'i2', pitfallId: 'pr', source: 'review', outcome: 'reverted', ts: 't' });
+
+    await consolidatePitfalls(store);
+    const byId = Object.fromEntries((await store.pitfalls()).map((p) => [p.id, p]));
+    expect(byId['pa']!.confidence).toBeCloseTo(2 / 3, 5); // Beta(1+1, 1) mean
+    expect(byId['pr']!.confidence).toBeCloseTo(2.5 / 3.5, 5); // Beta(1+1.5, 1) mean — stronger
+    expect(byId['pr']!.confidence).toBeGreaterThan(byId['pa']!.confidence);
+  });
+
   it('a pitfall with no incidents keeps its mined/seeded prior confidence', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp-prior-'));
     const store = new KnowledgeStore(dir);

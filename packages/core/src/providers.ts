@@ -9,6 +9,7 @@
  * provider must wrap an actual embedding endpoint.
  */
 import { createHash } from 'node:crypto';
+import type { IncidentOutcome } from './types';
 
 export interface EmbeddingProvider {
   readonly name: string;
@@ -44,6 +45,19 @@ export function slugify(s: string, maxLen = 48): string {
  */
 export function hashId(s: string, len = 8): string {
   return createHash('sha1').update(s).digest('hex').slice(0, len);
+}
+
+/**
+ * Positive evidence weight of an incident outcome (ADR-11). `reverted` outweighs a plain
+ * accept: the change a pitfall warned about shipped anyway and was later reverted — the
+ * strongest confirmation the warning was right. `rejected` (and unknown) contribute 0 here;
+ * rejection is costed separately on the failure side of the Beta posterior (knowledge
+ * consolidation's `REJECT_COST`).
+ */
+export function outcomeWeight(o: IncidentOutcome | undefined): number {
+  if (o === 'reverted') return 1.5;
+  if (o === 'accepted' || o === 'fixed') return 1;
+  return 0;
 }
 
 /**

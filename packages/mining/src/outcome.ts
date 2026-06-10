@@ -10,8 +10,6 @@ export function outcomeFor(c: { prMerged: boolean }): IncidentOutcome {
   return c.prMerged ? 'accepted' : 'rejected';
 }
 
-export function outcomeWeight(o: IncidentOutcome): number {
-  if (o === 'reverted') return 1.5; // caught something the alternative got wrong
-  if (o === 'accepted' || o === 'fixed') return 1;
-  return 0;
-}
+// The weight itself lives in @plex/core (knowledge consolidation applies it; this package
+// only produces outcomes). Re-exported here for back-compat.
+export { outcomeWeight } from '@plex/core';

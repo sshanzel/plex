@@ -48,9 +48,11 @@ why + category`. Weaker ranking than embeddings, far better than nothing — a k
 still gets its plex.md guidance and accumulated pitfalls back. Same `topK`/`minScore` semantics.
 
 **Consolidation (`promotion.ts` — the feedback loop's teeth, ADR-10).** Beta-Bernoulli posterior
-mean with constants `PRIOR_ALPHA = 1`, `PRIOR_BETA = 1`, `REJECT_COST = 1.5`,
-`POSITIVE = {'accepted', 'fixed'}`. For each pitfall, over its linked incidents
-(`incident.pitfallId === pitfall.id`): `s` = positive count, `f` = `rejected` count, and
+mean with constants `PRIOR_ALPHA = 1`, `PRIOR_BETA = 1`, `REJECT_COST = 1.5`. For each pitfall,
+over its linked incidents (`incident.pitfallId === pitfall.id`): `s` = **outcome-weighted**
+positive evidence `Σ outcomeWeight(outcome)` (`@plex/core`, ADR-11: accepted/fixed = 1,
+reverted = **1.5** — the warned-against change shipped and was later reverted, the strongest
+confirmation), `f` = `rejected` count, and
 
 ```
 confidence = betaPosteriorMean(1 + s, 1 + 1.5·f)  =  (1 + s) / (2 + s + 1.5·f)
@@ -59,11 +61,10 @@ confidence = betaPosteriorMean(1 + s, 1 + 1.5·f)  =  (1 + s) / (2 + s + 1.5·f)
 A pitfall with **zero linked incidents keeps its mined/seeded prior confidence**. The formula is a
 pure function of the counts → **idempotent** (re-running never drifts, unlike the old additive
 `+0.1/−0.15` rule). Consolidation also overwrites `incidentIds` with the linked incidents' ids
-(provenance backfill). Known gap: a `reverted` incident counts as **neither** success nor failure
-(contributes 0) — `outcomeWeight`'s `reverted: 1.5` lives in `@plex/mining` and is never applied here
-(see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)). Known gap:
-`wilsonLowerBound` (`stats.ts`, `z = 1.96`) is exported "for small-sample ranking" (tuning.md §1) but
-currently has **no consumer** outside its own tests.
+(provenance backfill). Note: mining's coarse `outcomeFor` never *produces* `fixed`/`reverted`
+(see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)) — those arrive from
+review-driven incidents. Known gap: `wilsonLowerBound` (`stats.ts`, `z = 1.96`) is exported "for
+small-sample ranking" (tuning.md §1) but currently has **no consumer** outside its own tests.
 
 **Promotions (`promotion.ts`, ADR-09).** `proposePromotions(store, existingMarkdown = '', threshold = 0.7)`:
 `confidence >= 0.7` and not already documented → suggest `- <title>` for plex.md; `tier ===

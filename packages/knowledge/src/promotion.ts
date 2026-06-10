@@ -1,4 +1,4 @@
-import type { Pitfall, Incident } from '@plex/core';
+import { outcomeWeight, type Pitfall, type Incident } from '@plex/core';
 import type { KnowledgeStore } from './store';
 import { betaPosteriorMean } from './stats';
 
@@ -8,7 +8,6 @@ import { betaPosteriorMean } from './stats';
 const PRIOR_ALPHA = 1;
 const PRIOR_BETA = 1;
 const REJECT_COST = 1.5;
-const POSITIVE = new Set(['accepted', 'fixed']);
 
 export interface ConsolidateResult {
   pitfalls: number;
@@ -36,11 +35,14 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
     const inc = byPitfall.get(p.id) ?? [];
     if (inc.length === 0) return p; // no outcomes yet → keep the mined/seeded prior confidence
     reinforced++;
-    // Beta-Bernoulli posterior mean over ALL linked outcomes. Idempotent by construction — it's a
-    // pure function of the counts, so re-running consolidate can't drift confidence the way the old
-    // additive rule did (no applied-set ledger needed). Real accept/reject evidence supersedes the
-    // mined prior estimate, which is what we want once a pitfall has a track record.
-    const s = inc.filter((i) => POSITIVE.has(i.outcome ?? '')).length;
+    // Beta-Bernoulli posterior mean over ALL linked outcomes, outcome-weighted (ADR-11):
+    // accepted/fixed contribute 1, reverted 1.5 (`outcomeWeight` — the warned-against change
+    // shipped and was later reverted: the strongest confirmation), rejected lands on the failure
+    // side at REJECT_COST. Idempotent by construction — it's a pure function of the counts, so
+    // re-running consolidate can't drift confidence the way the old additive rule did (no
+    // applied-set ledger needed). Real accept/reject evidence supersedes the mined prior
+    // estimate, which is what we want once a pitfall has a track record.
+    const s = inc.reduce((sum, i) => sum + outcomeWeight(i.outcome), 0);
     const f = inc.filter((i) => i.outcome === 'rejected').length;
     const confidence = betaPosteriorMean(PRIOR_ALPHA + s, PRIOR_BETA + REJECT_COST * f);
     return { ...p, confidence, incidentIds: inc.map((i) => i.id) };

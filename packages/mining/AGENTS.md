@@ -26,7 +26,7 @@ Decisions: ADR-11 (mining loop), ADR-20 (LLM-only distillation), ADR-21 (scope) 
 | `src/cluster.ts` | Pure clustering: `greedyCluster`, `adaptiveCosineThreshold` (μ+kσ), `centroid` |
 | `src/distill.ts` | `llmDistill`: one cluster → one Pitfall (or `null` = SKIP); `minedPitfallId` |
 | `src/llm.ts` | `CompletionProvider`s: `claude-cli` (default), `anthropic`, `openai`; `createCompletionProvider` → `null` when unusable |
-| `src/outcome.ts` | `outcomeFor` (binary merged-signal) + `outcomeWeight` (currently unapplied — see gaps) |
+| `src/outcome.ts` | `outcomeFor` (binary merged-signal); re-exports `outcomeWeight` (lives in `@plex/core`, applied by knowledge consolidation) |
 | `src/mine.ts` | Orchestration: `scanHistory` (mechanical, no LLM) and `mineHistory` (scan + distill + store) |
 | `src/types.ts` | `RawComment` (thread-grouped source unit), `MineResult` |
 
@@ -82,11 +82,10 @@ next run continues.
 
 ## Known gaps (code vs docs — verified)
 
-- **`outcomeWeight` is defined, exported, unit-tested — and never applied.** The `reverted: 1.5`
-  weight (ADR-11) is unrealized: knowledge consolidation uses its own Beta-Bernoulli `REJECT_COST`,
-  where a `reverted` incident contributes nothing. See outcome-signals.md.
-- **The root AGENTS.md says the cursor is at `<repo>/.plex/mining-state.json`** — stale since M10
-  centralized storage; the default is `~/.plex/repos/<id>/mining-state.json` (above).
+- **Mining never produces `fixed`/`reverted` outcomes** — `outcomeFor` is binary (merged →
+  `accepted`, else `rejected`); thread `isResolved` and the resolving diff are unused. The
+  `outcomeWeight` table itself (core) IS applied by knowledge consolidation now; richer outcomes
+  would make it bite on mined incidents too. See outcome-signals.md.
 - **`mine_scan` can't do `--oldest`/`--limit`**: `scanForMining` (engine) accepts `MineRepoOptions`
   but only forwards `reset`/`state` to `scanHistory` — chronological/bounded mining is CLI-only.
 - **The cursor advances at scan time**, before the agent distills: if `mine_scan` clusters are never

@@ -158,7 +158,7 @@ plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex
 
 Incremental cursor lives at `~/.plex/repos/<id>/mining-state.json` (in-repo at `.plex/mining-state.json` only with the `PLEX_DATA_DIR=.plex` opt-in). Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
 
-**Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so `fixed`/`reverted` (and the `reverted: 1.5` weight) are unrealized. Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
+**Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so mining never produces `fixed`/`reverted` (the `outcomeWeight` table — accepted/fixed 1, reverted 1.5 — IS applied in knowledge consolidation; it bites only on review-driven incidents until mining emits richer outcomes). Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
 
 ## Scope
 
