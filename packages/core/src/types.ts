@@ -143,7 +143,7 @@ export interface Finding {
 
 /** A finding after merge/dedup/ranking, with its computed signal and triage. */
 export interface RankedFinding extends Finding {
-  /** signal = severity × confidence × deviation-from-norm × blastRadius − waiverWeight (ADR-04). */
+  /** signal = severityWeight × confidence × blast × deviation × agreement (ADR-04/05 — the formula lives in @plex/findings signal.ts; waived findings are triaged `suppressed`, not subtracted). */
   signal: number;
   /** Sources that independently agreed on this finding (cross-source confidence boost). */
   agreedSources: FindingSource[];
@@ -233,7 +233,7 @@ export interface Pitfall {
 }
 
 // ---------------------------------------------------------------------------
-// Review brain (M6) — per-PR working memory, persisted in FalkorDB (ADR-22/23)
+// Review brain (M6/M11) — per-PR working memory, persisted in the embedded Kùzu brain (ADR-30)
 // ---------------------------------------------------------------------------
 
 /** A review invocation on a target at a distinct head — rounds accumulate (ADR-23). */

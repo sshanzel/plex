@@ -78,7 +78,7 @@ Blast radius ≈ **coupling**, not a precise call graph. Edges are unioned and t
 - **knowledge-grounded** (recurring pitfalls retrieved semantically from the knowledge base),
 - **deterministic** (built-in TS-AST checks; external scanners like Semgrep/ast-grep are a detected-but-unwired extension point — `detectExternalTools` has no caller yet).
 
-Ranked by `signal = severity × confidence × deviation-from-norm × blastRadius − waiverWeight`. Severity and confidence are **independent axes** (a "potential bug" = `bug` severity + low confidence). Cross-source agreement boosts confidence. Prevalence is read **by severity**: common *style* → convention (demote); common *bug* → systemic (escalate as a migration). Waivers suppress the same issue across rounds **by meaning** (semantic — survives line drift / rewording, ADR-27).
+Ranked by `signal = severityWeight × confidence × blast × deviation × agreement` (waived findings are triaged `suppressed`, not score-penalized). Severity and confidence are **independent axes** (a "potential bug" = `bug` severity + low confidence). Cross-source agreement boosts confidence. Prevalence is read **by severity**: common *style* → convention (demote); common *bug* → systemic (escalate as a migration). Waivers suppress the same issue across rounds **by meaning** (semantic — survives line drift / rewording, ADR-27).
 
 ## The learning loop (per-PR observations → global memory)
 
@@ -100,7 +100,7 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 | `core` | shared types, config, provider interfaces | ✅ |
 | `ingest` | diff adapters (local git, gh PR) → normalized diff; head SHA + inter-round diff helpers | ✅ |
 | `code-graph` | Kùzu per-repo graph: symbols/imports/co-change + precise alias edges; incremental update | ✅ |
-| `neighborhood` | diff→symbols→blast-radius BFS over the code graph (multi-hop) | ✅ |
+| `neighborhood` | diff→symbols→blast radius via a personalized-PageRank walk over the code graph | ✅ |
 | `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
 | `knowledge` | embeddings, JSON store, semantic retrieval, seeding, promotion (ADR-18) | ✅ |

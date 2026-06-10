@@ -8,9 +8,11 @@
  * server stays model-agnostic and runs in a fresh process, separate from whoever
  * authored the code — which removes self-review bias.
  *
- * Implemented: index_repo, get_review_context (blast radius + deterministic findings +
- * plex.md), get_blast_radius, get_deterministic_findings, submit_findings (merged &
- * ranked stream), record_outcome (scoped verdicts). get_relevant_knowledge lands in M3.
+ * The 15 tools are registered below: the review flow (index_repo, get_review_context,
+ * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
+ * reconcile_outcomes), the knowledge base (get_relevant_knowledge, seed_knowledge,
+ * consolidate_knowledge, propose_promotions), mining (mine_scan, add_pitfalls,
+ * mine_history), and doctor.
  */
 import path from 'node:path';
 import { statSync, readFileSync } from 'node:fs';

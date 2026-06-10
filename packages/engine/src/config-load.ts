@@ -9,7 +9,7 @@ import { readHomeConfig } from './home-config';
 /**
  * Build a config from, in increasing precedence: defaults < `~/.plex/config.json` (written
  * by `plex init`) < environment variables < explicit overrides. The home config lets a user
- * set their FalkorDB URL + embedding key once; env still wins for per-invocation overrides.
+ * set their embedding key once; env still wins for per-invocation overrides.
  *
  *   PLEX_DATA_DIR             per-repo data dir ('' = centralized ~/.plex/repos/<id>)
  *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)

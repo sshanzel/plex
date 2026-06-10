@@ -17,9 +17,9 @@ export class CodeGraphDB {
 
   constructor(public readonly dir: string) {
     try {
-      // Kùzu acquires its single-writer file lock here; a same-path concurrent open throws an
-      // "IO exception: Could not set lock" — translate it to a clear RepoBusyError (different
-      // worktrees use different dirs and never hit this; ADR-30 + paths.repoId).
+      // Kùzu's single-writer file lock can bite HERE or lazily at first query (`rethrow`
+      // handles the lazy path) — either way a same-path concurrent open becomes a clear
+      // RepoBusyError (different worktrees use different dirs and never hit this; ADR-30).
       this.db = new Database(dir);
       this.conn = new Connection(this.db);
     } catch (e) {

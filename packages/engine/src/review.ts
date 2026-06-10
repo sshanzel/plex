@@ -55,8 +55,8 @@ export async function indexRepo(
   const p = repoPaths(repoPath, config.dataDir);
   ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
   const stamp = async (): Promise<void> => {
-    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16): a second
-    // Kùzu open in a process that also spawns the FalkorDB worker risks SIGSEGV.
+    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25): the
+    // review budget is two opens (neighborhood + brain, ADR-17) — staleness must not spend one.
     try {
       mkdirSync(path.dirname(p.headShaFile), { recursive: true });
       writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
@@ -210,8 +210,8 @@ export interface ReviewContext {
   reviewerMd?: string;
   /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
   graphStale?: GraphStaleness;
-  // --- PR brain (M6, ADR-22/23) — present when FalkorDB is enabled ---
-  /** Stable target id / FalkorDB graph name for this review. */
+  // --- PR brain (M6/M11, ADR-30 — embedded Kùzu) ---
+  /** Stable brain target id for this review (reviewTargetFor). */
   target?: string;
   /** This review's round number (1-based). */
   round?: number;
@@ -387,7 +387,7 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
   }
 }
 
-/** Assemble the review context: diff → neighborhood → deterministic findings → optional FalkorDB. */
+/** Assemble the review context: diff → neighborhood → deterministic findings → knowledge → brain round. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
   const [diff, changeContext] = await Promise.all([
