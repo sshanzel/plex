@@ -1,36 +1,40 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
-import { mineHistory, scanHistory, categorize, minedPitfallId, type MineResult } from '@plex/mining';
+import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult } from '@plex/distill';
 import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
 
-/** Per-repo incremental mining cursor (ADR-11): which PRs have been scanned. */
-export interface MiningState {
+// The product feature is "analyze your PR review history"; the technique it uses (cluster +
+// LLM-distill) lives in @plex/distill. Cursor state is `analyze-state.json`; incident provenance
+// is `inc:analyzed:`.
+
+/** Per-repo incremental scan cursor (ADR-11): which PRs have been scanned. */
+export interface AnalyzeState {
   repo: string;
   scannedPrs: number[];
   lastRun: string;
 }
 
-export async function loadMiningState(
+export async function loadAnalyzeState(
   repoPath: string,
   config: ReviewerConfig,
-): Promise<MiningState> {
+): Promise<AnalyzeState> {
   const p = repoPaths(repoPath, config.dataDir);
   try {
-    return JSON.parse(await fs.readFile(p.miningStateFile, 'utf8')) as MiningState;
+    return JSON.parse(await fs.readFile(p.analyzeStateFile, 'utf8')) as AnalyzeState;
   } catch {
     return { repo: path.basename(p.repoPath), scannedPrs: [], lastRun: '' };
   }
 }
 
-async function saveMiningState(repoPath: string, config: ReviewerConfig, state: MiningState): Promise<void> {
+async function saveAnalyzeState(repoPath: string, config: ReviewerConfig, state: AnalyzeState): Promise<void> {
   const p = repoPaths(repoPath, config.dataDir);
-  await fs.mkdir(path.dirname(p.miningStateFile), { recursive: true });
-  await fs.writeFile(p.miningStateFile, JSON.stringify(state, null, 2), 'utf8');
+  await fs.mkdir(path.dirname(p.analyzeStateFile), { recursive: true });
+  await fs.writeFile(p.analyzeStateFile, JSON.stringify(state, null, 2), 'utf8');
 }
 
-export interface MineRepoOptions {
+export interface AnalyzeOptions {
   /** Re-scan from scratch, ignoring the saved cursor. */
   reset?: boolean;
   state?: 'merged' | 'all';
@@ -41,21 +45,21 @@ export interface MineRepoOptions {
 }
 
 /**
- * Mine a repo's PR history into the knowledge base, incrementally — only PRs not in the
- * saved cursor are pulled, and the cursor is updated afterward (ADR-11).
+ * Analyze a repo's PR review history into the knowledge base, incrementally — only PRs not
+ * in the saved cursor are pulled, and the cursor is updated afterward (ADR-11).
  */
-export async function mineRepo(
+export async function analyzeRepo(
   repoPath: string,
   config: ReviewerConfig,
-  opts: MineRepoOptions = {},
-): Promise<MineResult & { totalScanned: number }> {
+  opts: AnalyzeOptions = {},
+): Promise<DistillResult & { totalScanned: number }> {
   const p = repoPaths(repoPath, config.dataDir);
   const repo = path.basename(p.repoPath);
-  const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadMiningState(repoPath, config);
+  const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadAnalyzeState(repoPath, config);
 
   const embed = requireEmbeddings(config);
   const store = knowledgeStore(config);
-  const { result, scannedPrs } = await mineHistory(store, embed, config, {
+  const { result, scannedPrs } = await distillHistory(store, embed, config, {
     cwd: p.repoPath,
     repoName: repo,
     alreadyScanned: prior.scannedPrs,
@@ -64,16 +68,16 @@ export async function mineRepo(
     limit: opts.limit,
   });
 
-  await saveMiningState(repoPath, config, { repo, scannedPrs, lastRun: new Date().toISOString() });
+  await saveAnalyzeState(repoPath, config, { repo, scannedPrs, lastRun: new Date().toISOString() });
   return { ...result, totalScanned: scannedPrs.length };
 }
 
 // ---------------------------------------------------------------------------
-// Agent-driven mining (rides the connected agent's subscription — no API key).
-// mine_scan returns clusters; the agent distills; add_pitfalls stores them.
+// Agent-driven analysis (rides the connected agent's subscription — no API key).
+// analyze_scan returns clusters; the agent distills; add_pitfalls stores them.
 // ---------------------------------------------------------------------------
 
-export interface MiningCluster {
+export interface ReviewCluster {
   id: string;
   size: number;
   suggestedCategory: string;
@@ -82,8 +86,8 @@ export interface MiningCluster {
   comments: { body: string; path?: string; prNumber: number }[];
 }
 
-export interface ScanForMiningResult {
-  clusters: MiningCluster[];
+export interface ScanForAnalysisResult {
+  clusters: ReviewCluster[];
   prsScanned: number;
   comments: number;
   substantive: number;
@@ -92,17 +96,17 @@ export interface ScanForMiningResult {
 }
 
 /**
- * Mechanical mining scan for the agent path: fetch new PRs, denoise, record incidents,
- * cluster, advance the cursor, and return the clusters for the agent to distill.
+ * Mechanical scan for the agent path: fetch new PRs, denoise, record incidents, cluster,
+ * advance the cursor, and return the clusters for the agent to distill.
  */
-export async function scanForMining(
+export async function scanForAnalysis(
   repoPath: string,
   config: ReviewerConfig,
-  opts: MineRepoOptions = {},
-): Promise<ScanForMiningResult> {
+  opts: AnalyzeOptions = {},
+): Promise<ScanForAnalysisResult> {
   const p = repoPaths(repoPath, config.dataDir);
   const repo = path.basename(p.repoPath);
-  const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadMiningState(repoPath, config);
+  const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadAnalyzeState(repoPath, config);
 
   const embed = requireEmbeddings(config);
   const store = knowledgeStore(config);
@@ -114,15 +118,15 @@ export async function scanForMining(
     order: opts.order,
     limit: opts.limit,
   });
-  await saveMiningState(repoPath, config, { repo, scannedPrs: scan.scannedPrs, lastRun: new Date().toISOString() });
+  await saveAnalyzeState(repoPath, config, { repo, scannedPrs: scan.scannedPrs, lastRun: new Date().toISOString() });
 
-  const clusters: MiningCluster[] = scan.clusters.map((cl, i) => {
+  const clusters: ReviewCluster[] = scan.clusters.map((cl, i) => {
     const rep = [...cl.comments].sort((a, b) => b.body.length - a.body.length)[0]!;
     return {
       id: `cluster-${i}`,
       size: cl.comments.length,
       suggestedCategory: categorize(rep.body),
-      incidentIds: cl.comments.map((c) => `inc:mined:${c.id}`),
+      incidentIds: cl.comments.map((c) => `inc:analyzed:${c.id}`),
       comments: cl.comments.map((c) => ({ body: c.body, path: c.path, prNumber: c.prNumber })),
     };
   });
@@ -137,7 +141,7 @@ export async function scanForMining(
   };
 }
 
-/** A pitfall distilled by the connected agent (from a mine_scan cluster). */
+/** A pitfall distilled by the connected agent (from an analyze_scan cluster). */
 export interface AgentPitfall {
   title: string;
   why: string;
@@ -152,10 +156,10 @@ export interface AgentPitfall {
 
 /**
  * Store agent-distilled pitfalls (embedding computed here). Dedups by title. Pitfalls
- * default to `repo` scope (mined from a specific project) unless the agent marks them
- * `global`; `repo` is stamped so retrieval can scope them (ADR-21).
+ * default to `repo` scope (specific to this project) unless the agent marks them `global`;
+ * `repo` is stamped so retrieval can scope them (ADR-21).
  */
-export async function addMinedPitfalls(
+export async function addAnalyzedPitfalls(
   config: ReviewerConfig,
   pitfalls: AgentPitfall[],
   repo?: string,
@@ -168,7 +172,7 @@ export async function addMinedPitfalls(
     const [embedding] = await embed.embed([`${p.category}: ${p.title}\n${p.why}`]);
     const scope = p.scope ?? 'repo';
     const pitfall: Pitfall = {
-      id: minedPitfallId(p.title, repo),
+      id: distilledPitfallId(p.title, repo),
       title: p.title,
       trigger: p.title,
       why: p.why,

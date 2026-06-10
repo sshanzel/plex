@@ -6,12 +6,12 @@ import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
 import { llmDistill, type ClusterInput } from './distill';
 import { createCompletionProvider } from './llm';
 import { outcomeFor } from './outcome';
-import type { RawComment, MineResult } from './types';
+import type { RawComment, DistillResult } from './types';
 
-export interface MineOptions {
+export interface DistillOptions {
   cwd: string;
   repoName?: string;
-  /** PR numbers already scanned in a previous run — skipped to make mining incremental. */
+  /** PR numbers already scanned in a previous run — skipped to make analysis incremental. */
   alreadyScanned?: number[];
   state?: 'merged' | 'all';
   /** PR order to scan: `oldest` (chronological, lowest number first) or `newest` (default). */
@@ -40,20 +40,20 @@ export interface ScanResult {
 }
 
 /**
- * MECHANICAL half of mining (no LLM): list new PRs, denoise, record provenance incidents,
- * embed, and cluster. Returns clusters for a distiller — either the heuristic/API distiller
- * (`mineHistory`) or the connected agent via MCP (rides the user's subscription).
+ * MECHANICAL half of analysis (no LLM): list new PRs, denoise, record provenance incidents,
+ * embed, and cluster. Returns clusters for a distiller — either the standalone LLM distiller
+ * (`distillHistory`) or the connected agent via MCP (rides the user's subscription).
  */
 export async function scanHistory(
   store: KnowledgeStore,
   embed: EmbeddingProvider,
   config: ReviewerConfig,
-  opts: MineOptions,
+  opts: DistillOptions,
 ): Promise<ScanResult> {
   const api = opts.fetch ?? { listPrs, fetchCommentsForPr };
   const skip = new Set(opts.alreadyScanned ?? []);
-  const all = await api.listPrs({ cwd: opts.cwd, maxPrs: config.mining.maxPrs, state: opts.state });
-  // Order by PR number — oldest-first for chronological mining, else newest-first (default).
+  const all = await api.listPrs({ cwd: opts.cwd, maxPrs: config.analyze.maxPrs, state: opts.state });
+  // Order by PR number — oldest-first for chronological analysis, else newest-first (default).
   const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
   const unscanned = ordered.filter((p) => !skip.has(p.number));
   // `limit` caps how many fresh PRs this run scans; the cursor advances, so the next run continues.
@@ -72,11 +72,11 @@ export async function scanHistory(
   const existing = new Set((await store.incidents()).map((i) => i.id));
   let incidents = 0;
   for (const c of substantive) {
-    const id = `inc:mined:${c.id}`;
+    const id = `inc:analyzed:${c.id}`;
     if (existing.has(id)) continue;
     const inc: Incident = {
       id,
-      source: 'mined',
+      source: 'analyzed',
       repo: opts.repoName,
       file: c.path,
       snippet: c.body.slice(0, 300),
@@ -90,9 +90,9 @@ export async function scanHistory(
   const vectors = await embed.embed(substantive.map((c) => c.body));
   // Adaptive cut from this batch's own cosine background (tuning.md §6) — the configured value is
   // the small-batch fallback, not a per-model magic constant.
-  const threshold = adaptiveCosineThreshold(vectors, { fallback: config.mining.clusterThreshold });
+  const threshold = adaptiveCosineThreshold(vectors, { fallback: config.analyze.clusterThreshold });
   const clusters = greedyCluster(vectors, threshold)
-    .filter((idx) => idx.length >= config.mining.minClusterSize)
+    .filter((idx) => idx.length >= config.analyze.minClusterSize)
     .map((idx) => ({
       comments: idx.map((i) => substantive[i]!),
       centroid: centroid(idx.map((i) => vectors[i]!)),
@@ -102,27 +102,27 @@ export async function scanHistory(
   return { clusters, scannedPrs, prsScanned: fresh.length, comments: raw.length, substantive: substantive.length, incidents };
 }
 
-export interface MineOutcome {
-  result: MineResult;
+export interface DistillOutcome {
+  result: DistillResult;
   scannedPrs: number[];
 }
 
 /**
- * FULL standalone mining: scan + distill each cluster (heuristic, or the configured LLM
- * if a key is set) + store pitfalls. Used by the CLI / cron. The MCP path uses
- * `scanHistory` + agent distillation instead (rides the subscription).
+ * FULL standalone analysis: scan + distill each cluster with the configured LLM + store
+ * pitfalls. Used by the CLI / cron. The MCP path uses `scanHistory` + agent distillation
+ * instead (rides the subscription).
  */
-export async function mineHistory(
+export async function distillHistory(
   store: KnowledgeStore,
   embed: EmbeddingProvider,
   config: ReviewerConfig,
-  opts: MineOptions,
-): Promise<MineOutcome> {
+  opts: DistillOptions,
+): Promise<DistillOutcome> {
   const scan = await scanHistory(store, embed, config, opts);
   const llm = opts.llm ?? createCompletionProvider(config.llm);
   if (!llm) {
     throw new Error(
-      `Mining requires an LLM distiller (ADR-20). Provider '${config.llm.provider}' is unavailable — ` +
+      `Analysis requires an LLM distiller (ADR-20). Provider '${config.llm.provider}' is unavailable — ` +
         `the 'claude' CLI isn't installed or the API key is missing. Set PLEX_LLM_PROVIDER (claude-cli|anthropic|openai).`,
     );
   }

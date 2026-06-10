@@ -12,7 +12,7 @@ Plex is **not** another LLM that reviews code. It is an **MCP server + CLI** tha
 
 1. runs in a **fresh process** (removes self-review bias — the reviewer sees *facts*, never the author's chain-of-thought, ADR-02);
 2. hands the agent a **blast-radius map** of what the change touches and is coupled to;
-3. focuses it with **accumulated review knowledge** (mined / learned) + the change's stated intent;
+3. focuses it with **accumulated review knowledge** (learned) + the change's stated intent;
 4. records what happens in a **per-PR brain** so multi-round reviews stay consistent and outcomes are learned **autonomously**;
 5. merges the agent's findings with **deterministic** findings into one **severity/confidence-ranked** stream.
 
@@ -85,13 +85,13 @@ Ranked by `signal = severityWeight × confidence × blast × deviation × agreem
 The review is **autonomous** (ADR-28): the agent submits findings and stops — it never prompts for verdicts. Outcomes are observed from real behavior and compound into the global knowledge:
 
 - a finding **addressed by a later change** → auto-`accept` on the next review (or via `reconcile`); an **explicit dismissal** → `reject` (responder); an `awareness` flag confirmed intentional → **`acknowledge`** (M12, no down-weight); **silence** → nothing.
-- accepted findings become **Incidents** → reweight **Pitfall** confidence (`consolidate_knowledge`); mining distills recurring PR-comment patterns into new pitfalls.
+- accepted findings become **Incidents** → reweight **Pitfall** confidence (`consolidate_knowledge`); analysis distills recurring PR-comment patterns into new pitfalls.
 - **closing the loop on a PR (ADR-34, opt-in `autoComment`):** reviewing a PR posts the ranked stream back as one GitHub review (inline + summary, deduped per round); **`/pr-master:respond`** triages it and records the outcomes above — so the loop runs on the PR itself, not just the terminal.
 - so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere.
 
 ## Knowledge ⇄ markdown (ADR-09, ADR-10)
 
-The knowledge base is the learned engine — populated by mining PR history and the review feedback loop (no hand-authored markdown; ADR-37 retired `plex.md` and the knowledge→rule promotion path). Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s. A future committed `plex.json` is the planned home for human-authored review policy (incl. deferring to the linter's deterministic rules).
+The knowledge base is the learned engine — populated by analyzing PR history and the review feedback loop (no hand-authored markdown; ADR-37 retired `plex.md` and the knowledge→rule promotion path). Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s. A future committed `plex.json` is the planned home for human-authored review policy (incl. deferring to the linter's deterministic rules).
 
 ## Packages
 
@@ -104,9 +104,9 @@ The knowledge base is the learned engine — populated by mining PR history and 
 | `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
 | `knowledge` | embeddings, JSON store, semantic retrieval, outcome consolidation (ADR-18) | ✅ |
-| `mining` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
+| `distill` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
 | `engine` | orchestration: index, assemble context, **Kùzu PR brain**, rank, verdicts, knowledge, reconcile, setup | ✅ |
 | `mcp-server` | the 14-tool MCP surface | ✅ |
-| `cli` | `init · doctor · index · review · reconcile · blast · verdict · seed · promote · mine` | ✅ |
+| `cli` | `init · doctor · index · review · reconcile · blast · verdict · consolidate · analyze` | ✅ |
 
 > **Embedded, no services (ADR-30):** the brain is Kùzu, not FalkorDB — no Docker. Per-repo data lives outside the repo at `~/.plex/repos/<id>/`. Embeddings are **optional** (they add semantic knowledge + the semantic review signals). Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19). The multi-repo workspace is intentionally **out of scope**.

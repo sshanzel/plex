@@ -24,7 +24,7 @@ export interface RankingQuality {
  * **measurement only, no weights change.**
  *
  * Reads the per-repo brain (each finding's `signal` + raw features + resolved outcome — data the
- * review flow already persists, mining-INDEPENDENT) and answers two questions:
+ * review flow already persists, analysis-INDEPENDENT) and answers two questions:
  *   1. How well does the current `signal` ranking match what the user accepted? (per-round nDCG)
  *   2. Is a ranking re-weight worth BUILDING yet? (the readiness gates → a `verdict`)
  *

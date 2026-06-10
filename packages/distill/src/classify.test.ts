@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isSubstantive, categorize } from './classify';
 
-// Complements mining.test.ts with the BOUNDARY and precedence cases that gate ~70% of
+// Complements analysis.test.ts with the BOUNDARY and precedence cases that gate ~70% of
 // review-comment noise. These contracts are fragile under regex edits, so pin them.
 describe('isSubstantive boundaries', () => {
   it('rejects under 15 chars, accepts 15+ with 3+ words', () => {

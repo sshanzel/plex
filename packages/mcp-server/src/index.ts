@@ -11,7 +11,7 @@
  * The 13 tools are registered below: the review flow (index_repo, get_review_context,
  * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
  * reconcile_outcomes), the knowledge base (get_relevant_knowledge,
- * consolidate_knowledge), mining (mine_scan, add_pitfalls, mine_history), and doctor.
+ * consolidate_knowledge), review-history analysis (analyze_scan, add_pitfalls, analyze_history), and doctor.
  */
 import path from 'node:path';
 import { statSync, readFileSync } from 'node:fs';
@@ -31,9 +31,9 @@ import {
   submitVerdict,
   reviewTargetFor,
   reconcileOutcomes,
-  scanForMining,
-  addMinedPitfalls,
-  mineRepo,
+  scanForAnalysis,
+  addAnalyzedPitfalls,
+  analyzeRepo,
   type SubmittedFinding,
   type AgentPitfall,
 } from '@plex/engine';
@@ -83,8 +83,8 @@ const server = new McpServer(
       'get_review_context (blast radius + deterministic checks + relevant pitfalls + the PR brain) → ' +
       'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
-      'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / ' +
-      'consolidate_knowledge. `doctor` reports version + whether a newer build is on ' +
+      'addressed findings. Review-history analysis (distill recurring review comments into pitfalls): ' +
+      'analyze_scan / add_pitfalls / analyze_history / consolidate_knowledge. `doctor` reports version + whether a newer build is on ' +
       'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
       'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
       '"disconnected" status is NEVER a reason to skip a step; just call the tool (the call reconnects), or ' +
@@ -291,10 +291,10 @@ server.tool(
   () => guard(() => consolidateKnowledge(config), 'consolidate_knowledge'),
 );
 
-// --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.
+// --- Review-history analysis: agent-driven (rides your subscription). analyze_scan → you distill → add_pitfalls.
 server.tool(
-  'mine_scan',
-  'Scan a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar comments for YOU to distill into pitfalls. Then call add_pitfalls. `order: "oldest"` scans chronologically (PR #1 up); `limit` bounds fresh PRs this run (the cursor advances; the next call continues).',
+  'analyze_scan',
+  'Analyze a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar review comments for YOU to distill into pitfalls. Then call add_pitfalls. `order: "oldest"` scans chronologically (PR #1 up); `limit` bounds fresh PRs this run (the cursor advances; the next call continues).',
   {
     repoPath: z.string().optional(),
     reset: z.boolean().optional(),
@@ -302,12 +302,12 @@ server.tool(
     order: z.enum(['newest', 'oldest']).optional(),
     limit: z.number().int().positive().optional(),
   },
-  (a) => guard(() => scanForMining(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_scan'),
+  (a) => guard(() => scanForAnalysis(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'analyze_scan'),
 );
 
 server.tool(
   'add_pitfalls',
-  'Store pitfalls you distilled from mine_scan clusters (embedding computed server-side, deduped by title). Pass incidentIds for provenance; scope "repo" (default) keeps project-specific pitfalls scoped to repoPath, "global" applies everywhere.',
+  'Store pitfalls you distilled from analyze_scan clusters (embedding computed server-side, deduped by title). Pass incidentIds for provenance; scope "repo" (default) keeps project-specific pitfalls scoped to repoPath, "global" applies everywhere.',
   {
     repoPath: z.string().optional(),
     pitfalls: z.array(
@@ -325,14 +325,14 @@ server.tool(
   },
   (a) =>
     guard(
-      () => addMinedPitfalls(config, a.pitfalls as AgentPitfall[], path.basename(path.resolve(a.repoPath ?? process.cwd()))),
+      () => addAnalyzedPitfalls(config, a.pitfalls as AgentPitfall[], path.basename(path.resolve(a.repoPath ?? process.cwd()))),
       'add_pitfalls',
     ),
 );
 
 server.tool(
-  'mine_history',
-  'One-shot standalone mining: scan + LLM-distill (local `claude` CLI by default, or the configured provider — errors with no LLM available) + store. Prefer mine_scan + add_pitfalls to distill with your own reasoning. Takes the same order/limit as mine_scan.',
+  'analyze_history',
+  'One-shot standalone analysis: scan + LLM-distill (local `claude` CLI by default, or the configured provider — errors with no LLM available) + store. Prefer analyze_scan + add_pitfalls to distill with your own reasoning. Takes the same order/limit as analyze_scan.',
   {
     repoPath: z.string().optional(),
     reset: z.boolean().optional(),
@@ -340,7 +340,7 @@ server.tool(
     order: z.enum(['newest', 'oldest']).optional(),
     limit: z.number().int().positive().optional(),
   },
-  (a) => guard(() => mineRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'mine_history'),
+  (a) => guard(() => analyzeRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'analyze_history'),
 );
 
 server.tool(

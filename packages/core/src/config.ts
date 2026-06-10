@@ -32,7 +32,7 @@ export interface CoChangeConfig {
   maxCommits: number;
 }
 
-/** Generative LLM used ONLY by the offline mining/distillation pipeline (ADR-02). */
+/** Generative LLM used ONLY by the offline analysis/distillation pipeline (ADR-02). */
 export type LlmProviderName = 'heuristic' | 'claude-cli' | 'anthropic' | 'openai';
 export interface LlmConfig {
   provider: LlmProviderName;
@@ -41,7 +41,7 @@ export interface LlmConfig {
   baseUrl?: string;
 }
 
-export interface MiningConfig {
+export interface AnalyzeConfig {
   /** Merged PRs to scan, most recent first (0 = as many as gh returns). */
   maxPrs: number;
   /**
@@ -50,7 +50,7 @@ export interface MiningConfig {
    * ~0.40, but the running-mean centroid concentrates the embeddings' anisotropic common
    * component, so a *too-low* threshold makes the first cluster a SINK that swallows
    * everything (0.6 collapsed 325 real comments into 1 cluster → 0 pitfalls). ~0.8 keeps
-   * clusters tight. Override per-model with `plex mine --threshold`.
+   * clusters tight. Override per-model with `plex analyze --threshold`.
    */
   clusterThreshold: number;
   /**
@@ -79,9 +79,9 @@ export interface ReviewerConfig {
     /** Minimum aggregate coupling score to include a neighbor. */
     minScore: number;
   };
-  /** Generative LLM for mining/distillation (offline only). */
+  /** Generative LLM for analysis/distillation (offline only). */
   llm: LlmConfig;
-  mining: MiningConfig;
+  analyze: AnalyzeConfig;
   /**
    * When reviewing a PR (`source: 'pr'`), post the ranked findings to the GitHub PR as a
    * single review (summary body + inline comments on changed lines), deduped per round via
@@ -136,16 +136,16 @@ export const defaultConfig: ReviewerConfig = {
     minScore: 0.05,
   },
   llm: {
-    // Mining distillation is LLM-only (ADR-20). Default to the local `claude` CLI so it
+    // Analysis distillation is LLM-only (ADR-20). Default to the local `claude` CLI so it
     // rides the Claude subscription with no API key; falls back to ANTHROPIC_API_KEY only
     // if the provider is explicitly set to `anthropic`.
     provider: 'claude-cli',
     model: 'claude-haiku-4-5-20251001',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
   },
-  mining: {
+  analyze: {
     maxPrs: 100,
-    clusterThreshold: 0.8, // tuned for code embeddings; <~0.7 sinks everything into one cluster (see MiningConfig)
+    clusterThreshold: 0.8, // tuned for code embeddings; <~0.7 sinks everything into one cluster (see AnalyzeConfig)
     minClusterSize: 1,
   },
   autoComment: false, // opt-in: PLEX_AUTO_COMMENT=true / ~/.plex/config.json
@@ -161,7 +161,7 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     coChange: { ...defaultConfig.coChange, ...overrides.coChange },
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
     llm: { ...defaultConfig.llm, ...overrides.llm },
-    mining: { ...defaultConfig.mining, ...overrides.mining },
+    analyze: { ...defaultConfig.analyze, ...overrides.analyze },
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
   };
 }

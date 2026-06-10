@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveConfig, type CompletionProvider } from '@plex/core';
 import { KnowledgeStore, FakeEmbeddingProvider } from '@plex/knowledge';
-import { mineHistory } from './mine';
+import { distillHistory } from './pipeline';
 import type { PrRef } from './github';
 import type { RawComment } from './types';
 
@@ -42,15 +42,15 @@ const fakeLlm: CompletionProvider = {
   },
 };
 
-describe('mineHistory (offline, LLM-only)', () => {
-  const config = resolveConfig({ mining: { maxPrs: 100, clusterThreshold: 0.4, minClusterSize: 2 } });
+describe('distillHistory (offline, LLM-only)', () => {
+  const config = resolveConfig({ analyze: { maxPrs: 100, clusterThreshold: 0.4, minClusterSize: 2 } });
 
   it('denoises, clusters, LLM-distills (scoped), records incidents, tracks scanned PRs', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'mine-'));
+    dir = mkdtempSync(join(tmpdir(), 'distill-'));
     const store = new KnowledgeStore(dir);
     const embed = new FakeEmbeddingProvider();
 
-    const { result, scannedPrs } = await mineHistory(store, embed, config, {
+    const { result, scannedPrs } = await distillHistory(store, embed, config, {
       cwd: '.',
       repoName: 'r',
       fetch: fakeFetch,
@@ -71,16 +71,16 @@ describe('mineHistory (offline, LLM-only)', () => {
     expect(pitfalls[0]!.incidentIds.length).toBeGreaterThanOrEqual(2);
 
     // Incremental: both PRs scanned ⇒ nothing new.
-    const second = await mineHistory(store, embed, config, { cwd: '.', repoName: 'r', alreadyScanned: scannedPrs, fetch: fakeFetch, llm: fakeLlm });
+    const second = await distillHistory(store, embed, config, { cwd: '.', repoName: 'r', alreadyScanned: scannedPrs, fetch: fakeFetch, llm: fakeLlm });
     expect(second.result.prsScanned).toBe(0);
     expect(second.result.pitfalls).toBe(0);
   });
 
-  it('scans by order + limit and advances the cursor (chronological mining)', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'mine-ord-'));
+  it('scans by order + limit and advances the cursor (chronological analysis)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'distill-ord-'));
     const store = new KnowledgeStore(dir);
     const embed = new FakeEmbeddingProvider();
-    // gh returns newest-first; mining sorts per `order`.
+    // gh returns newest-first; analysis sorts per `order`.
     const threePrs = {
       listPrs: async (): Promise<PrRef[]> => [
         { number: 3, mergedAt: '2026-01-03' },
@@ -90,7 +90,7 @@ describe('mineHistory (offline, LLM-only)', () => {
       fetchCommentsForPr: async (_cwd: string, pr: PrRef): Promise<RawComment[]> => [comment(pr.number, `${pr.number}1`, 'x')],
     };
     const run = (o: { order?: 'newest' | 'oldest'; limit?: number; alreadyScanned?: number[] }) =>
-      mineHistory(store, embed, config, { cwd: '.', repoName: 'r', fetch: threePrs, llm: fakeLlm, ...o });
+      distillHistory(store, embed, config, { cwd: '.', repoName: 'r', fetch: threePrs, llm: fakeLlm, ...o });
 
     expect((await run({ order: 'oldest', limit: 2 })).scannedPrs).toEqual([1, 2]); // chronological first 2
     expect((await run({ limit: 2 })).scannedPrs).toEqual([2, 3]); // newest-first (default), sorted for storage
@@ -100,11 +100,11 @@ describe('mineHistory (offline, LLM-only)', () => {
   });
 
   it('requires an LLM distiller (no silent heuristic)', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'mine2-'));
+    dir = mkdtempSync(join(tmpdir(), 'distill2-'));
     const store = new KnowledgeStore(dir);
     const embed = new FakeEmbeddingProvider();
     // provider 'anthropic' with no key ⇒ createCompletionProvider returns null ⇒ throws.
-    const cfg = resolveConfig({ llm: { provider: 'anthropic', apiKeyEnv: 'PLEX_NONEXISTENT_KEY' }, mining: { maxPrs: 100, clusterThreshold: 0.4, minClusterSize: 2 } });
-    await expect(mineHistory(store, embed, cfg, { cwd: '.', repoName: 'r', fetch: fakeFetch })).rejects.toThrow(/requires an LLM distiller/);
+    const cfg = resolveConfig({ llm: { provider: 'anthropic', apiKeyEnv: 'PLEX_NONEXISTENT_KEY' }, analyze: { maxPrs: 100, clusterThreshold: 0.4, minClusterSize: 2 } });
+    await expect(distillHistory(store, embed, cfg, { cwd: '.', repoName: 'r', fetch: fakeFetch })).rejects.toThrow(/requires an LLM distiller/);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
-import { minedPitfallId } from './distill';
+import { distilledPitfallId } from './distill';
 
 describe('adaptiveCosineThreshold (per-batch cosine calibration)', () => {
   const DIM = 12;
@@ -30,22 +30,22 @@ describe('adaptiveCosineThreshold (per-batch cosine calibration)', () => {
   });
 });
 
-// Mined-pitfall ids must be collision-free: titles differing only in punctuation, or
+// Distilled-pitfall ids must be collision-free: titles differing only in punctuation, or
 // emoji/CJK-only titles (which slug to ''), used to produce identical ids and silently
 // overwrite each other in the knowledge base.
-describe('minedPitfallId', () => {
+describe('distilledPitfallId', () => {
   it('disambiguates titles that share a slug (punctuation-only difference)', () => {
-    expect(minedPitfallId('Fix the bug!')).not.toBe(minedPitfallId('Fix the bug?'));
+    expect(distilledPitfallId('Fix the bug!')).not.toBe(distilledPitfallId('Fix the bug?'));
   });
   it('produces distinct, non-empty ids for emoji/CJK-only titles', () => {
-    const a = minedPitfallId('🚀🚀');
-    const b = minedPitfallId('💯');
+    const a = distilledPitfallId('🚀🚀');
+    const b = distilledPitfallId('💯');
     expect(a).not.toBe(b);
     expect(a).not.toMatch(/:-?$/); // never ends in an empty slug segment
   });
   it('is stable for the same title and stamps the repo when given', () => {
-    expect(minedPitfallId('Validate tenant id', 'plex')).toBe(minedPitfallId('Validate tenant id', 'plex'));
-    expect(minedPitfallId('Validate tenant id', 'plex')).toContain('pf:mined:plex:');
+    expect(distilledPitfallId('Validate tenant id', 'plex')).toBe(distilledPitfallId('Validate tenant id', 'plex'));
+    expect(distilledPitfallId('Validate tenant id', 'plex')).toContain('pf:analyzed:plex:');
   });
 });
 
@@ -112,7 +112,7 @@ describe('greedyCluster — anisotropic embeddings (the threshold/centroid-sink 
 
   it('the ADAPTIVE cut rescues the sink even when the configured fallback (0.6) would collapse it', () => {
     // n=12 ≥ 8, so adaptiveCosineThreshold estimates μ+kσ from THIS batch and ignores the sink-prone
-    // fallback — this is the exact composition mine.ts runs: greedyCluster(v, adaptiveCosineThreshold(v)).
+    // fallback — this is the exact composition pipeline.ts runs: greedyCluster(v, adaptiveCosineThreshold(v)).
     const t = adaptiveCosineThreshold(vectors, { fallback: 0.6 });
     expect(t).toBeGreaterThan(0.8); // adapted far above the sink-prone 0.6
     const sizes = greedyCluster(vectors, t).map((c) => c.length).sort((a, b) => b - a);

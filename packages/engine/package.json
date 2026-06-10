@@ -16,6 +16,6 @@
     "@plex/deterministic": "workspace:*",
     "@plex/findings": "workspace:*",
     "@plex/knowledge": "workspace:*",
-    "@plex/mining": "workspace:*"
+    "@plex/distill": "workspace:*"
   }
 }

@@ -3,7 +3,7 @@ const TRIVIAL =
 
 /**
  * Keep substantive review comments, drop the noise (LGTM, one-word approvals, emoji).
- * ~70% of review comments are noise; this is the denoise step (plan §mining).
+ * ~70% of review comments are noise; this is the denoise step (plan §analysis).
  */
 export function isSubstantive(body: string): boolean {
   const t = body.trim();

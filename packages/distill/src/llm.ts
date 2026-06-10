@@ -51,7 +51,7 @@ export class OpenAICompletionProvider implements CompletionProvider {
 /**
  * Distill via the local `claude` CLI in print mode — uses the user's Claude Code
  * subscription, no API key (ADR-20). The cleanest "LLM intelligence" path for the
- * standalone `plex mine`.
+ * standalone `plex analyze`.
  */
 export class ClaudeCliCompletionProvider implements CompletionProvider {
   readonly name = 'claude-cli';

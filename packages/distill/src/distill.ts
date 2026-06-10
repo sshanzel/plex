@@ -8,9 +8,9 @@ export interface ClusterInput {
   repo?: string;
 }
 
-/** Collision-free mined-pitfall id: optional repo + readable title slug + title hash. */
-export function minedPitfallId(title: string, repo?: string): string {
-  return `pf:mined:${repo ? slugify(repo) + ':' : ''}${slugify(title, 56) || 'p'}-${hashId(title)}`;
+/** Collision-free pitfall id: optional repo + readable title slug + title hash. */
+export function distilledPitfallId(title: string, repo?: string): string {
+  return `pf:analyzed:${repo ? slugify(repo) + ':' : ''}${slugify(title, 56) || 'p'}-${hashId(title)}`;
 }
 
 function extractJson(text: string): Record<string, unknown> | null {
@@ -63,7 +63,7 @@ export async function llmDistill(input: ClusterInput, llm: CompletionProvider): 
   const scope: 'global' | 'repo' = json.scope === 'global' ? 'global' : 'repo';
   const title = json.title;
   return {
-    id: minedPitfallId(title, input.repo),
+    id: distilledPitfallId(title, input.repo),
     title,
     trigger: title,
     why: typeof json.why === 'string' ? json.why : title,
@@ -73,7 +73,7 @@ export async function llmDistill(input: ClusterInput, llm: CompletionProvider): 
     confidence,
     scope,
     repo: input.repo,
-    incidentIds: comments.map((c) => `inc:mined:${c.id}`),
+    incidentIds: comments.map((c) => `inc:analyzed:${c.id}`),
     embedding: input.centroid,
   };
 }

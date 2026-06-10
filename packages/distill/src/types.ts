@@ -1,4 +1,4 @@
-/** A raw PR review comment pulled from GitHub (the mining source unit). */
+/** A raw PR review comment pulled from GitHub (the analysis source unit). */
 export interface RawComment {
   id: string;
   prNumber: number;
@@ -20,7 +20,7 @@ export interface RawComment {
   replies?: { author?: string; body: string }[];
 }
 
-export interface MineResult {
+export interface DistillResult {
   prsScanned: number;
   comments: number;
   substantive: number;

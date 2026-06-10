@@ -72,6 +72,15 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/distill:
+    dependencies:
+      '@plex/core':
+        specifier: workspace:*
+        version: link:../core
+      '@plex/knowledge':
+        specifier: workspace:*
+        version: link:../knowledge
+
   packages/engine:
     dependencies:
       '@plex/code-graph':
@@ -83,6 +92,9 @@ importers:
       '@plex/deterministic':
         specifier: workspace:*
         version: link:../deterministic
+      '@plex/distill':
+        specifier: workspace:*
+        version: link:../distill
       '@plex/findings':
         specifier: workspace:*
         version: link:../findings
@@ -92,9 +104,6 @@ importers:
       '@plex/knowledge':
         specifier: workspace:*
         version: link:../knowledge
-      '@plex/mining':
-        specifier: workspace:*
-        version: link:../mining
       '@plex/neighborhood':
         specifier: workspace:*
         version: link:../neighborhood
@@ -137,15 +146,6 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
-
-  packages/mining:
-    dependencies:
-      '@plex/core':
-        specifier: workspace:*
-        version: link:../core
-      '@plex/knowledge':
-        specifier: workspace:*
-        version: link:../knowledge
 
   packages/neighborhood:
     dependencies:

@@ -12,8 +12,8 @@ export interface RepoPaths {
   brainDir: string;
   /** Append-only verdict log (feedback-loop seed). */
   verdictsFile: string;
-  /** Incremental mining cursor (which PRs have been scanned). */
-  miningStateFile: string;
+  /** Incremental review-history analysis cursor (which PRs have been scanned). */
+  analyzeStateFile: string;
   /** Append-only review audit log for attribution (ADR-24). */
   logFile: string;
   /** Indexed HEAD sha sidecar — staleness check without opening Kùzu (ADR-16/25). */
@@ -52,7 +52,7 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     graphDir: path.join(reviewerDir, 'graph.kuzu'),
     brainDir: path.join(reviewerDir, 'brain.kuzu'),
     verdictsFile: path.join(reviewerDir, 'verdicts.jsonl'),
-    miningStateFile: path.join(reviewerDir, 'mining-state.json'),
+    analyzeStateFile: path.join(reviewerDir, 'analyze-state.json'),
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),
     headShaFile: path.join(reviewerDir, 'head.sha'),
   };

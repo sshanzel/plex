@@ -2,7 +2,7 @@
 
 The orchestration layer behind every MCP tool and CLI command. The MCP server (`@plex/mcp-server`)
 and CLI (`@plex/cli`) are thin surfaces over this package: it composes ingest + code-graph +
-neighborhood + deterministic + findings + knowledge + mining into the actual review flow, and owns
+neighborhood + deterministic + findings + knowledge + review-history analysis into the actual review flow, and owns
 the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/README.md`](../../docs/adr/README.md).
 
 ## Module map
@@ -10,7 +10,7 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 **Config & paths**
 - `src/config-load.ts` — `loadConfig()`: defaults < `~/.plex/config.json` < `PLEX_*` env < explicit overrides (precedence verified in that order in code).
 - `src/home-config.ts` — read/merge-write `~/.plex/config.json` (chmod 600; holds the embedding API key).
-- `src/paths.ts` — `repoPaths()`: where a repo's data lives (`~/.plex/repos/<id>` by default: `graph.kuzu`, `brain.kuzu`, `verdicts.jsonl`, `mining-state.json`, `log/events.jsonl`, `head.sha`); `ensureDataDir()` makes an in-repo data dir self-ignoring.
+- `src/paths.ts` — `repoPaths()`: where a repo's data lives (`~/.plex/repos/<id>` by default: `graph.kuzu`, `brain.kuzu`, `verdicts.jsonl`, `analyze-state.json`, `log/events.jsonl`, `head.sha`); `ensureDataDir()` makes an in-repo data dir self-ignoring.
 
 **Diff & identity**
 - `src/diff.ts` — `DiffSource` (`source: local|pr`, `mode: working|staged|branch`, `baseRef`, `pr`) → `NormalizedDiff` via `@plex/ingest`.
@@ -31,8 +31,8 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 - `src/verdicts.ts` — append-only `verdicts.jsonl`; `loadWaivers` turns `waive`/`acknowledge`/`reject` verdicts into suppression rules.
 - `src/knowledge.ts` — knowledge store wiring (retrieval, seed, consolidate, promotions) + `submitVerdict` (verdict → JSONL + incident-on-accept + brain projection + audit). An accept without an explicit `pattern` runs `inferPitfallId` (embedding cosine ≥ `adaptiveFloor(0.7, …)`, lexical ≥ 0.45 for vectorless/key-less; conservative — no match beats a wrong match) so first-principles accepts reinforce pitfalls too.
 
-**Mining, eval, audit**
-- `src/mining.ts` — incremental PR-history mining cursor; `mineRepo` (standalone LLM distillation), `scanForMining`/`addMinedPitfalls` (agent-driven path).
+**Analysis, eval, audit**
+- `src/analyze.ts` — incremental PR-review-history scan cursor; `analyzeRepo` (standalone LLM distillation), `scanForAnalysis`/`addAnalyzedPitfalls` (agent-driven path). Uses the `@plex/distill` package as the clustering/distillation technique.
 - `src/ranking-eval.ts` — `rankingQuality`: offline nDCG of `signal` vs outcomes; measurement only ([`docs/design/tuning.md`](../../docs/design/tuning.md)).
 - `src/audit.ts` — ADR-24 append-only audit log: what was PROVIDED and SUBMITTED, never chain-of-thought (ADR-02).
 
@@ -86,7 +86,7 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 - **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → lexical (keyword) fallback; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
 - **Best-effort everywhere on the bookkeeping edges**: audit logging, blast-map sidecar, PR auto-comment, and the `head.sha` stamp never throw out of a review.
 - `recordVerdict` persists the waiver embedding to disk but **strips it from the returned value** (the MCP echo would waste tokens no consumer reads).
-- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Knowledge is mined/learned only; markdown seeding (`plex.md`) was retired (ADR-37).
+- The analysis write paths (`analyzeRepo`, `scanForAnalysis`, `addAnalyzedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Knowledge is learned only; markdown seeding (`plex.md`) was retired (ADR-37).
 
 ## Testing
 

@@ -2,7 +2,7 @@
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, consolidate, mine (and an undocumented `review` — see the USAGE note).
+ * verdicts, consolidate, analyze (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
@@ -24,7 +24,7 @@ import {
   consolidateKnowledge,
   embeddingReady,
   reviewContextToHtml,
-  mineRepo,
+  analyzeRepo,
   readHomeConfig,
   writeHomeConfig,
   homeConfigPath,
@@ -59,7 +59,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
-  plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
+  plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
 
@@ -346,22 +346,22 @@ async function main(): Promise<number> {
       process.stdout.write(JSON.stringify(list, null, 2) + '\n');
       return 0;
     }
-    case 'mine': {
+    case 'analyze': {
       const repoPath = positionals[1] ?? process.cwd();
       const oldest = Boolean(flags.oldest);
       // `--oldest` needs the full PR list to find the chronological start, not just the
       // recent `maxPrs` window — raise the fetch ceiling so the oldest PRs are in view.
-      if (oldest) config.mining.maxPrs = Math.max(config.mining.maxPrs, 1000);
-      if (typeof flags.threshold === 'string') config.mining.clusterThreshold = Number(flags.threshold);
-      if (typeof flags['min-cluster'] === 'string') config.mining.minClusterSize = Number(flags['min-cluster']);
-      const res = await mineRepo(repoPath, config, {
+      if (oldest) config.analyze.maxPrs = Math.max(config.analyze.maxPrs, 1000);
+      if (typeof flags.threshold === 'string') config.analyze.clusterThreshold = Number(flags.threshold);
+      if (typeof flags['min-cluster'] === 'string') config.analyze.minClusterSize = Number(flags['min-cluster']);
+      const res = await analyzeRepo(repoPath, config, {
         reset: Boolean(flags.reset),
         state: flags.all ? 'all' : 'merged',
         order: oldest ? 'oldest' : undefined,
         limit: typeof flags.limit === 'string' ? Number(flags.limit) : undefined,
       });
       process.stdout.write(
-        `Mined ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +
+        `Analyzed ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +
           `${res.comments} comments → ${res.substantive} substantive → ${res.clusters} clusters → ` +
           `+${res.pitfalls} pitfalls, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
       );

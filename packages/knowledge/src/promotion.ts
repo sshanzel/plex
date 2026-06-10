@@ -33,14 +33,14 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
   let reinforced = 0;
   const next = pitfalls.map((p) => {
     const inc = byPitfall.get(p.id) ?? [];
-    if (inc.length === 0) return p; // no outcomes yet → keep the mined/seeded prior confidence
+    if (inc.length === 0) return p; // no outcomes yet → keep the prior confidence
     reinforced++;
     // Beta-Bernoulli posterior mean over ALL linked outcomes, outcome-weighted (ADR-11):
     // accepted/fixed contribute 1, reverted 1.5 (`outcomeWeight` — the warned-against change
     // shipped and was later reverted: the strongest confirmation), rejected lands on the failure
     // side at REJECT_COST. Idempotent by construction — it's a pure function of the counts, so
     // re-running consolidate can't drift confidence the way the old additive rule did (no
-    // applied-set ledger needed). Real accept/reject evidence supersedes the mined prior
+    // applied-set ledger needed). Real accept/reject evidence supersedes the prior
     // estimate, which is what we want once a pitfall has a track record.
     const s = inc.reduce((sum, i) => sum + outcomeWeight(i.outcome), 0);
     const f = inc.filter((i) => i.outcome === 'rejected').length;

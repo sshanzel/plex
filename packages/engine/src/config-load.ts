@@ -14,8 +14,8 @@ import { readHomeConfig } from './home-config';
  *   PLEX_DATA_DIR             per-repo data dir ('' = centralized ~/.plex/repos/<id>)
  *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)
  *   PLEX_EMBEDDING_PROVIDER   voyage | openai | gemini | ollama | none (default none)
- *   PLEX_LLM_PROVIDER         mining distiller: claude-cli | anthropic | openai
- *   PLEX_LLM_MODEL            model id for the mining distiller
+ *   PLEX_LLM_PROVIDER         analysis distiller: claude-cli | anthropic | openai
+ *   PLEX_LLM_MODEL            model id for the analysis distiller
  */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
   const home = readHomeConfig();

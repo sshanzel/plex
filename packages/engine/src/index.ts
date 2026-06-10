@@ -36,17 +36,17 @@ export {
 } from './knowledge';
 export { reviewContextToHtml } from './viz';
 export {
-  mineRepo,
-  scanForMining,
-  addMinedPitfalls,
-  loadMiningState,
-} from './mining';
+  analyzeRepo,
+  scanForAnalysis,
+  addAnalyzedPitfalls,
+  loadAnalyzeState,
+} from './analyze';
 export type {
-  MineRepoOptions,
-  MiningState,
-  MiningCluster,
-  ScanForMiningResult,
+  AnalyzeOptions,
+  AnalyzeState,
+  ReviewCluster,
+  ScanForAnalysisResult,
   AgentPitfall,
-} from './mining';
+} from './analyze';
 export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
 export type { StoredVerdict, VerdictInput, WaiverIdentity } from './verdicts';

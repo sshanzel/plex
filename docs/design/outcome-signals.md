@@ -1,13 +1,13 @@
-# Design note — richer outcome signals for mined incidents
+# Design note — richer outcome signals for analyzed incidents
 
 **Status:** proposed (not built). Captures the plan + the rate-limit/attribution risks so we don't rediscover them. Promote to an ADR when we commit to it.
 
 ## Problem
 
-`IncidentOutcome` has four grades — `fixed | accepted | rejected | reverted` — but the mining path only ever emits two:
+`IncidentOutcome` has four grades — `fixed | accepted | rejected | reverted` — but the analysis path only ever emits two:
 
 ```ts
-// packages/mining/src/outcome.ts
+// packages/distill/src/outcome.ts
 outcomeFor({ prMerged }) => prMerged ? 'accepted' : 'rejected'
 ```
 
@@ -32,10 +32,10 @@ Note the LLM distiller already reads thread **replies** and SKIPs suggestions th
 
 ## Rate-limit / cost discipline (the part not to forget)
 
-A naive "per comment, fetch the commits after it and diff" over historical mining (hundreds of PRs × many comments) will exhaust the GitHub App budget (5000 req/hr; 15000 GHEC).
+A naive "per comment, fetch the commits after it and diff" over historical analysis (hundreds of PRs × many comments) will exhaust the GitHub App budget (5000 req/hr; 15000 GHEC).
 
 - **One GraphQL query per PR, not per comment.** Pull `reviewThreads{ isResolved, comments{ path, line, body, createdAt } }` + the PR's `commits` in a single paginated query. Avoid the REST `pulls/{n}/comments` + N follow-ups.
-- **Reuse the incremental cursor** (`.plex/mining-state.json`) — already skips scanned PRs; never re-scan.
+- **Reuse the incremental cursor** (`.plex/analyze-state.json`) — already skips scanned PRs; never re-scan.
 - **Respect `X-RateLimit-Remaining` / `Retry-After`**; exponential backoff; stop the batch (don't hammer) when the budget is low and resume next run.
 - **Cache per-PR** thread+commit data; compute the outcome once at PR-merge (webhook), not on every review.
 - **Cap historical depth** on first backfill; prefer recent PRs (recency-weighted, like co-change).

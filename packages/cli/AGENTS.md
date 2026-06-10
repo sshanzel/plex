@@ -32,7 +32,7 @@ storage (`~/.plex/repos/<id>`, the brain, the knowledge base) are shared. Built 
   `readVerdicts`. Note: the CLI calls `submitVerdict` **without a target**, so it writes
   `verdicts.jsonl` (+ a knowledge incident on accept) but not a brain `Verdict` node; the MCP
   `record_outcome` passes the `reviewTargetFor` target and does both.
-- `mine [--reset] [--all] [--oldest] [--limit N] [--threshold X] [--min-cluster N]` — `mineRepo`,
+- `analyze [--reset] [--all] [--oldest] [--limit N] [--threshold X] [--min-cluster N]` — `analyzeRepo`,
   standalone LLM distillation (errors without an LLM, ADR-20); `--oldest` raises the PR fetch
   ceiling to find the chronological start.
 - `consolidate` — `consolidateKnowledge`: recompute pitfall confidence from recorded incident outcomes.

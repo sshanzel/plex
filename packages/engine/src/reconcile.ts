@@ -62,7 +62,7 @@ export async function recordFixAccepts(
 
 export interface ReconcileResult {
   target: string;
-  /** Open findings examined. */
+  /** Open findings checked. */
   checked: number;
   /** Findings auto-accepted because a pushed change addressed them. */
   accepted: number;

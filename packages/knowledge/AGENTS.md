@@ -1,8 +1,8 @@
 # @plex/knowledge — AGENTS.md
 
 The knowledge base: a **JSON-backed Pitfall/Incident store** (ADR-18) plus the pure logic around
-it — embedding-based retrieval and outcome-driven confidence consolidation. In the flow: **mining** (`@plex/mining`) and `add_pitfalls` populate it (knowledge is
-mined/learned, never hand-authored markdown — ADR-37 retired plex.md seeding), **reviews** retrieve
+it — embedding-based retrieval and outcome-driven confidence consolidation. In the flow: **analysis** (`@plex/distill`) and `add_pitfalls` populate it (knowledge is
+learned, never hand-authored markdown — ADR-37 retired plex.md seeding), **reviews** retrieve
 from it (`get_review_context` → `retrieveRelevant`), and `record_outcome`/`consolidate_knowledge`
 close the loop (an `accept` becomes an Incident; consolidation recomputes confidence from Incidents).
 The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
@@ -27,7 +27,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 discarding the whole store (a full-file `JSON.parse` would have let consolidation rewrite an *empty*
 log: silent total loss). `replacePitfalls` (consolidation's writer) is **atomic**: write
 `pitfalls.jsonl.tmp-<pid>`, then `rename` over the target. Dedupe primitive: `hasPitfallTitled` —
-**exact title equality**; every write path (mined, `add_pitfalls`) dedupes through it.
+**exact title equality**; every write path (analyzed, `add_pitfalls`) dedupes through it.
 
 **Retrieval (`retrieve.ts`).** `retrieveRelevant(store, provider, queryText, topK = 5, minScore = 0.05, repo?)`:
 
@@ -35,7 +35,7 @@ log: silent total loss). `replacePitfalls` (consolidation's writer) is **atomic*
    i.e. `undefined` scope = global (back-compat); repo-scoped pitfalls surface only for their
    origin repo.
 2. Embed the query once; `score = cosineSimilarity(q, p.embedding)` — **pure cosine; stored
-   `confidence` does not weight the score**. Pitfalls stored WITHOUT a vector (e.g. mined key-less)
+   `confidence` does not weight the score**. Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
    are scored **lexically** in the same pass instead of being invisible; if the query embed
    throws (provider outage) the whole batch degrades to lexical rather than failing the review.
 3. Keep `score >= minScore` (0.05), sort desc, slice `topK`, and **strip `embedding` from each
@@ -45,7 +45,7 @@ No provider configured → the engine wrapper (`getRelevantKnowledge`) uses
 **`retrieveRelevantLexical`**: cosine over IDF-weighted token sets (`lexicalTokens`: camelCase
 split, lowercase, ≥3-char tokens, stopworded; IDF over the pitfall corpus) on `title + trigger +
 why + category`. Weaker ranking than embeddings, far better than nothing — a key-less install
-still gets its mined/accumulated pitfalls back. Same `topK`/`minScore` semantics.
+still gets its accumulated pitfalls back. Same `topK`/`minScore` semantics.
 
 **Consolidation (`promotion.ts` — the feedback loop's teeth, ADR-10).** Beta-Bernoulli posterior
 mean with constants `PRIOR_ALPHA = 1`, `PRIOR_BETA = 1`, `REJECT_COST = 1.5`. For each pitfall,
@@ -58,10 +58,10 @@ confirmation), `f` = `rejected` count, and
 confidence = betaPosteriorMean(1 + s, 1 + 1.5·f)  =  (1 + s) / (2 + s + 1.5·f)
 ```
 
-A pitfall with **zero linked incidents keeps its mined prior confidence**. The formula is a
+A pitfall with **zero linked incidents keeps its prior confidence**. The formula is a
 pure function of the counts → **idempotent** (re-running never drifts, unlike the old additive
 `+0.1/−0.15` rule). Consolidation also overwrites `incidentIds` with the linked incidents' ids
-(provenance backfill). Note: mining's coarse `outcomeFor` never *produces* `fixed`/`reverted`
+(provenance backfill). Note: analysis's coarse `outcomeFor` never *produces* `fixed`/`reverted`
 (see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)) — those arrive from
 review-driven incidents. Known gap: `wilsonLowerBound` (`stats.ts`, `z = 1.96`) is exported "for
 small-sample ranking" (tuning.md §1) but currently has **no consumer** outside its own tests.
@@ -71,7 +71,7 @@ retired in ADR-37: the markdown half died with `plex.md`, and the rule half emit
 `pattern: TODO` scaffolds for an external runner that was never wired (a human had to author the
 rule anyway). User-authored deterministic rules return — as committed `plex.json` config that
 *defers* to the linter you already run — when `plex.json` lands (backlog). The `tier` field stays
-on `Pitfall` (mining still sets it) but is now inert metadata: nothing reads it.
+on `Pitfall` (the analysis pipeline still sets it) but is now inert metadata: nothing reads it.
 
 **Incidents (`incidents.ts`).** `recordIncident` builds collision-safe ids
 `inc:<file-slug>:<hashId(snippet)>:<ts>` and is the learning loop's write path (an accepted finding
@@ -82,7 +82,7 @@ on `Pitfall` (mining still sets it) but is now inert metadata: nothing reads it.
 - **Provenance is mandatory**: every Pitfall carries `incidentIds`; consolidation keeps them in sync.
   Don't add a write path that stores a pitfall without (at least an empty) provenance link.
 - **Embeddings are optional, asymmetrically**: *reads* degrade to hybrid/lexical retrieval (see
-  above); the **mining** write paths still error via the engine's `requireEmbeddings`
+  above); the **analysis** write paths still error via the engine's `requireEmbeddings`
   (`NO_EMBEDDINGS`) — clustering genuinely needs vectors. `fake` is the deterministic test-only
   embedder (FNV-1a bag-of-words, L2-normalized) and is **never** the default (`provider: 'none'` is).
 - **Key resolution** (`createEmbeddingProvider`): env var (`cfg.apiKeyEnv` override or the provider

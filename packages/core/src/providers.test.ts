@@ -122,7 +122,7 @@ describe('hashId', () => {
 });
 
 // cosineSimilarity is the backbone of EVERY semantic feature — knowledge retrieval,
-// mining clusters, semantic waivers (≥0.82), and round attribution. Pin its contract.
+// analysis clusters, semantic waivers (≥0.82), and round attribution. Pin its contract.
 describe('cosineSimilarity', () => {
   it('is 1 for identical vectors', () => {
     expect(cosineSimilarity([1, 2, 3], [1, 2, 3])).toBeCloseTo(1, 10);

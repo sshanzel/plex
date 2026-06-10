@@ -13,10 +13,10 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   (`ReviewRound`, `PrComment`, `AttributedChange`).
 - `src/config.ts` — `ReviewerConfig` + `defaultConfig` + `resolveConfig(overrides)` (deep-merges
   each section). Notable defaults: `dataDir: ''` (centralized), `embedding.provider: 'none'`,
-  `llm.provider: 'claude-cli'`, `mining.clusterThreshold: 0.8`, `autoComment: false`,
+  `llm.provider: 'claude-cli'`, `analyze.clusterThreshold: 0.8`, `autoComment: false`,
   `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`.
 - `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) and `CompletionProvider`
-  (offline mining only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
+  (offline analysis only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
   null-on-failure so callers degrade instead of failing), `cosineSimilarity`,
   `isGeneratedArtifact` (lockfiles/minified bundles/source maps/snapshots — the
   ignore-list every ingestion edge applies), `cosineBackground`/`adaptiveFloor` (anisotropy-aware thresholds,
@@ -44,7 +44,7 @@ made self-ignoring by `ensureDataDir` (a `.gitignore` of `*` inside).
   default).
 - `EmbeddingConfig.apiKeyEnv` is preferred over `apiKey` (keeps secrets out of serialized config);
   `apiKey` exists for the `~/.plex/config.json` flow (ADR-29).
-- Generative LLMs are not embedding models — `LlmConfig` is for the mining distiller only.
+- Generative LLMs are not embedding models — `LlmConfig` is for the analysis distiller only.
 - Keep this package pure (no I/O, no deps): the scoring/threshold helpers here are unit-testable
   precisely because of that.
 

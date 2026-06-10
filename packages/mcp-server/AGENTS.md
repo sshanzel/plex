@@ -24,9 +24,9 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 | `reconcile_outcomes` | `reconcileOutcomes` | yes |
 | `get_relevant_knowledge` | `getRelevantKnowledge` | — (`query`, `topK`) |
 | `consolidate_knowledge` | `consolidateKnowledge` | — |
-| `mine_scan` | `scanForMining` | — (`reset`, `state`, `order`, `limit`) |
-| `add_pitfalls` | `addMinedPitfalls` | — (`pitfalls[]`) |
-| `mine_history` | `mineRepo` | — (`reset`, `state`, `order`, `limit`) |
+| `analyze_scan` | `scanForAnalysis` | — (`reset`, `state`, `order`, `limit`) |
+| `add_pitfalls` | `addAnalyzedPitfalls` | — (`pitfalls[]`) |
+| `analyze_history` | `analyzeRepo` | — (`reset`, `state`, `order`, `limit`) |
 | `doctor` | `buildDoctorReport` | — |
 
 **Diff-source params** (`diffSourceShape`, all optional): `source: 'local' | 'pr'`,
@@ -65,7 +65,7 @@ target (`reviewTargetFor(repoPath, src)`) agrees across context → findings →
   tsx-run server.
 - **Embeddings optional (ADR-30)**: tools degrade rather than fail — `get_relevant_knowledge`
   falls back to lexical (keyword) retrieval; `reconcile_outcomes` falls back to locality-only. Exception:
-  `mine_scan`/`mine_history`/`add_pitfalls` error without a provider (clustering needs vectors).
+  `analyze_scan`/`analyze_history`/`add_pitfalls` error without a provider (clustering needs vectors).
 - **`record_outcome` / `reconcile_outcomes` are internal learning-loop bookkeeping** — agents call
   them silently and best-effort (the `instructions` say so); a dropped call is recovered by the next
   review's locality-based fix inference (ADR-36). Never make an agent surface their success/failure.

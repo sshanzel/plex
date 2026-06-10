@@ -74,7 +74,7 @@ describe('repoPaths', () => {
     expect(p.graphDir).toBe(path.join(r, 'graph.kuzu'));
     expect(p.brainDir).toBe(path.join(r, 'brain.kuzu'));
     expect(p.verdictsFile).toBe(path.join(r, 'verdicts.jsonl'));
-    expect(p.miningStateFile).toBe(path.join(r, 'mining-state.json'));
+    expect(p.analyzeStateFile).toBe(path.join(r, 'analyze-state.json'));
     expect(p.logFile).toBe(path.join(r, 'log', 'events.jsonl'));
     expect(p.headShaFile).toBe(path.join(r, 'head.sha'));
     expect(p.repoPath).toBe(abs);

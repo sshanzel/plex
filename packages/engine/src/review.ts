@@ -31,7 +31,7 @@ import { computeNeighborhood, associationStrength } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
 import { classifyChanges, reviewPlan, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
-import { fetchCommentsForPr } from '@plex/mining';
+import { fetchCommentsForPr } from '@plex/distill';
 import type { RetrievedPitfall } from '@plex/knowledge';
 import { repoPaths, ensureDataDir } from './paths';
 import { resolveDiff, type DiffSource } from './diff';

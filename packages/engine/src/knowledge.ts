@@ -58,7 +58,7 @@ export function embeddingReady(config: ReviewerConfig): boolean {
  * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
  * Degrades gracefully: with no embedding provider configured, falls back to lexical
  * (IDF-weighted token overlap) retrieval — weaker ranking, but a key-less install still
- * gets its mined/accumulated pitfalls back instead of nothing.
+ * gets its accumulated pitfalls back instead of nothing.
  */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,

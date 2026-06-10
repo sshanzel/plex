@@ -5,8 +5,8 @@
  * be derived from a formula — they encode a preference and need LABELED relevance to fit/validate.
  * We already produce those labels two ways:
  *   - live `record_outcome` verdicts (accept/reject/acknowledge), and
- *   - at scale, MINED PR history — every substantive review comment is a finding a human cared
- *     about, and its outcome grades it (the mining pipeline already pulls comment → outcome).
+ *   - at scale, ANALYZED PR history — every substantive review comment is a finding a human cared
+ *     about, and its outcome grades it (the analysis pipeline already pulls comment → outcome).
  *
  * This module is the measuring stick: nDCG (Järvelin & Kekäläinen 2002) of a ranked finding list
  * against those labels — so a ranking change becomes a measured delta instead of a guess, and later
@@ -16,7 +16,7 @@
 /**
  * Graded relevance of an outcome label: a confirmed defect is most relevant, an intentional flag
  * mild, a rejected/never-actioned finding irrelevant. Mirrors the `record_outcome` verdict kinds
- * and the mined-incident outcomes (`accepted`/`fixed`/`rejected`).
+ * and the analyzed-incident outcomes (`accepted`/`fixed`/`rejected`).
  */
 export function relevanceOfOutcome(outcome: string | undefined): number {
   switch (outcome) {
@@ -121,7 +121,7 @@ export function ndcg(rankedRelevances: number[]): number {
 
 /**
  * nDCG of a finding list (in the order Plex ranked it) against an outcome-label map
- * (findingId → outcome). The bridge from labels — live verdicts OR mined incidents — to one
+ * (findingId → outcome). The bridge from labels — live verdicts OR analyzed incidents — to one
  * ranking-quality number. Pure.
  */
 export function rankingNdcg(

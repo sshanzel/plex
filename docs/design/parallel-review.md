@@ -41,4 +41,4 @@ Plex has no LLM and can't spawn agents — so:
 3. ✅ **Orchestrator** — the `plex-parallel-review` skill (main session, the only context that can spawn subagents): one `get_review_context` → obey `reviewPlan` → single → one pass; parallel → one `plex-reviewer` subagent per unit (focused-unit mode: returns raw findings, no `submit_findings`) → cross-cluster consolidation → ONE `submit_findings`.
 4. **Verdict roll-up** — derive ship/block per cluster from the consolidated triage. *(Deferred: `submit_findings` already triages the consolidated stream; a per-cluster roll-up view is additive.)*
 
-Thresholds (`minFiles`, `minSurface`, `maxAgents`, `minClusterFiles`) are tunable per repo — like the mining `clusterThreshold`, the right values are empirical, so they're config + overridable.
+Thresholds (`minFiles`, `minSurface`, `maxAgents`, `minClusterFiles`) are tunable per repo — like the analysis `clusterThreshold`, the right values are empirical, so they're config + overridable.

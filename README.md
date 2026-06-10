@@ -4,7 +4,7 @@ Plex is a local-first code reviewer that works through the coding agent you alre
 
 - **Unbiased.** Review runs in a fresh, separate context, so it never anchors on the reasoning of whoever wrote the code, even across several rounds.
 - **Grounded.** A blast-radius map of your codebase (git co-change, imports, and precise TypeScript edges) shows what else a change can break, not just the lines in the diff.
-- **Compounding.** Review knowledge accumulates both globally (across your repos) and per project, reweighted by your verdicts and mined from your PR history.
+- **Compounding.** Review knowledge accumulates both globally (across your repos) and per project, reweighted by your verdicts and learned from your PR review history.
 - **One stream.** First-principles reasoning, learned pitfalls, and deterministic checks are merged into a single list, ranked by severity, confidence, and blast radius.
 
 The reasoning still comes from the frontier model. Plex's job is to feed it the right context and remember what it learns.
@@ -22,13 +22,13 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 /plugin install plex@sshanzel
 ```
 
-**2. Add an embedding key** (highly recommended). This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and mining. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
+**2. Add an embedding key** (highly recommended). This switches on the part of Plex that *learns*: retrieved pitfalls, semantic matching, and PR-history analysis. See [Embeddings](#embeddings) for the options (Voyage has a free tier).
 
 ```bash
 npx @sshanzel/plex init
 ```
 
-It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. Want a CLI for full visibility (`doctor`, `eval`, mining, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
+It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. Want a CLI for full visibility (`doctor`, `eval`, analysis, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
@@ -61,7 +61,7 @@ After that, reviews use the cached graph and refresh only what changed. (If you 
 Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
 
 - **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality, and stored pitfalls are still retrieved — by keyword match rather than semantically.
-- **With a key:** all of that, plus the full knowledge layer. Plex pulls relevant past pitfalls into each review *semantically*, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
+- **With a key:** all of that, plus the full knowledge layer. Plex pulls relevant past pitfalls into each review *semantically*, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can learn reusable pitfalls from your PR review history. This is the "gets sharper the more you use it" part.
 
 So add one: run `npx @sshanzel/plex init`, create `~/.plex/config.json` yourself, or set the environment variable pair (`PLEX_EMBEDDING_PROVIDER=voyage` + the provider's key, e.g. `VOYAGE_API_KEY` — env overrides the file):
 
@@ -78,17 +78,17 @@ Either way it takes effect on the next review, no reload.
 - **Gemini.** Set `gemini` and `GEMINI_API_KEY`.
 - **Ollama.** Fully local, no key, good for private repos. Set `ollama` (needs Ollama running with an embedding model such as `nomic-embed-text`).
 
-Switching providers later invalidates the stored vectors, since they are not comparable across models (ADR-13). If you change, remove `~/.plex/knowledge` and re-seed or re-mine.
+Switching providers later invalidates the stored vectors, since they are not comparable across models (ADR-13). If you change, remove `~/.plex/knowledge` and re-analyze.
 
 ## Bootstrap from your PR history
 
-Plex gets sharper as you review, but you can give it a head start by mining your past PR reviews into pitfalls. From inside the repo, with an embedding key set and the GitHub CLI (`gh`) authenticated:
+Plex gets sharper as you review, but you can give it a head start by analyzing your past PR reviews into pitfalls. From inside the repo, with an embedding key set and the GitHub CLI (`gh`) authenticated:
 
 ```bash
-npx @sshanzel/plex mine --oldest --limit 50
+npx @sshanzel/plex analyze --oldest --limit 50
 ```
 
-That pulls the review comments from your first 50 PRs, clusters the recurring themes, and distills them into knowledge. It rides your Claude subscription (via the `claude` CLI, no API key needed) and is incremental, so re-run it to keep working through your history. Drop `--oldest` to mine your most recent PRs instead.
+That pulls the review comments from your first 50 PRs, clusters the recurring themes, and distills them into knowledge. It rides your Claude subscription (via the `claude` CLI, no API key needed) and is incremental, so re-run it to keep working through your history. Drop `--oldest` to analyze your most recent PRs instead.
 
 ## Command-line use (optional)
 
@@ -112,15 +112,15 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 **Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST rules). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
 
-**Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling and its repo-scoped pitfalls; it tailors the review to one codebase.
+**Two layers of knowledge.** The global layer holds universal pitfalls and your review style, learned across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling and its repo-scoped pitfalls; it tailors the review to one codebase.
 
 **Closing the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review: inline comments on the changed lines, plus a summary for coupled and awareness findings, deduped across rounds. **`/pr-master:respond`** then works through it (you decide each one) and records the outcomes back into the knowledge base (ADR-34). That command comes from a second plugin in the same marketplace, installed separately when you want it: `/plugin install pr-master@sshanzel`.
 
-**Mining.** Plex turns PR-review history into pitfalls. It pulls review comments through `gh`, denoises them, clusters similar ones, and an LLM distills each cluster, deciding what's worth keeping and whether it belongs to the global or the per-project layer. Distillation runs on your subscription, through either the connected agent (`mine_scan` then `add_pitfalls`) or the local `claude` CLI (`plex mine`). It's incremental: a per-repo cursor only reads new PRs.
+**Review-history analysis.** Plex turns your PR-review history into pitfalls. It pulls review comments through `gh`, denoises them, clusters similar ones, and an LLM distills each cluster, deciding what's worth keeping and whether it belongs to the global or the per-project layer. Distillation runs on your subscription, through either the connected agent (`analyze_scan` then `add_pitfalls`) or the local `claude` CLI (`plex analyze`). It's incremental: a per-repo cursor only reads new PRs.
 
 ## MCP tools
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `analyze_scan` · `add_pitfalls` · `analyze_history` · `doctor`
 
 ## Architecture
 
@@ -140,7 +140,7 @@ Everything here is optional. Set it once with `plex init` (saved to `~/.plex/con
 |---|---|
 | `PLEX_EMBEDDING_PROVIDER` | Semantic knowledge and brain signals: `voyage`, `openai`, `gemini`, or `ollama`. `none` turns it off; `fake` is for tests only. |
 | *(provider key)* | `VOYAGE_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`. Ollama needs none. |
-| `PLEX_LLM_PROVIDER` | Mining distiller: `claude-cli` (default), `anthropic`, or `openai`. |
+| `PLEX_LLM_PROVIDER` | Analysis distiller: `claude-cli` (default), `anthropic`, or `openai`. |
 | `PLEX_DATA_DIR` | Per-repo data directory. Default is centralized at `~/.plex/repos/<id>`; set `.plex` to keep it in the repo, where it self-ignores. |
 | `PLEX_KNOWLEDGE_DIR` | Global knowledge base. Default `~/.plex/knowledge`. |
 | `PLEX_AUTO_COMMENT` | Post a PR review's findings back to the GitHub PR. Off by default. Set `PLEX_AUTO_COMMENT_SKIP_NITS=true` to leave nits out; otherwise nits are posted too. |

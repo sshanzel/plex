@@ -805,8 +805,8 @@ test('knowledge', 'engine: stored pitfall -> review retrieves it -> learn on acc
     git(repo, 'add', '-A');
 
     const config = resolveConfig({ dataDir: '.plex', knowledgeDir, embedding: { provider: 'fake' } }); // fake = test-only
-    // Knowledge is populated by mining + the learning loop (no markdown seeding). Stand in a
-    // mined-style pitfall directly so the retrieval + learn-on-accept loop is exercised.
+    // Knowledge is populated by review-history analysis + the learning loop (no markdown seeding).
+    // Stand in an analyzed-style pitfall directly so the retrieval + learn-on-accept loop is exercised.
     const title = 'Always validate user input before inserting into the database';
     const [vec] = await createEmbeddingProvider(config.embedding)!.embed([`validation: ${title}`]);
     await knowledgeStore(config).addPitfall({

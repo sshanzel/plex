@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { IncidentOutcome } from '@plex/core';
 import { outcomeFor, outcomeWeight } from './outcome';
 
-// Outcome weighting drives mining confidence (ADR-11). Tiny, pure, and was entirely
+// Outcome weighting drives analysis confidence (ADR-11). Tiny, pure, and was entirely
 // untested. Pin the binary merged→accepted mapping and the full weight table so a future
 // refinement (e.g. detecting `fixed`/`reverted`) is a deliberate, test-breaking change.
 describe('outcomeFor', () => {

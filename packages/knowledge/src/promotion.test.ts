@@ -59,7 +59,7 @@ describe('consolidatePitfalls', () => {
     expect(byId['pr']!.confidence).toBeGreaterThan(byId['pa']!.confidence);
   });
 
-  it('a pitfall with no incidents keeps its mined/seeded prior confidence', async () => {
+  it('a pitfall with no incidents keeps its prior confidence', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp-prior-'));
     const store = new KnowledgeStore(dir);
     await store.addPitfall(pf({ id: 'p1', confidence: 0.83 }));

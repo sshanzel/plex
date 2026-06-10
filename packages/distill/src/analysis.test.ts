@@ -70,7 +70,7 @@ describe('llmDistill (LLM decides what to store)', () => {
     expect(pitfall).not.toBeNull();
     expect(pitfall!.title).toBe('Always validate tenant id on queries');
     expect(pitfall!.category).toBe('security');
-    expect(pitfall!.incidentIds).toEqual(['inc:mined:1', 'inc:mined:2']);
+    expect(pitfall!.incidentIds).toEqual(['inc:analyzed:1', 'inc:analyzed:2']);
     expect(pitfall!.embedding).toEqual([0.1, 0.2]);
     expect(pitfall!.confidence).toBeGreaterThan(0.4);
   });

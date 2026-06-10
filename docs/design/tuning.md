@@ -11,7 +11,7 @@ is tracked, not rediscovered.
 > 2. **Co-change strength → Salton association strength** `co/√(degA·degB)` (was a raw count; removes the frequency confound).
 > 3. **Clustering cut → adaptive `μ+kσ` of the batch's own cosines** (was a fixed `0.8`).
 > 4. **Blast radius → personalized PageRank / RWR**, degree-normalized — *subsumes* the hub-damping (was BFS + `hubWeight`).
-> 5. **Ranking → an nDCG eval metric** over outcome labels (live verdicts **or mined PR history**) — the measuring stick the weights need.
+> 5. **Ranking → an nDCG eval metric** over outcome labels (live verdicts **or analyzed PR history**) — the measuring stick the weights need.
 >
 > What remains genuinely empirical / deferred is called out per-section and in **The honest limit** below.
 
@@ -90,7 +90,7 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 |---|---|---|---|
 | `WAIVER_SEMANTIC_THRESHOLD` | 0.82 floor | **adaptive — safe-direction (adopted)** | a waiver suppresses cosine-≥ findings. Now `max(0.82, μ+3σ)` of the batch's cosine background (`adaptiveFloor`) — on an anisotropic model the bar rises so it suppresses *less*; it can never fall below 0.82, so it never hides more than the fixed value did. |
 | `semanticThreshold` (fix-inference) | 0.6 floor | **adaptive — safe-direction (adopted)** | the auto-accept cut, `max(0.6, μ+3σ)` of the region/finding background — rises (auto-accepts *less*, surfaces *more*) on a high-baseline model, never below 0.6. With no embedder → background {0,0} → stays 0.6, locality unaffected. |
-| `mining.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
+| `analyze.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
 | pitfall confidence | **Beta-Bernoulli** posterior mean | **principled (adopted)** | `confidence = (α0+s)/(α0+β0+s+1.5f)` with prior Beta(1,1) and rejects at 1.5× (was `±0.1/±0.15`). Idempotent, no clamp-loss, no path-dependence. `wilsonLowerBound` (Wilson 1927) available for small-sample ranking. `promotion.ts`. |
 | ~~promotion threshold~~ | — | removed | the markdown-promotion direction (graph → `plex.md`) was retired with `plex.md` (ADR-37); rule promotion gates on `tier === 'codifiable'`, not confidence. |
 
@@ -110,12 +110,12 @@ only *fit* them against labeled relevance.
 
 That measuring stick now exists: **`ndcg` / `rankingNdcg`** (`findings/src/eval.ts`) scores a ranking
 against outcome labels. And the labels exist two ways — live `record_outcome` verdicts, and, at scale,
-**mined PR history** (every review comment is a finding a human cared about; its outcome grades it; the
-mining pipeline already pulls comment → outcome). So the path is concrete:
+**analyzed PR history** (every review comment is a finding a human cared about; its outcome grades it; the
+analysis pipeline already pulls comment → outcome). So the path is concrete:
 
 **Measurement is wired (adopted).** `rankingQuality` (`engine/ranking-eval.ts`, surfaced as `plex eval`)
 reads the brain's per-finding `signal` + raw features + outcome — data the review flow already persists,
-**mining-independent** — and reports the current ranking's nDCG vs what the user actually accepted, per
+**analysis-independent** — and reports the current ranking's nDCG vs what the user actually accepted, per
 evaluable round. It is **measurement only** (never mutates weights) and is the guard that answers, for
 *this* user's accrued data, whether a re-weight could even beat the defaults. If the data is sparse it
 says so and the defaults stand.
@@ -143,7 +143,7 @@ rank time `rankReviewFindings` enriches each finding's `blastRadius` from that s
 agent-supplied value; best-effort — no sidecar ⇒ unchanged). The brain's `Finding` then **persists the
 raw features** `blast`/`prevalence`/`agreement` (idempotent `ALTER TABLE … ADD … DEFAULT` migration for
 pre-existing brains; an unset feature stores as `0`/`1`), and `Brain.rankingSamples()` returns them — so
-the deferred re-weight has real, mining-independent feature vectors to fit. **Measurement/plumbing only:
+the deferred re-weight has real, analysis-independent feature vectors to fit. **Measurement/plumbing only:
 the `signal` formula is unchanged** (a small/uncoupled change still floors blast near 0 ⇒ existing
 rankings move only where coupling is genuinely high).
 
@@ -151,7 +151,7 @@ rankings move only where coupling is genuinely high).
 1. **The actual ranking re-weight.** Fit the Weighted-Product exponents / a logistic model to maximize
    `rankingQuality`'s nDCG over the now-persisted feature vectors, then ship only if it beats the
    defaults on held-out data. Weights stay **global + pooled across the user's reviews + feature-
-   normalized** (so uneven repos / non-miners contribute comparably). Needs enough labeled
+   normalized** (so uneven repos / repos that don't run analysis contribute comparably). Needs enough labeled
    review→outcome history to generalize — `plex eval` is the go/no-go guard.
 
 Until that lands: change one knob at a time, record the rationale here + in the commit, prefer the

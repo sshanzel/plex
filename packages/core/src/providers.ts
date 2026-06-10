@@ -20,7 +20,7 @@ export interface EmbeddingProvider {
 }
 
 /**
- * Generative completion, used ONLY by the offline mining/distillation pipeline (ADR-02 —
+ * Generative completion, used ONLY by the offline analysis/distillation pipeline (ADR-02 —
  * the interactive review uses the connected agent, never this). Implementations: a
  * deterministic heuristic (no network), Anthropic, OpenAI.
  */

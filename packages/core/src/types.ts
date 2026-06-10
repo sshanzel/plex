@@ -238,7 +238,7 @@ export interface Pitfall {
    * stored (it helps whenever working on that project). Undefined = global (back-compat).
    */
   scope?: 'global' | 'repo';
-  /** Origin repo — set for repo-scoped / mined pitfalls; used to filter retrieval. */
+  /** Origin repo — set for repo-scoped / analyzed pitfalls; used to filter retrieval. */
   repo?: string;
   /** Provenance: ids of the incidents this pitfall was distilled from. */
   incidentIds: string[];
@@ -292,7 +292,7 @@ export interface AttributedChange extends ChangedRegion {
   reason?: string;
 }
 
-export type IncidentSource = 'review' | 'mined';
+export type IncidentSource = 'review' | 'analyzed';
 export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted';
 
 export interface Incident {
