@@ -182,6 +182,14 @@ export interface Verdict {
   kind: VerdictKind;
   scope?: WaiverScope;
   note?: string;
+  /**
+   * True when this verdict was INFERRED by fix matching (ADR-28 auto-accepts) rather than
+   * recorded explicitly. Inferred accepts skip retroactive pitfall inference — a ±5-line
+   * locality match feeding a title-similarity match would compound two inferences into
+   * knowledge confidence; explicit verdicts (or an explicit `pattern` link) are the only
+   * paths that move a pitfall.
+   */
+  inferred?: boolean;
 }
 
 /**

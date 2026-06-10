@@ -81,9 +81,12 @@ best-effort: a non-git dir simply has no co-change layer.
    and (b) staged residue for pairs that already have a real edge (folded onto the edge,
    same accumulate arithmetic, same window). A `CoChange` singleton is still never created
    from one window (ADR-06 denoising), but a coupling landing one commit per window (a
-   review-triggered refresh after every commit) is no longer forgotten. Pending resets on
-   a full rebuild. No epoch bookkeeping: the age clamp gives new commits full recency, and
-   decay re-baselines on every full build (ADR-26).
+   review-triggered refresh after every commit) is no longer forgotten. The lane is
+   bounded: each staged row carries `ts` (refreshed on recurrence) and rows older than one
+   `halfLifeDays` are evicted before staging — never-promoted singletons age out instead
+   of accumulating, and two occurrences a half-life apart never promote at full undecayed
+   weight. Pending resets on a full rebuild. No epoch bookkeeping: the age clamp gives new
+   commits full recency, and decay re-baselines on every full build (ADR-26).
 No stored sha / undiffable sha (force-push) ⇒ `FullRebuildRequired` — callers fall back to
 `buildCodeGraph`. Worktree note (ADR-32): a secondary worktree's graph is seeded by
 *copying* the base graph then running this incremental path — the copy carries the BASE

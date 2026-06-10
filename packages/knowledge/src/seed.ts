@@ -1,4 +1,4 @@
-import { slugify, hashId, type EmbeddingProvider, type Pitfall, type Incident, type IncidentSource } from '@plex/core';
+import { slugify, hashId, safeEmbed, type EmbeddingProvider, type Pitfall, type Incident, type IncidentSource } from '@plex/core';
 import type { KnowledgeStore } from './store';
 
 /** A collision-free pitfall id: a readable slug + a content hash of the full title. */
@@ -40,8 +40,10 @@ export async function seedFromMarkdown(
   provider: EmbeddingProvider | null,
   md: string,
 ): Promise<number> {
-  // Dedupe first, embed ONCE as a batch — providers take batches, and one network call
-  // for N pitfalls beats N round-trips on a large plex.md.
+  // Dedupe first, then embed as a batch THROUGH safeEmbed — it chunks under provider
+  // batch caps (Voyage ~128 inputs, Gemini 100; a large plex.md would fail one raw
+  // unchunked call) and degrades to null on a transient outage, so seeding falls back to
+  // vectorless storage (lexically retrievable) instead of failing.
   const seen = new Set<string>();
   const fresh: ParsedPitfall[] = [];
   for (const it of parseMarkdownPitfalls(md)) {
@@ -50,7 +52,7 @@ export async function seedFromMarkdown(
     fresh.push(it);
   }
   if (fresh.length === 0) return 0;
-  const vecs = provider ? await provider.embed(fresh.map((it) => `${it.category}: ${it.title}`)) : [];
+  const vecs = provider ? ((await safeEmbed(provider, fresh.map((it) => `${it.category}: ${it.title}`))) ?? []) : [];
   for (let i = 0; i < fresh.length; i++) {
     const it = fresh[i]!;
     const pitfall: Pitfall = {

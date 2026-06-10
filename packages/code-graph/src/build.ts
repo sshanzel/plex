@@ -316,11 +316,23 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       // the staging, a coupling landing one commit per window (e.g. a review-triggered
       // refresh after every commit) stayed invisible until the next full rebuild. Pending
       // resets on a full rebuild.
+      // Evict stale staged pairs FIRST (this window's staging refreshes ts below): without
+      // eviction the lane grows monotonically with every never-promoted singleton — the N²
+      // noise ADR-06 prunes — and two occurrences YEARS apart would promote at full
+      // undecayed weight. A pair that hasn't recurred within one co-change half-life would
+      // carry ~half its weight anyway; age it out of the lane on the same horizon.
+      const nowSec = Date.now() / 1000;
+      if (opts.coChange.halfLifeDays > 0) {
+        await db.run(
+          'MATCH (a:File)-[p:CoChangePending]->(b:File) WHERE p.ts IS NULL OR p.ts < $cutoff DELETE p',
+          { cutoff: nowSec - opts.coChange.halfLifeDays * 86400 },
+        );
+      }
       await db.insertMany(
         'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[p:CoChangePending]->(b) ' +
-          'ON CREATE SET p.weight = $weight, p.cnt = $cnt ' +
-          'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt',
-        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+          'ON CREATE SET p.weight = $weight, p.cnt = $cnt, p.ts = $ts ' +
+          'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt, p.ts = $ts',
+        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count, ts: nowSec })),
       );
       // Promote: staged pairs that crossed the threshold, plus any pending residue for a
       // pair that has since gained a real edge (its evidence belongs on the edge now).
@@ -342,7 +354,10 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
         'MATCH (a:File {id:$a})-[p:CoChangePending]->(b:File {id:$b}) DELETE p',
         promotable.map((r) => ({ a: String(r.a), b: String(r.b) })),
       );
-      coChangePairs = strong.length + promotable.length;
+      // Count UNIQUE pairs: a pair that crosses the threshold within the window (strong arm)
+      // and also carries pending residue shows up in both `strong` and `promotable` — naive
+      // length addition double-counted it in the "(N pairs)" the CLI prints.
+      coChangePairs = new Set([...strong.map((p) => `${p.a}\t${p.b}`), ...promotable.map((r) => `${r.a}\t${r.b}`)]).size;
     } catch {
       // not a git repo / no history
     }

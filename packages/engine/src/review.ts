@@ -20,6 +20,7 @@ import {
   FullRebuildRequired,
   getMeta,
   commitsBehind,
+  changedSourceFilesSince,
   getCoChangeEdges,
   getCoChangeDegrees,
   getCouplingDegrees,
@@ -66,6 +67,18 @@ export async function indexRepo(
     }
   };
   if (opts.incremental && existsSync(p.graphDir)) {
+    // Capture deleted files' direct dependents into the sidecar BEFORE the update
+    // DETACH-DELETEs their nodes — reviews consult it on any later round. Best-effort:
+    // one short extra Kùzu open ahead of the update's own (fine under node, ADR-19).
+    try {
+      const indexedSha = readIndexedSha(p.headShaFile);
+      const delta = indexedSha ? await changedSourceFilesSince(p.repoPath, indexedSha) : null;
+      if (delta && delta.deleted.length > 0) {
+        mergeDeletedNeighborsSidecar(p.reviewerDir, await captureDeletedNeighbors(p.graphDir, delta.deleted));
+      }
+    } catch {
+      /* best-effort */
+    }
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
       await stamp();
@@ -392,12 +405,12 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 }
 
 /**
- * Direct dependents of files the diff DELETES, read from the graph BEFORE a refresh
- * removes their nodes. Weighted like the walk's edges (association strength for co-change,
- * the fixed import/ref base weights), distance 1 — a deleted module's blast is dominated
- * by its direct importers anyway.
+ * Direct dependents of files the diff DELETES, read from the graph BEFORE their nodes are
+ * removed, grouped per deleted file. Weighted like the walk's edges (association strength
+ * for co-change, the fixed import/ref base weights), distance 1 — a deleted module's blast
+ * is dominated by its direct importers anyway.
  */
-async function captureDeletedNeighbors(graphDir: string, deleted: string[]): Promise<NeighborEntry[]> {
+async function captureDeletedNeighbors(graphDir: string, deleted: string[]): Promise<Map<string, NeighborEntry[]>> {
   const db = new CodeGraphDB(graphDir);
   try {
     const [co, imp, refs] = await Promise.all([
@@ -407,25 +420,69 @@ async function captureDeletedNeighbors(graphDir: string, deleted: string[]): Pro
     ]);
     const coDeg = await getCoChangeDegrees(db, [...new Set(co.flatMap((e) => [e.src, e.dst]))]);
     const deletedSet = new Set(deleted);
-    const best = new Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>();
-    const add = (dst: string, w: number, via: NeighborEntry['via'][number]): void => {
+    const best = new Map<string, Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>>();
+    const add = (src: string, dst: string, w: number, via: NeighborEntry['via'][number]): void => {
       if (deletedSet.has(dst) || w <= 0) return;
-      const cur = best.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
+      const perFile = best.get(src) ?? new Map();
+      const cur = perFile.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
       cur.score = Math.max(cur.score, Math.min(1, w));
       cur.via.add(via);
-      best.set(dst, cur);
+      perFile.set(dst, cur);
+      best.set(src, perFile);
     };
-    for (const e of co) add(e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
-    for (const e of imp) add(e.dst, 0.4, 'import');
-    for (const e of refs) add(e.dst, 0.5, 'precise-ref');
-    return [...best].map(([id, v]) => ({
-      node: { id, label: 'File' as const, props: { path: id } },
-      score: v.score,
-      via: [...v.via],
-      distance: 1,
-    }));
+    for (const e of co) add(e.src, e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
+    for (const e of imp) add(e.src, e.dst, 0.4, 'import');
+    for (const e of refs) add(e.src, e.dst, 0.5, 'precise-ref');
+    const out = new Map<string, NeighborEntry[]>();
+    for (const [src, perFile] of best) {
+      out.set(src, [...perFile].map(([id, v]) => ({
+        node: { id, label: 'File' as const, props: { path: id } },
+        score: v.score,
+        via: [...v.via],
+        distance: 1,
+      })));
+    }
+    return out;
   } finally {
     await db.close();
+  }
+}
+
+// --- deleted-neighbors sidecar -----------------------------------------------------------
+// The incremental update DETACH-DELETEs a deleted file's node, after which its dependents
+// are unrecoverable from the graph. So `indexRepo` captures them at deletion time into this
+// sidecar, and reviews consult it for the diff's deleted files on ANY later round — the
+// in-review pre-refresh capture (the first fix) only covered the single round that happened
+// to trigger the refresh (the dogfood round-2 catch). Best-effort JSON; capped.
+
+const DELETED_SIDECAR_CAP = 500;
+interface DeletedSidecarEntry {
+  ts: number;
+  neighbors: NeighborEntry[];
+}
+
+function deletedSidecarFile(reviewerDir: string): string {
+  return path.join(reviewerDir, 'deleted-neighbors.json');
+}
+
+function readDeletedNeighborsSidecar(reviewerDir: string): Record<string, DeletedSidecarEntry> {
+  try {
+    return JSON.parse(readFileSync(deletedSidecarFile(reviewerDir), 'utf8')) as Record<string, DeletedSidecarEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function mergeDeletedNeighborsSidecar(reviewerDir: string, captured: Map<string, NeighborEntry[]>): void {
+  try {
+    const sidecar = readDeletedNeighborsSidecar(reviewerDir);
+    const now = Date.now();
+    for (const [file, neighbors] of captured) sidecar[file] = { ts: now, neighbors };
+    const entries = Object.entries(sidecar).sort((a, b) => b[1].ts - a[1].ts).slice(0, DELETED_SIDECAR_CAP);
+    mkdirSync(reviewerDir, { recursive: true });
+    writeFileSync(deletedSidecarFile(reviewerDir), JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    /* best-effort — a missing sidecar degrades to the old (empty) behavior */
   }
 }
 
@@ -452,24 +509,13 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // opens Kùzu only for the neighborhood + brain below. Only a definite drift (behind > 0)
   // auto-refreshes; an unknown sha (-1) is merely reported.
   let graphStale: GraphStaleness | undefined;
-  let preRefreshDeletedNeighbors: NeighborEntry[] = [];
   {
     const indexedSha = readIndexedSha(p.headShaFile);
     const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
-      // A COMMITTED deletion's node is DETACH-DELETEd by the refresh below — exactly the
-      // change whose dependents most need surfacing (a deleted module's importers now break).
-      // Capture those dependents from the PRE-refresh graph first (one short extra open,
-      // only on this deletion+stale path; the dogfood review caught this asymmetry — the
-      // uncommitted case kept its node, the committed branch/PR case lost it).
-      const deleted = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
-      if (deleted.length > 0) {
-        try {
-          preRefreshDeletedNeighbors = await captureDeletedNeighbors(p.graphDir, deleted);
-        } catch {
-          /* best-effort — a missing capture degrades to the old (empty) behavior */
-        }
-      }
+      // NOTE: a refresh DETACH-DELETEs committed deletions' nodes — their dependents are
+      // preserved by `indexRepo`'s sidecar capture (which the refresh child runs) and
+      // merged into the neighborhood after the walk below.
       const refreshed = indexIsolated(p.repoPath, true);
       graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
@@ -494,21 +540,29 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     await db.close();
   }
 
-  // Merge the dependents captured BEFORE the refresh removed the deleted files' nodes —
-  // the walk above couldn't see them. Direct (1-hop) entries, deduped against what the
-  // walk did find, re-sorted and re-capped.
-  if (preRefreshDeletedNeighbors.length > 0) {
-    const have = new Set(nb.neighbors.map((n) => String(n.node.props.path)));
-    const changedSet = new Set(changedPaths);
-    for (const n of preRefreshDeletedNeighbors) {
-      const pth = String(n.node.props.path);
-      if (!have.has(pth) && !changedSet.has(pth)) nb.neighbors.push(n);
-    }
-    nb.neighbors.sort((a, b) => b.score - a.score);
-    nb.neighbors = nb.neighbors.slice(0, opts.config.neighborhood.maxNeighbors);
-    for (const f of diff.files) {
-      if (f.status === 'deleted' && !nb.changed.some((c) => c.file === f.path)) {
-        nb.changed.push({ repo, file: f.path, startLine: 1, endLine: 1 });
+  // Merge dependents of COMMITTED deletions from the sidecar — their nodes were
+  // DETACH-DELETEd by whichever incremental update ingested the deletion (this round's
+  // refresh or an earlier one), so the walk above couldn't see them on ANY round. Direct
+  // (1-hop) entries, deduped against what the walk did find, re-sorted and re-capped.
+  // (Uncommitted deletions keep their node and were already seeded by the walk itself.)
+  const deletedDiffFiles = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
+  if (deletedDiffFiles.length > 0) {
+    const sidecar = readDeletedNeighborsSidecar(p.reviewerDir);
+    const captured = deletedDiffFiles.flatMap((f) => sidecar[f]?.neighbors ?? []);
+    if (captured.length > 0) {
+      const have = new Set(nb.neighbors.map((n) => String(n.node.props.path)));
+      const changedSet = new Set(changedPaths);
+      for (const n of captured) {
+        const pth = String(n.node.props.path);
+        if (!have.has(pth) && !changedSet.has(pth)) {
+          nb.neighbors.push(n);
+          have.add(pth);
+        }
+      }
+      nb.neighbors.sort((a, b) => b.score - a.score);
+      nb.neighbors = nb.neighbors.slice(0, opts.config.neighborhood.maxNeighbors);
+      for (const f of deletedDiffFiles) {
+        if (!nb.changed.some((c) => c.file === f)) nb.changed.push({ repo, file: f, startLine: 1, endLine: 1 });
       }
     }
   }

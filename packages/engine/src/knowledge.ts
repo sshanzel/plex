@@ -208,7 +208,11 @@ export async function submitVerdict(
     const repoName = path.basename(path.resolve(repoPath));
     // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
     // similarity — so first-principles accepts (the common case) reinforce knowledge too.
-    const pitfallId = input.pattern ?? (await inferPitfallId(config, input.title, repoName));
+    // EXCEPT for inferred (auto) accepts: a locality fix-match feeding a title-similarity
+    // pitfall match would stack two inferences into the Beta posterior — a false locality
+    // accept silently inflating a pitfall is worse than learning nothing. Inferred accepts
+    // still record their incident (provenance), but only an explicit `pattern` links them.
+    const pitfallId = input.pattern ?? (input.inferred ? undefined : await inferPitfallId(config, input.title, repoName));
     await learnIncident(config, {
       repo: repoName,
       file: input.file,

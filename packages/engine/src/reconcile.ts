@@ -52,7 +52,7 @@ export async function recordFixAccepts(
     if (f.severity === 'awareness') continue;
     const matchedBy = findingAddressMatch({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold });
     if (matchedBy) {
-      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', file: f.file, line: f.line, title: f.title }, config, target, brain);
+      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', inferred: true, file: f.file, line: f.line, title: f.title }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
       accepts.push({ findingId: f.id, title: f.title, file: f.file, line: f.line, matchedBy });
     }

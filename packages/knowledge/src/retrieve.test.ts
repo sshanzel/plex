@@ -106,6 +106,19 @@ describe('lexical retrieval (no embedding provider)', () => {
     expect(results.map((r) => r.pitfall.title)).toContain('Avoid awaiting promises inside a for loop sequentially');
   });
 
+  it('seeding degrades to vectorless storage when the provider fails (never throws)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-seedfail-'));
+    const store = new KnowledgeStore(dir);
+    const failing = {
+      name: 'failing',
+      dimensions: 8,
+      embed: async (): Promise<number[][]> => { throw new Error('outage'); },
+    };
+    expect(await seedFromMarkdown(store, failing, '## Security\n- Always validate the tenant id filter')).toBe(1);
+    const stored = await store.pitfalls();
+    expect(stored[0]!.embedding).toBeUndefined(); // vectorless — still lexically retrievable
+  });
+
   it('degrades to lexical when the provider fails at query time', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kn-'));
     const store = new KnowledgeStore(dir);

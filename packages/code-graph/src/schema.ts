@@ -25,11 +25,17 @@ export const DDL: string[] = [
   `CREATE REL TABLE IF NOT EXISTS Imports(FROM File TO File)`,
   `CREATE REL TABLE IF NOT EXISTS Refs(FROM File TO File)`,
   `CREATE REL TABLE IF NOT EXISTS CoChange(FROM File TO File, weight DOUBLE, cnt INT64)`,
-  `CREATE REL TABLE IF NOT EXISTS CoChangePending(FROM File TO File, weight DOUBLE, cnt INT64)`,
+  `CREATE REL TABLE IF NOT EXISTS CoChangePending(FROM File TO File, weight DOUBLE, cnt INT64, ts DOUBLE)`,
 ];
 
 export async function initSchema(db: CodeGraphDB): Promise<void> {
   for (const stmt of DDL) {
     await db.run(stmt);
+  }
+  // Column migrations for graphs created before a column existed (swallow "already exists").
+  try {
+    await db.run('ALTER TABLE CoChangePending ADD ts DOUBLE');
+  } catch {
+    /* column exists */
   }
 }
