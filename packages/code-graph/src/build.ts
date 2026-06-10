@@ -307,13 +307,50 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
           'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
         strong.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
-      // weak: accumulate into ALREADY-stored pairs only — never create singletons (keeps
-      // the N² denoising of ADR-06). A pair below threshold in every window stays pruned.
+      // weak: a CoChange singleton is never created from one window (ADR-06 denoising), but
+      // sub-threshold evidence is no longer FORGOTTEN between windows either. Pairs that
+      // already have a stored CoChange edge accumulate into it; the rest are STAGED in
+      // CoChangePending (a lane read queries never traverse) and PROMOTE to a real edge
+      // when their cross-window total reaches minPairCount — without this, a coupling that
+      // lands one commit per window (e.g. a review-triggered refresh after every commit)
+      // stayed invisible until the next full rebuild. Pending resets on a full rebuild.
+      const weakStored: typeof weak = [];
+      const weakNew: typeof weak = [];
+      for (const p of weak) {
+        const hit = await db.run('MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) RETURN c.cnt AS cnt', { a: p.a, b: p.b });
+        (hit.length > 0 ? weakStored : weakNew).push(p);
+      }
       await db.insertMany(
         'MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
-        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+        weakStored.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
-      coChangePairs = strong.length;
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[p:CoChangePending]->(b) ' +
+          'ON CREATE SET p.weight = $weight, p.cnt = $cnt ' +
+          'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt',
+        weakNew.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+      );
+      // Promote: staged pairs that crossed the threshold, plus any pending residue for a
+      // pair that has since gained a real edge (its evidence belongs on the edge now).
+      const crossed = await db.run(
+        'MATCH (a:File)-[p:CoChangePending]->(b:File) WHERE p.cnt >= $min RETURN a.id AS a, b.id AS b, p.weight AS weight, p.cnt AS cnt',
+        { min: opts.coChange.minPairCount },
+      );
+      const nowStored = await db.run(
+        'MATCH (a:File)-[p:CoChangePending]->(b:File), (a)-[c:CoChange]->(b) RETURN a.id AS a, b.id AS b, p.weight AS weight, p.cnt AS cnt',
+      );
+      const promotable = [...new Map([...crossed, ...nowStored].map((r) => [`${r.a}\t${r.b}`, r])).values()];
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[c:CoChange]->(b) ' +
+          'ON CREATE SET c.weight = $weight, c.cnt = $cnt ' +
+          'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
+        promotable.map((r) => ({ a: String(r.a), b: String(r.b), weight: Number(r.weight), cnt: Number(r.cnt) })),
+      );
+      await db.insertMany(
+        'MATCH (a:File {id:$a})-[p:CoChangePending]->(b:File {id:$b}) DELETE p',
+        promotable.map((r) => ({ a: String(r.a), b: String(r.b) })),
+      );
+      coChangePairs = strong.length + promotable.length;
     } catch {
       // not a git repo / no history
     }

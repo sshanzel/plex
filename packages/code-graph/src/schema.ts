@@ -2,8 +2,12 @@ import type { CodeGraphDB } from './db';
 
 /**
  * Kùzu schema for a per-repo code graph (ADR-07). Edges are unioned by provenance
- * (ADR-06): `Imports` (structural) and `CoChange` (git history). Precise call/ref
- * edges (M2) extend this with a `References` rel table.
+ * (ADR-06): `Imports` (structural), `Refs` (precise, alias-aware) and `CoChange`
+ * (git history).
+ *
+ * `CoChangePending` is the incremental staging lane (ADR-26): sub-threshold co-change
+ * pairs accumulate here ACROSS update windows and promote to a real `CoChange` edge once
+ * their total `cnt` reaches `minPairCount`. Read queries must never traverse it.
  *
  * `File.id` is the repo-relative POSIX path (unique within a per-repo DB).
  * `Symbol.id` is `<file>#<name>#<startLine>`.
@@ -21,6 +25,7 @@ export const DDL: string[] = [
   `CREATE REL TABLE IF NOT EXISTS Imports(FROM File TO File)`,
   `CREATE REL TABLE IF NOT EXISTS Refs(FROM File TO File)`,
   `CREATE REL TABLE IF NOT EXISTS CoChange(FROM File TO File, weight DOUBLE, cnt INT64)`,
+  `CREATE REL TABLE IF NOT EXISTS CoChangePending(FROM File TO File, weight DOUBLE, cnt INT64)`,
 ];
 
 export async function initSchema(db: CodeGraphDB): Promise<void> {

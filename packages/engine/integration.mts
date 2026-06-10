@@ -258,7 +258,7 @@ test('engine', 'engine: index -> assemble review context -> capture verdict', as
     // No embedding provider configured here → the context carries the one-line onboarding nudge
     // for the agent to surface (points at `plex init`, never asks for the key in chat).
     assert.ok(
-      ctx.notes.some((n) => n.includes('embeddings are OFF') && n.includes('npx @sshanzel/plex init')),
+      ctx.notes.some((n) => n.toLowerCase().includes('embeddings are off') && n.includes('npx @sshanzel/plex init')),
       'embeddings-off onboarding note is present when no provider is configured',
     );
     await recordVerdict(repo, { findingId: 'f1', kind: 'waive', scope: 'file' }, config);
