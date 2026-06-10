@@ -43,7 +43,7 @@ Otherwise (a normal direct review) follow the full procedure below.
 
 ## Procedure
 
-1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus `source` / `mode` (`working|staged|branch`) / `baseRef` / `pr`.
+1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus the diff-source params — two mutually exclusive shapes: a GitHub PR is `source: 'pr'` + `pr: <number>` (no `mode`); anything else is local, picked by `mode` (`working` | `staged` | `branch`; `baseRef` applies only to `branch`, default `main`). Use the **same** source params on every Plex call of this review — they key the PR brain.
 
    **If the change is large** (many files / big surface), consider the **`plex-parallel-review`**
    skill instead — it asks Plex for a `reviewPlan` and, when the change splits into independent

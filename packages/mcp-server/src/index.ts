@@ -107,11 +107,18 @@ const guard = async (fn: () => Promise<unknown>, label: string) => {
   }
 };
 
+// The diff-source axes, shared by every review-flow tool. Two mutually exclusive shapes:
+// `source: 'pr'` + `pr: <number>` reviews a GitHub PR; anything else is a LOCAL diff picked by
+// `mode` (`working` default) — `baseRef` applies only to `mode: 'branch'`. One review must use
+// the SAME source params across context → findings → outcomes → reconcile (they key the brain).
 const diffSourceShape = {
-  source: z.enum(['local', 'pr']).optional(),
-  mode: z.enum(['working', 'staged', 'branch']).optional(),
-  baseRef: z.string().optional(),
-  pr: z.union([z.string(), z.number()]).optional(),
+  source: z.enum(['local', 'pr']).optional().describe('"local" (default) or "pr" (requires `pr`).'),
+  mode: z
+    .enum(['working', 'staged', 'branch'])
+    .optional()
+    .describe('Local diffs only: working (default) | staged | branch (diff vs baseRef). Ignored when source is "pr".'),
+  baseRef: z.string().optional().describe('Base ref for mode "branch" (default "main").'),
+  pr: z.union([z.string(), z.number()]).optional().describe('GitHub PR number — required with source "pr".'),
 };
 
 server.tool(
@@ -123,7 +130,7 @@ server.tool(
 
 server.tool(
   'get_review_context',
-  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and guidance. Auto-indexes the repo on first use.',
+  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and `notes` — the agent guidance; read and follow them. Auto-indexes the repo on first use. Defaults: repoPath = cwd, local working diff; pass source:"pr" + pr for a GitHub PR, and the SAME source params on every other tool of this review.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
