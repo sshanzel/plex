@@ -4,6 +4,7 @@ import {
   KnowledgeStore,
   createEmbeddingProvider,
   retrieveRelevant,
+  retrieveRelevantLexical,
   seedFromMarkdown,
   recordIncident,
   consolidatePitfalls,
@@ -48,8 +49,9 @@ export function embeddingReady(config: ReviewerConfig): boolean {
 
 /**
  * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
- * Degrades gracefully: with no embedding provider configured, returns nothing (review
- * still runs on blast radius + deterministic checks).
+ * Degrades gracefully: with no embedding provider configured, falls back to lexical
+ * (IDF-weighted token overlap) retrieval — weaker ranking, but a key-less install still
+ * gets its plex.md guidance and accumulated pitfalls back instead of nothing.
  */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,
@@ -58,14 +60,19 @@ export async function getRelevantKnowledge(
   repo?: string,
 ): Promise<RetrievedPitfall[]> {
   if (!queryText.trim()) return [];
+  const store = knowledgeStore(config);
   const provider = createEmbeddingProvider(config.embedding);
-  if (!provider) return [];
-  return retrieveRelevant(knowledgeStore(config), provider, queryText, topK, 0.05, repo);
+  if (!provider) return retrieveRelevantLexical(store, queryText, topK, 0.05, repo);
+  return retrieveRelevant(store, provider, queryText, topK, 0.05, repo);
 }
 
-/** Seed the knowledge base from markdown (cold start — ADR-09). */
+/**
+ * Seed the knowledge base from markdown (cold start — ADR-09). Embeds when a provider is
+ * configured; otherwise stores vectorless pitfalls (retrievable lexically — seeding from
+ * plex.md must not require an API key).
+ */
 export async function seedKnowledge(config: ReviewerConfig, md: string): Promise<number> {
-  return seedFromMarkdown(knowledgeStore(config), requireEmbeddings(config), md);
+  return seedFromMarkdown(knowledgeStore(config), createEmbeddingProvider(config.embedding), md);
 }
 
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */

@@ -7,7 +7,7 @@ export {
   createEmbeddingProvider,
 } from './embeddings';
 export { KnowledgeStore } from './store';
-export { retrieveRelevant } from './retrieve';
+export { retrieveRelevant, retrieveRelevantLexical, lexicalScores, lexicalTokens } from './retrieve';
 export type { RetrievedPitfall } from './retrieve';
 export { parseMarkdownPitfalls, seedFromMarkdown, recordIncident } from './seed';
 export type { ParsedPitfall } from './seed';

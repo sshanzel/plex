@@ -46,7 +46,7 @@ Order matters; each step feeds the next:
 4. **One code-graph open** — repo meta, `computeNeighborhood` (blast radius), coupling *among* changed files (for the review plan), coupling degrees; then close. A `blast-map.json` sidecar is written here so `submit_findings` can enrich per-finding `blastRadius` later **without another Kùzu open**.
 5. **Review plan** — `reviewPlan()` (pure, `@plex/findings`) decides single vs parallel fan-out from the coupling graph ([`docs/design/parallel-review.md`](../../docs/design/parallel-review.md)).
 6. **Deterministic findings** (`@plex/deterministic`) on the changed lines.
-7. **Knowledge retrieval** — query built from changed symbols + deterministic titles + files; returns `[]` with no embedding provider (degrades, never fails).
+7. **Knowledge retrieval** — query built from changed symbols + deterministic titles + files; with no embedding provider it falls back to lexical (IDF token-overlap) retrieval (degrades, never fails).
 8. **Brain round** (`buildBrainContext`) — second and last Kùzu open: `healSplitTarget` → `loadRoundState` → ingest PR comments → if the head moved since the last round, attribute changes (semantic, embeddings-only) and run fix inference (`recordFixAccepts` — works locality-only without embeddings) → `recordRound`.
 9. **Audit log** (`context_assembled`) and the returned `ReviewContext` with `notes` — the agent guidance (fresh eyes, severity/confidence as separate axes, never display confidence, reviewPlan directive, staleness warnings, embeddings-off nudge).
 
@@ -81,10 +81,10 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 
 - **ADR-02**: nothing here ever feeds the reviewer prior reasoning — brain state, comments, and the audit log are facts/records only.
 - **ADR-17/19**: ship built JS under node (`pnpm build` → `dist/`), never tsx. A review process = 1 graph open + 1 brain open; anything more (index/refresh) goes through `indexIsolated`.
-- **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → `[]`; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
+- **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → lexical (keyword) fallback; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
 - **Best-effort everywhere on the bookkeeping edges**: audit logging, blast-map sidecar, PR auto-comment, and the `head.sha` stamp never throw out of a review.
 - `recordVerdict` persists the waiver embedding to disk but **strips it from the returned value** (the MCP echo would waste tokens no consumer reads).
-- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — knowledge must not store unsearchable noise.
+- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Seeding (`seedKnowledge`) does NOT: key-less seeds are stored vectorless and retrieved lexically.
 
 ## Testing
 

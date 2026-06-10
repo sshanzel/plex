@@ -29,17 +29,22 @@ export function parseMarkdownPitfalls(md: string): ParsedPitfall[] {
   return out;
 }
 
-/** Seed the knowledge base from markdown guidance. Returns the number of new pitfalls. */
+/**
+ * Seed the knowledge base from markdown guidance. Returns the number of new pitfalls.
+ * `provider` may be null (no embedding key configured): the pitfall is stored without a
+ * vector and stays retrievable via the lexical path (`retrieveRelevantLexical` / the
+ * hybrid branch of `retrieveRelevant`) — seeding must work on a key-less install.
+ */
 export async function seedFromMarkdown(
   store: KnowledgeStore,
-  provider: EmbeddingProvider,
+  provider: EmbeddingProvider | null,
   md: string,
 ): Promise<number> {
   const items = parseMarkdownPitfalls(md);
   let added = 0;
   for (const it of items) {
     if (await store.hasPitfallTitled(it.title)) continue;
-    const [embedding] = await provider.embed([`${it.category}: ${it.title}`]);
+    const [embedding] = provider ? await provider.embed([`${it.category}: ${it.title}`]) : [undefined];
     const pitfall: Pitfall = {
       id: pitfallId(it.title),
       title: it.title,
