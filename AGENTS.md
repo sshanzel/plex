@@ -156,7 +156,7 @@ plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex
 
 **Scope (ADR-21):** the LLM marks each pitfall `global` (everywhere) or `repo` (project-specific — still stored, retrieved only for that repo). Project-specific lessons are kept, not discarded.
 
-Incremental cursor lives at `<repo>/.plex/mining-state.json`. Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
+Incremental cursor lives at `~/.plex/repos/<id>/mining-state.json` (in-repo at `.plex/mining-state.json` only with the `PLEX_DATA_DIR=.plex` opt-in). Every substantive comment becomes a provenance `Incident`; `consolidate_knowledge` later reinforces pitfall confidence from outcomes.
 
 **Outcome signal today is coarse** — `outcomeFor` is binary (PR merged → `accepted`, else `rejected`); thread `isResolved` and the resolving diff are NOT used, so `fixed`/`reverted` (and the `reverted: 1.5` weight) are unrealized. Plan + the rate-limit/attribution risks for a richer signal: [`docs/design/outcome-signals.md`](docs/design/outcome-signals.md).
 
