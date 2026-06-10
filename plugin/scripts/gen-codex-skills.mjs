@@ -27,7 +27,11 @@ const stripFrontmatter = (s) => {
 const adapt = (body) =>
   body
     // /pr-master:respond -> the `pr-master-respond` skill (consume optional surrounding backticks)
-    .replace(/`?\/pr-master:([a-z-]+)`?/g, 'the `pr-master-$1` skill');
+    .replace(/`?\/pr-master:([a-z-]+)`?/g, 'the `pr-master-$1` skill')
+    // The Claude-side reviewer AGENT is `plex-reviewer`; on Codex it ships as the `plex-review`
+    // SKILL (generated above). Without this, the parallel orchestrator points workers at a
+    // name that doesn't exist in their world.
+    .replace(/`plex-reviewer`/g, '`plex-review`');
 
 // Codex-neutral replacement for the agent's Claude-specific "Section 0" (deferred tools + ToolSearch).
 const CODEX_SECTION_0 = `## 0. Use the Plex tools (don't fall back to a hand review)
