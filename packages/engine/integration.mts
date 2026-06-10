@@ -121,6 +121,20 @@ test('neighborhood', 'neighborhood: maps hunk to symbols and finds coupled neigh
       const dbN = nb.neighbors.find((n) => String(n.node.props.path) === 'src/db.ts');
       assert.ok(dbN, 'db.ts neighbor present');
       assert.deepEqual(dbN!.via.sort(), ['co-change', 'import']);
+
+      // A pure DELETION still produces a blast radius: the deleted file's node + edges are
+      // in the (pre-deletion) graph, so its dependents surface — deleting a widely-used
+      // module is the strongest breakage signal, not an empty radius. Same db handle (ADR-17).
+      const delDiff: NormalizedDiff = {
+        baseRef: 'HEAD',
+        files: [{ path: 'src/user.ts', status: 'deleted', hunks: [] }],
+      };
+      const nbDel = await computeNeighborhood(db, 'r', delDiff, { maxHops: 2, maxNeighbors: 40, minScore: 0.01 });
+      assert.equal(nbDel.changed[0]?.file, 'src/user.ts');
+      assert.ok(
+        nbDel.neighbors.some((n) => String(n.node.props.path) === 'src/db.ts'),
+        'deletion surfaces dependents',
+      );
     } finally {
       await db.close();
     }
