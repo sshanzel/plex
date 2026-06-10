@@ -1,19 +1,27 @@
-# Quality + supply-chain gate.
+# Quality + supply-chain gate — the green-for-consistency check.
 #
-# DORMANT BY DESIGN: the only trigger is manual `workflow_dispatch`, so committing/pushing this
-# file does NOT start running CI on every push. It appears in the Actions tab; run it on demand.
-# To turn it into real CI later, uncomment the `push:` / `pull_request:` triggers below.
+# Runs on every push to main and every PR targeting main. It mirrors the local "all green" set:
+# typecheck → unit + quality-floor evals (vitest) → integration scenarios (tsx, one Kùzu open per
+# process, ADR-17) → build → the node-runtime E2Es that drive the BUILT CLI (brain / worktree-seed /
+# co-change / deletion). No secrets: every test runs offline with the `fake` embedder / injected
+# fetch+llm, so forks and Dependabot PRs pass without access to any key.
 #
 # Third-party Actions are pinned to a commit SHA (a tag like `@v6` can be silently re-pointed —
 # an Action is itself a supply-chain dependency). The trailing comment is the human-readable tag.
 name: ci
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch: {}
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+
+# A newer push to the same branch/PR cancels an in-flight run — saves minutes, and only the latest
+# commit's status matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read # least privilege; this job only reads the repo
@@ -26,10 +34,26 @@ jobs:
       - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 20
+          node-version: 20 # the declared engines floor + tsup target (node20)
           cache: pnpm
-      - run: pnpm install --frozen-lockfile # exact, hash-verified deps — no drift from the lockfile
-      - run: pnpm audit --audit-level=high # fail on known high/critical advisories
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+
+      # The integration + E2E suites build throwaway git repos and commit into them; a runner has
+      # no global git identity, so set one (and a modern default branch) or `git commit` fails.
+      - name: Configure git identity for throwaway-repo tests
+        run: |
+          git config --global user.email "ci@plex.local"
+          git config --global user.name "Plex CI"
+          git config --global init.defaultBranch main
+
+      - run: pnpm install --frozen-lockfile # exact, hash-verified deps — no drift (builds kuzu/esbuild via onlyBuiltDependencies)
+      - run: pnpm audit --audit-level=high # supply-chain gate: fail on known high/critical advisories
+      - run: pnpm typecheck # tsc, whole workspace (paths-mapped)
+      - run: pnpm test # vitest units + quality-floor evals, then the tsx integration scenarios
+      - run: pnpm build # produces dist/plex.js + dist/plex-mcp.js (verifies the bundle + feeds the E2Es)
+
+      # Node-runtime E2Es: exercise the SHIPPED build under plain node (stable past the tsx Kùzu
+      # open-limit, ADR-17). `pnpm build` above already produced dist/, so call the scripts directly.
+      - run: node scripts/brain-check.mjs # auto-index + rounds + changed-without-feedback
+      - run: node scripts/worktree-seed-check.mjs # ADR-32 worktree graph seeding, no SIGSEGV
+      - run: node scripts/cochange-check.mjs # incremental + cross-window co-change accumulation
+      - run: node scripts/deleted-radius-check.mjs # deletion blast radius
