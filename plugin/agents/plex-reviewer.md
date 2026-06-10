@@ -20,7 +20,7 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
 
 When the **`plex-parallel-review`** orchestrator spawns you, your prompt names a `FOCUS FILES`
 subset and supplies the grounding inline (blast radius, deterministic findings, knowledge,
-`changeContext`, `plex.md`). In that mode:
+`changeContext`). In that mode:
 
 - **Do NOT call `get_review_context`, `submit_findings`, or `record_outcome`.** The orchestrator
   already assembled the context (one call for the whole diff) and will consolidate + submit once.
@@ -52,7 +52,6 @@ Otherwise (a normal direct review) follow the full procedure below.
    - `unexplainedChanges` — regions that changed since the **last review round** with NO prior finding or PR comment explaining them (semantic match). **Scrutinize these first** — they were not requested by feedback and are where slipped-in changes hide.
    - `priorRounds` / `openComments` — FACTS from earlier rounds (not prior reasoning): use them to stay consistent without anchoring.
    - `inferredAccepts` — prior-round findings this round's changes already FIXED (auto-accepted, each naming whether it matched semantically or by file/line locality). Don't re-raise them; a one-line "N prior findings verified fixed" in your summary is enough — and if one looks wrongly auto-accepted (the change near it didn't actually fix it), say so and re-raise it explicitly.
-   - `plex.md` — project review guidance; honor it.
 
 3. **Reason from first principles** — as if reviewing this code for the FIRST time. Read the changed code AND the blast-radius files. Hunt for real bugs, potential bugs, edge cases, and breakage in coupled files. Severity ∈ {bug, improvement, nit, **awareness**} and confidence ∈ 0..1 are independent — a high-severity, low-confidence item is a "potential bug." Set `confidence` honestly (Plex ranks by it), but it's an **internal** axis: never surface the raw number when you present — a reader sees "0.4" as "weak/probably wrong", which is not what it means. Express uncertainty in words instead ("potential", "likely", "worth confirming").
    - **Don't re-audit prior rounds.** Reviewing the current diff fresh does NOT mean re-verifying that previously-flagged issues were fixed — that's `reconcile`'s job (cheap, no LLM; Plex auto-infers it). Use `priorRounds` / `openComments` only as facts so you don't RE-RAISE something already resolved or anchor on past opinions — not as work to re-confirm. Spend your effort on what's in front of you now.
@@ -80,7 +79,7 @@ Otherwise (a normal direct review) follow the full procedure below.
    - **No telemetry recap, and no outcome bookkeeping.** Don't report round numbers, commit lists, "loop closed", token talk, OR anything about reconcile / recorded outcomes (no "reconcile_outcomes: checked N, accepted M", no "this was auto-accepted / already rejected last round"). Plex auto-accepts fixed findings during the review on its own; that is internal and never yours to narrate — you don't even call `reconcile_outcomes`. If the change is clean, say so in one line.
    - **Close with what Plex brought to this review — the one place you may editorialize.** After the table, add one or two sentences on what Plex contributed that a plain diff-read couldn't, and tie it to a specific finding wherever it applies. Lead with the **non-obvious**, not effort:
      - a bug or risk in a file the diff doesn't touch, surfaced via **co-change** (files that have historically shipped together with this code, *not* imports) — e.g. *"the cache-staleness bug is in `cache.ts`, which your diff never touches; Plex surfaced it because it co-changes with this module."*
-     - a finding that came from a **lesson in the user's own review history** (a retrieved pitfall / `plex.md` rule) — e.g. *"flagged the unvalidated input from a rule your past reviews established."*
+     - a finding that came from a **lesson in the user's own review history** (a retrieved pitfall mined from past PRs or learned from your verdicts) — e.g. *"flagged the unvalidated input from a pitfall your past reviews established."*
      - the fresh, unbiased context, or *not* re-raising something dismissed earlier, when those are what actually mattered.
 
      Be honest and specific: claim only what genuinely applied and connect it to real findings. **Don't pad with generic effort** — "checked 9 files" is not it (any reviewer reads files); lead with *why* a file or rule mattered. If nothing distinctive applied (self-contained change, no co-change, no past lessons), say so plainly (*"self-contained change; reviewed with fresh, unbiased eyes"*) — never manufacture value. Still no internal stats. If the context flags embeddings are off, you may add one short clause that drawing on the user's review history is off and point to `npx @sshanzel/plex init` (never ask for the key in chat).
@@ -95,10 +94,10 @@ Cutting these is as important as finding real bugs; each false positive erodes t
 
 - **Anything a linter, type-checker, formatter, or CI would catch** — missing/incorrect imports, type errors, unused variables, formatting, obviously-broken tests. Assume CI runs separately; re-deriving lint-level issues is not your job (the `deterministic` layer already covers the codified ones).
 - **Pre-existing issues unrelated to the change.** Review what this change *does or breaks*, not the file's prior sins. **This is NOT a license to ignore the blast radius** — breakage the change *causes* in coupled/unmodified files is exactly what to flag (that's the point of `blastRadius`). The exclusion is for latent issues the change neither introduces nor affects.
-- **Pedantic nitpicks** a senior engineer wouldn't bother raising — unless `plex.md` or the repo's own guidance explicitly calls them out.
+- **Pedantic nitpicks** a senior engineer wouldn't bother raising — unless the repo's own conventions explicitly call them out.
 - **Explicitly-silenced warnings** (an `eslint-disable`/`ts-ignore`/equivalent next to the line = intentional).
 - **Likely-intentional changes** that are part of the broader change's purpose, even if they look surprising in isolation — check `changeContext` before assuming a mistake.
-- **General-quality wishes** ("add tests", "could be cleaner", "more docs") unless the change introduces a concrete defect or `plex.md` requires it.
+- **General-quality wishes** ("add tests", "could be cleaner", "more docs") unless the change introduces a concrete defect.
 
 A deterministic finding that lands in one of these buckets: **waive it** (step 3), don't relay it.
 

@@ -2,12 +2,12 @@
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, seed, promote, mine (and an undocumented `review` — see the USAGE note).
+ * verdicts, promote, mine (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -21,7 +21,6 @@ import {
   rankingQuality,
   submitVerdict,
   readVerdicts,
-  seedKnowledge,
   consolidateKnowledge,
   embeddingReady,
   getPromotions,
@@ -60,8 +59,7 @@ Usage:
   plex blast [repoPath] --files <a.ts,b.ts>
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
-  plex seed [repoPath] [--file <markdown>]
-  plex promote [repoPath]                                # consolidate confidence + propose plex.md/rule promotions
+  plex promote [repoPath]                                # consolidate confidence + propose ast-grep rule stubs
   plex mine [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # mine PR history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
@@ -113,11 +111,6 @@ function printReview(ctx: ReviewContext): void {
   out.push(`Relevant knowledge / pitfalls (${ctx.knowledge.length}):`);
   for (const k of ctx.knowledge) {
     out.push(`  ${k.score.toFixed(3)}  [${k.pitfall.category}] ${k.pitfall.title}`);
-  }
-  if (ctx.reviewerMd) {
-    out.push('');
-    out.push('plex.md (project guidance):');
-    out.push(ctx.reviewerMd.split('\n').map((l) => `  ${l}`).join('\n'));
   }
   if (ctx.round != null) {
     out.push('');
@@ -375,31 +368,15 @@ async function main(): Promise<number> {
       );
       return 0;
     }
-    case 'seed': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const file = typeof flags.file === 'string' ? flags.file : path.join(repoPath, 'plex.md');
-      if (!existsSync(file)) {
-        process.stderr.write(`No markdown to seed from (${file}). Pass --file <path>.\n`);
-        return 1;
-      }
-      const added = await seedKnowledge(config, readFileSync(file, 'utf8'));
-      process.stdout.write(`Seeded ${added} pitfall(s) from ${file} into ${config.knowledgeDir}\n`);
-      return 0;
-    }
     case 'promote': {
-      const repoPath = positionals[1] ?? process.cwd();
       const c = await consolidateKnowledge(config);
-      const mdFile = path.join(repoPath, 'plex.md');
-      const existing = existsSync(mdFile) ? readFileSync(mdFile, 'utf8') : '';
-      const promo = await getPromotions(config, existing);
+      const promo = await getPromotions(config);
       const out: string[] = [`Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes.`];
-      if (promo.markdown.length) {
-        out.push('', 'Suggested plex.md additions:', ...promo.markdown.map((l) => `  ${l}`));
-      }
       if (promo.rules.length) {
         out.push('', 'Suggested ast-grep rule stubs:', ...promo.rules.map((r) => r.split('\n').map((l) => `  ${l}`).join('\n')));
+      } else {
+        out.push('No rule promotions suggested yet.');
       }
-      if (!promo.markdown.length && !promo.rules.length) out.push('No promotions suggested yet.');
       process.stdout.write(out.join('\n') + '\n');
       return 0;
     }

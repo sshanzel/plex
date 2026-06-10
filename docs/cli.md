@@ -30,8 +30,7 @@ The examples below use the bare `plex`. Without a global install, prefix with `n
 | `plex init` | Interactive setup: set the embedding key, then offer to index the current repo. The most common reason to reach for the CLI. |
 | `plex index [--incremental]` | Build or refresh the code graph. `--incremental` re-reads only the files that changed. (Reviews auto-index on first use and refresh on drift, so you rarely need this by hand.) |
 | `plex mine [--oldest] [--limit N] [--threshold 0..1]` | Turn this repo's PR-review history into pitfalls. Runs on your `claude` subscription. `--oldest` walks from PR #1 up. |
-| `plex seed [--file plex.md]` | Seed pitfalls from a markdown file. |
-| `plex promote` | Propose promoting high-confidence pitfalls into `plex.md` or rules. |
+| `plex promote` | Consolidate pitfall confidence + propose ast-grep rule stubs for codifiable pitfalls. |
 | `plex reconcile` | Auto-accept earlier findings that your pushed commits have since fixed. |
 | `plex eval` | Offline check of how well the ranking matches the outcomes you recorded (nDCG), plus a verdict on whether there is enough data to tune. Reports only; it never changes anything. |
 | `plex blast --files a.ts,b.ts` | Print the blast radius (coupled files) for the given files. |
@@ -39,7 +38,7 @@ The examples below use the bare `plex`. Without a global install, prefix with `n
 | `plex verdicts` | List the verdicts recorded for this repo. |
 | `plex doctor` | Show the embedding and graph status, and whether a newer build is waiting on disk. |
 
-Most of these are also available to your agent as MCP tools (`index_repo`, `mine_scan` / `add_pitfalls`, `seed_knowledge`, `reconcile_outcomes`, `record_outcome`, `propose_promotions`, `doctor`), so the agent can do them during a review without you touching the CLI. The CLI is mainly for CI, scripting, or running something by hand.
+Most of these are also available to your agent as MCP tools (`index_repo`, `mine_scan` / `add_pitfalls`, `reconcile_outcomes`, `record_outcome`, `propose_promotions`, `doctor`), so the agent can do them during a review without you touching the CLI. The CLI is mainly for CI, scripting, or running something by hand.
 
 ## Storage
 

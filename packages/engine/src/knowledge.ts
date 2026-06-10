@@ -15,7 +15,6 @@ import {
   retrieveRelevant,
   retrieveRelevantLexical,
   lexicalScores,
-  seedFromMarkdown,
   recordIncident,
   consolidatePitfalls,
   proposePromotions,
@@ -61,7 +60,7 @@ export function embeddingReady(config: ReviewerConfig): boolean {
  * Retrieve relevant pitfalls (ADR-01 grounded retrieval), scoped to `repo` (ADR-21).
  * Degrades gracefully: with no embedding provider configured, falls back to lexical
  * (IDF-weighted token overlap) retrieval — weaker ranking, but a key-less install still
- * gets its plex.md guidance and accumulated pitfalls back instead of nothing.
+ * gets its mined/accumulated pitfalls back instead of nothing.
  */
 export async function getRelevantKnowledge(
   config: ReviewerConfig,
@@ -74,15 +73,6 @@ export async function getRelevantKnowledge(
   const provider = createEmbeddingProvider(config.embedding);
   if (!provider) return retrieveRelevantLexical(store, queryText, topK, 0.05, repo);
   return retrieveRelevant(store, provider, queryText, topK, 0.05, repo);
-}
-
-/**
- * Seed the knowledge base from markdown (cold start — ADR-09). Embeds when a provider is
- * configured; otherwise stores vectorless pitfalls (retrievable lexically — seeding from
- * plex.md must not require an API key).
- */
-export async function seedKnowledge(config: ReviewerConfig, md: string): Promise<number> {
-  return seedFromMarkdown(knowledgeStore(config), createEmbeddingProvider(config.embedding), md);
 }
 
 // Floors for retroactively linking an accepted finding to a pitfall. Conservative on purpose:
@@ -158,12 +148,9 @@ export async function consolidateKnowledge(config: ReviewerConfig): Promise<Cons
   return consolidatePitfalls(knowledgeStore(config));
 }
 
-/** Propose graph → markdown / → rule promotions (ADR-09). */
-export async function getPromotions(
-  config: ReviewerConfig,
-  existingMarkdown = '',
-): Promise<Promotions> {
-  return proposePromotions(knowledgeStore(config), existingMarkdown);
+/** Propose graph → deterministic-rule (ast-grep) promotions for codifiable pitfalls. */
+export async function getPromotions(config: ReviewerConfig): Promise<Promotions> {
+  return proposePromotions(knowledgeStore(config));
 }
 
 /**

@@ -31,7 +31,6 @@ import {
   recordVerdict,
   readVerdicts,
   rankReviewFindings,
-  seedKnowledge,
   submitVerdict,
   knowledgeStore,
   recordFixAccepts,
@@ -784,7 +783,7 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
   }
 });
 
-test('knowledge', 'engine: seed -> review retrieves pitfalls -> learn on accept', async () => {
+test('knowledge', 'engine: stored pitfall -> review retrieves it -> learn on accept', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-kn-'));
   const knowledgeDir = mkdtempSync(join(tmpdir(), 'reviewer-kdir-'));
   try {
@@ -792,10 +791,6 @@ test('knowledge', 'engine: seed -> review retrieves pitfalls -> learn on accept'
     git(repo, 'config', 'user.email', 't@t.dev');
     git(repo, 'config', 'user.name', 'Test');
     mkdirSync(join(repo, 'src'));
-    writeFileSync(
-      join(repo, 'plex.md'),
-      '## Validation\n- Always validate user input before inserting into the database\n',
-    );
     writeFileSync(join(repo, 'src/db.ts'), 'export const db = { insertUser(u: unknown) { return u; } };\n');
     writeFileSync(
       join(repo, 'src/user.ts'),
@@ -810,8 +805,14 @@ test('knowledge', 'engine: seed -> review retrieves pitfalls -> learn on accept'
     git(repo, 'add', '-A');
 
     const config = resolveConfig({ dataDir: '.plex', knowledgeDir, embedding: { provider: 'fake' } }); // fake = test-only
-    const seeded = await seedKnowledge(config, readFileSync(join(repo, 'plex.md'), 'utf8'));
-    assert.ok(seeded >= 1, `seeded ${seeded}`);
+    // Knowledge is populated by mining + the learning loop (no markdown seeding). Stand in a
+    // mined-style pitfall directly so the retrieval + learn-on-accept loop is exercised.
+    const title = 'Always validate user input before inserting into the database';
+    const [vec] = await createEmbeddingProvider(config.embedding)!.embed([`validation: ${title}`]);
+    await knowledgeStore(config).addPitfall({
+      id: 'pf:validate-input', title, trigger: title, why: '', category: 'validation',
+      tier: 'judgmental', confidence: 0.6, scope: 'global', incidentIds: [], embedding: vec,
+    });
 
     await indexRepo(repo, config);
     const ctx = await assembleReviewContext({ repoPath: repo, config, mode: 'staged' });

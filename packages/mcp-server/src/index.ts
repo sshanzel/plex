@@ -8,9 +8,9 @@
  * server stays model-agnostic and runs in a fresh process, separate from whoever
  * authored the code — which removes self-review bias.
  *
- * The 15 tools are registered below: the review flow (index_repo, get_review_context,
+ * The 14 tools are registered below: the review flow (index_repo, get_review_context,
  * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
- * reconcile_outcomes), the knowledge base (get_relevant_knowledge, seed_knowledge,
+ * reconcile_outcomes), the knowledge base (get_relevant_knowledge,
  * consolidate_knowledge, propose_promotions), mining (mine_scan, add_pitfalls,
  * mine_history), and doctor.
  */
@@ -28,7 +28,6 @@ import {
   getDeterministicFindings,
   rankReviewFindings,
   getRelevantKnowledge,
-  seedKnowledge,
   consolidateKnowledge,
   getPromotions,
   submitVerdict,
@@ -83,10 +82,10 @@ const server = new McpServer(
     // blast radius, findings). With `.mcp.json` "alwaysLoad": true these load eagerly.
     instructions:
       'Plex — code-review orchestration for a diff or GitHub PR. Flow: index_repo (once) → ' +
-      'get_review_context (blast radius + deterministic checks + relevant pitfalls + the PR brain + plex.md) → ' +
+      'get_review_context (blast radius + deterministic checks + relevant pitfalls + the PR brain) → ' +
       'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
-      'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / seed_knowledge / ' +
+      'addressed findings. Knowledge mining: mine_scan / add_pitfalls / mine_history / ' +
       'consolidate_knowledge / propose_promotions. `doctor` reports version + whether a newer build is on ' +
       'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
       'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
@@ -132,7 +131,7 @@ server.tool(
 
 server.tool(
   'get_review_context',
-  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, the PR brain (rounds + changed-without-feedback), plex.md, a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and `notes` — the agent guidance; read and follow them. Auto-indexes the repo on first use. Defaults: repoPath = cwd, local working diff; pass source:"pr" + pr for a GitHub PR, and the SAME source params on every other tool of this review.',
+  'Assemble grounded review context: changed symbols, blast radius, deterministic findings, relevant pitfalls, the PR brain (rounds + changed-without-feedback), a reviewPlan (single vs parallel fan-out, decided from the coupling graph — drive it with the plex-parallel-review skill), and `notes` — the agent guidance; read and follow them. Auto-indexes the repo on first use. Defaults: repoPath = cwd, local working diff; pass source:"pr" + pr for a GitHub PR, and the SAME source params on every other tool of this review.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
     guard(
@@ -288,13 +287,6 @@ server.tool(
 );
 
 server.tool(
-  'seed_knowledge',
-  'Seed the knowledge base from markdown guidance (## headings = categories, bullets = pitfalls). Cold start.',
-  { markdown: z.string() },
-  (a) => guard(async () => ({ added: await seedKnowledge(config, a.markdown) }), 'seed_knowledge'),
-);
-
-server.tool(
   'consolidate_knowledge',
   'Recompute pitfall confidence from accumulated incident outcomes (the feedback loop).',
   {},
@@ -303,9 +295,9 @@ server.tool(
 
 server.tool(
   'propose_promotions',
-  'Propose graph→markdown (plex.md) and graph→rule (ast-grep) promotions for high-confidence / codifiable pitfalls.',
-  { existingMarkdown: z.string().optional() },
-  (a) => guard(() => getPromotions(config, a.existingMarkdown ?? ''), 'propose_promotions'),
+  'Propose graph→rule (ast-grep) promotions for codifiable pitfalls.',
+  {},
+  () => guard(() => getPromotions(config), 'propose_promotions'),
 );
 
 // --- Mining: agent-driven (rides your subscription). mine_scan → you distill → add_pitfalls.

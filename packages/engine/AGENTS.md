@@ -86,7 +86,7 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 - **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → lexical (keyword) fallback; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
 - **Best-effort everywhere on the bookkeeping edges**: audit logging, blast-map sidecar, PR auto-comment, and the `head.sha` stamp never throw out of a review.
 - `recordVerdict` persists the waiver embedding to disk but **strips it from the returned value** (the MCP echo would waste tokens no consumer reads).
-- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Seeding (`seedKnowledge`) does NOT: key-less seeds are stored vectorless and retrieved lexically.
+- The mining write paths (`mineRepo`, `scanForMining`, `addMinedPitfalls`) **require** embeddings (`requireEmbeddings`) — clustering needs vectors. Knowledge is mined/learned only; markdown seeding (`plex.md`) was retired (ADR-37).
 
 ## Testing
 
