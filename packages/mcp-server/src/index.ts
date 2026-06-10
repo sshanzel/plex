@@ -364,6 +364,13 @@ server.tool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+// Keep stdin in flowing mode so the event loop doesn't drain between back-to-back
+// tool calls (e.g. index_repo → get_review_context). Without this, after a
+// long-running handler (Kùzu indexing spawns and joins a child) the event loop
+// can see no pending I/O and exit before the next call arrives, forcing a re-spawn
+// that may fail if MCP tools are deferred. Stdin closing (client disconnect) still
+// tears down the process naturally via the transport's own lifecycle handling.
+process.stdin.resume();
 process.stderr.write(
   `[plex] MCP server v${VERSION} (build ${LOADED_BUILD_MS ? new Date(LOADED_BUILD_MS).toISOString() : 'unknown'}) running on stdio\n`,
 );
