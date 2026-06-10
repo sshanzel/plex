@@ -136,6 +136,7 @@ plugin's npx MCP command needs the npm package published (it is, `@sshanzel/plex
 - **Pure core, impure edges:** keep scoring/ranking/co-change math as pure functions (unit-tested without I/O); isolate git/Kùzu calls at the boundaries.
 - **Tests prefer real fixtures:** diff/graph tests build a throwaway git repo + in-memory/temp Kùzu DB rather than synthetic strings (a hand-written multi-file diff already fooled `parse-diff` once — see M0 notes).
 - **Provenance is mandatory** on knowledge: every Pitfall links its source Incidents; every graph edge carries `provenance` + `weight`.
+- **Quality floors are part of the test suite** ([`docs/design/evals.md`](docs/design/evals.md)): `ranking-quality.test.ts` and `retrieval-quality.test.ts` assert nDCG/recall floors over frozen labeled corpora. A change that trips a floor is a finding about the change — don't lower the floor to pass; a change that raises the score should ratchet the floor up in the same commit.
 - **Document as you go:** each milestone gets a `docs/milestones/MN.md` (intent → acceptance criteria → what was built → verification). New decisions/deviations get an ADR. This is the user's explicit "always check we did what we intended" requirement — honor it.
 
 ## Must-remember invariants (easy to get wrong)
