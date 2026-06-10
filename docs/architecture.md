@@ -12,7 +12,7 @@ Plex is **not** another LLM that reviews code. It is an **MCP server + CLI** tha
 
 1. runs in a **fresh process** (removes self-review bias — the reviewer sees *facts*, never the author's chain-of-thought, ADR-02);
 2. hands the agent a **blast-radius map** of what the change touches and is coupled to;
-3. focuses it with **accumulated review knowledge** + the project's `plex.md` + the change's stated intent;
+3. focuses it with **accumulated review knowledge** (mined / learned) + the change's stated intent;
 4. records what happens in a **per-PR brain** so multi-round reviews stay consistent and outcomes are learned **autonomously**;
 5. merges the agent's findings with **deterministic** findings into one **severity/confidence-ranked** stream.
 
@@ -87,11 +87,11 @@ The review is **autonomous** (ADR-28): the agent submits findings and stops — 
 - a finding **addressed by a later change** → auto-`accept` on the next review (or via `reconcile`); an **explicit dismissal** → `reject` (responder); an `awareness` flag confirmed intentional → **`acknowledge`** (M12, no down-weight); **silence** → nothing.
 - accepted findings become **Incidents** → reweight **Pitfall** confidence (`consolidate_knowledge`); mining distills recurring PR-comment patterns into new pitfalls.
 - **closing the loop on a PR (ADR-34, opt-in `autoComment`):** reviewing a PR posts the ranked stream back as one GitHub review (inline + summary, deduped per round); **`/pr-master:respond`** triages it and records the outcomes above — so the loop runs on the PR itself, not just the terminal.
-- so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere. `plex.md` ⇄ knowledge ⇄ Semgrep/ast-grep promotion (ADR-09) keeps a human-editable surface and a path to deterministic rules.
+- so a lesson learned on one PR becomes a **global pitfall** retrieved on *future* reviews everywhere. Codifiable high-confidence pitfalls can promote into deterministic ast-grep rule stubs (knowledge → rule).
 
 ## Knowledge ⇄ markdown (ADR-09, ADR-10)
 
-`plex.md` is the human-editable surface — both **input** (cold-start seed, hard overrides) and **output** (proposed promotions). The knowledge base is the learned engine; high-confidence *codifiable* lessons promote further into rules. Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s.
+The knowledge base is the learned engine — populated by mining PR history and the review feedback loop (no hand-authored markdown; ADR-37 retired `plex.md`). High-confidence *codifiable* lessons promote further into ast-grep rule stubs. Verdicts (scoped + semantic waivers) reweight confidence; confirmed novel bugs become `Incident`s that can distill into new `Pitfall`s.
 
 ## Packages
 

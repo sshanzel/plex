@@ -60,7 +60,7 @@ After that, reviews use the cached graph and refresh only what changed. (If you 
 
 Plex works without an embedding provider, but a key is what turns on the layer that *learns*. It is the difference between a sharp one-shot reviewer and one that compounds:
 
-- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality, you can still seed `plex.md` guidance into the knowledge base, and stored pitfalls are still retrieved — by keyword match rather than semantically.
+- **Without a key:** fresh-context review, the blast-radius map, and deterministic checks. Findings still auto-accept by file/line locality, and stored pitfalls are still retrieved — by keyword match rather than semantically.
 - **With a key:** all of that, plus the full knowledge layer. Plex pulls relevant past pitfalls into each review *semantically*, suppresses issues you have already dismissed *by meaning* (so they survive rewording and moved lines), spots changes nobody flagged, and can mine your PR history into reusable pitfalls. This is the "gets sharper the more you use it" part.
 
 So add one: run `npx @sshanzel/plex init`, create `~/.plex/config.json` yourself, or set the environment variable pair (`PLEX_EMBEDDING_PROVIDER=voyage` + the provider's key, e.g. `VOYAGE_API_KEY` — env overrides the file):
@@ -100,7 +100,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
  diff (local or gh PR)
         │
         ▼  Plex MCP server (fresh, unbiased) assembles the grounding:
-   blast radius (Kùzu code graph)  ·  deterministic checks  ·  relevant pitfalls  ·  plex.md
+   blast radius (Kùzu code graph)  ·  deterministic checks  ·  relevant pitfalls
         │
         ▼  get_review_context
    your agent reasons (first-principles and grounded)
@@ -112,7 +112,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 **Three sources, one stream.** First-principles reasoning (the agent), knowledge-grounded findings (retrieved pitfalls), and deterministic checks (built-in TypeScript-AST rules). Prevalence is read by severity: a common *style* is treated as a convention and demoted, while a common *bug* is treated as systemic and escalated as a migration.
 
-**Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling, its repo-scoped pitfalls, and its `plex.md` instructions; it tailors the review to one codebase.
+**Two layers of knowledge.** The global layer holds universal pitfalls and your review style, mined across all your repos and reweighted by outcomes; it applies everywhere. The per-project layer holds that repo's code graph and co-change coupling and its repo-scoped pitfalls; it tailors the review to one codebase.
 
 **Closing the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review: inline comments on the changed lines, plus a summary for coupled and awareness findings, deduped across rounds. **`/pr-master:respond`** then works through it (you decide each one) and records the outcomes back into the knowledge base (ADR-34). That command comes from a second plugin in the same marketplace, installed separately when you want it: `/plugin install pr-master@sshanzel`.
 
@@ -120,7 +120,7 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 ## MCP tools
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `seed_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `propose_promotions` · `mine_scan` · `add_pitfalls` · `mine_history` · `doctor`
 
 ## Architecture
 

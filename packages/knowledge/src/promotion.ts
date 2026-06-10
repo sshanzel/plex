@@ -53,8 +53,6 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
 }
 
 export interface Promotions {
-  /** Suggested `plex.md` lines for high-confidence pitfalls not yet documented. */
-  markdown: string[];
   /** ast-grep rule stubs for codifiable pitfalls (graph → deterministic rule). */
   rules: string[];
 }
@@ -71,26 +69,14 @@ function astGrepStub(p: Pitfall): string {
 }
 
 /**
- * Propose promotions across the graph ⇄ markdown ⇄ rules boundary (ADR-09):
- * high-confidence pitfalls → suggested `plex.md` lines; codifiable pitfalls →
- * deterministic rule stubs.
+ * Propose graph → deterministic-rule promotions: every `codifiable` pitfall becomes an
+ * ast-grep rule stub a human fills in. (The markdown-promotion direction was retired with
+ * plex.md — knowledge is mined/learned, not promoted back into a hand-edited file.)
  */
-export async function proposePromotions(
-  store: KnowledgeStore,
-  existingMarkdown = '',
-  threshold = 0.7,
-): Promise<Promotions> {
-  const pitfalls = await store.pitfalls();
-  // Suppress a promotion only when the title ALREADY appears as its own markdown line — a
-  // raw substring match wrongly suppressed e.g. "validate id" when an unrelated line read
-  // "never validate id-tokens client-side".
-  const existingLines = new Set(existingMarkdown.split('\n').map((l) => l.trim()));
-  const present = (title: string): boolean => existingLines.has(title) || existingLines.has(`- ${title}`);
-  const markdown: string[] = [];
+export async function proposePromotions(store: KnowledgeStore): Promise<Promotions> {
   const rules: string[] = [];
-  for (const p of pitfalls) {
-    if (p.confidence >= threshold && !present(p.title)) markdown.push(`- ${p.title}`);
+  for (const p of await store.pitfalls()) {
     if (p.tier === 'codifiable') rules.push(astGrepStub(p));
   }
-  return { markdown, rules };
+  return { rules };
 }

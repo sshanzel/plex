@@ -50,7 +50,7 @@ clusters). When in doubt, Plex says `single`, and you do one pass.
    - `FOCUS FILES:` the unit's `files` — review only the changes in these.
    - The grounding it needs, sliced from the single `get_review_context` you already have:
      - `deterministic` findings whose `file` ∈ the unit's files;
-     - the **full** `blastRadius`, `knowledge`, `changeContext`, `plex.md`, and any
+     - the **full** `blastRadius`, `knowledge`, `changeContext`, and any
        `unexplainedChanges` in the unit's files (a unit must still see what it's coupled to).
    - The instruction: **return raw findings as a JSON array** (the `submit_findings` finding
      shape) and **do NOT call `get_review_context`, `submit_findings`, or `record_outcome`** —

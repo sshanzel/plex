@@ -124,7 +124,7 @@ export async function retrieveRelevant(
 /**
  * Retrieval without any embedding provider: IDF-weighted token overlap over every
  * in-scope pitfall's text. Far weaker than embeddings, far better than nothing — a
- * key-less install still gets its plex.md guidance and accumulated pitfalls back.
+ * key-less install still gets its mined/accumulated pitfalls back.
  */
 export async function retrieveRelevantLexical(
   store: KnowledgeStore,

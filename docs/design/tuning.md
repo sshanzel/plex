@@ -92,7 +92,7 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 | `semanticThreshold` (fix-inference) | 0.6 floor | **adaptive — safe-direction (adopted)** | the auto-accept cut, `max(0.6, μ+3σ)` of the region/finding background — rises (auto-accepts *less*, surfaces *more*) on a high-baseline model, never below 0.6. With no embedder → background {0,0} → stays 0.6, locality unaffected. |
 | `mining.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
 | pitfall confidence | **Beta-Bernoulli** posterior mean | **principled (adopted)** | `confidence = (α0+s)/(α0+β0+s+1.5f)` with prior Beta(1,1) and rejects at 1.5× (was `±0.1/±0.15`). Idempotent, no clamp-loss, no path-dependence. `wilsonLowerBound` (Wilson 1927) available for small-sample ranking. `promotion.ts`. |
-| promotion threshold | 0.7 | empirical | confidence at which a pitfall is proposed for `plex.md`. |
+| ~~promotion threshold~~ | — | removed | the markdown-promotion direction (graph → `plex.md`) was retired with `plex.md` (ADR-37); rule promotion gates on `tier === 'codifiable'`, not confidence. |
 
 ## Review plan (fan-out) — `config.reviewPlan` (ADR-34)
 

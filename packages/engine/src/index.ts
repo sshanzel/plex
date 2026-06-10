@@ -30,7 +30,6 @@ export {
   buildKnowledgeQuery,
   getRelevantKnowledge,
   embeddingReady,
-  seedKnowledge,
   learnIncident,
   submitVerdict,
   consolidateKnowledge,

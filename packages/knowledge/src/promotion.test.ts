@@ -90,25 +90,15 @@ describe('consolidatePitfalls', () => {
 });
 
 describe('proposePromotions', () => {
-  it('suggests markdown for high-confidence pitfalls and rules for codifiable ones', async () => {
+  it('emits an ast-grep rule stub for each codifiable pitfall, and nothing for judgmental ones', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp2-'));
     const store = new KnowledgeStore(dir);
-    await store.addPitfall(pf({ id: 'hi', title: 'Always validate tenant id', confidence: 0.8 }));
-    await store.addPitfall(pf({ id: 'lo', title: 'Minor style thing', confidence: 0.3 }));
-    await store.addPitfall(pf({ id: 'cod', title: 'No debugger statements', confidence: 0.9, tier: 'codifiable', trigger: 'debugger' }));
+    await store.addPitfall(pf({ id: 'judg', title: 'Always validate tenant id', confidence: 0.9, tier: 'judgmental' }));
+    await store.addPitfall(pf({ id: 'cod', title: 'No debugger statements', confidence: 0.5, tier: 'codifiable', trigger: 'debugger' }));
 
-    const promo = await proposePromotions(store, '', 0.7);
-    expect(promo.markdown).toContain('- Always validate tenant id');
-    expect(promo.markdown).toContain('- No debugger statements');
-    expect(promo.markdown).not.toContain('- Minor style thing');
-    expect(promo.rules.join('\n')).toContain('No debugger statements');
-  });
-
-  it('does not re-suggest pitfalls already present in the markdown', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'kp3-'));
-    const store = new KnowledgeStore(dir);
-    await store.addPitfall(pf({ id: 'hi', title: 'Always validate tenant id', confidence: 0.8 }));
-    const promo = await proposePromotions(store, '- Always validate tenant id', 0.7);
-    expect(promo.markdown).toEqual([]);
+    const promo = await proposePromotions(store);
+    expect(promo.rules).toHaveLength(1);
+    expect(promo.rules[0]).toContain('No debugger statements');
+    expect(promo.rules.join('\n')).not.toContain('Always validate tenant id'); // judgmental → no rule
   });
 });

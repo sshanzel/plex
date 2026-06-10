@@ -220,8 +220,6 @@ export interface ReviewContext {
   knowledge: RetrievedPitfall[];
   /** Stated motivation (PR title/body or commit subjects) — check the code against its claims. */
   changeContext?: ChangeContext;
-  /** Contents of the repo's `plex.md`, if present (human-authored guidance — ADR-09). */
-  reviewerMd?: string;
   /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
   graphStale?: GraphStaleness;
   // --- PR brain (M6/M11, ADR-30 — embedded Kùzu) ---
@@ -268,16 +266,6 @@ async function changedFileCoupling(db: CodeGraphDB, files: string[]): Promise<[s
     out.push([e.src, e.dst]);
   }
   return out;
-}
-
-/** Read repo-root `plex.md` (the explicit, human-editable steering surface). */
-function loadReviewerMd(repoPath: string): string | undefined {
-  const f = path.join(repoPath, 'plex.md');
-  try {
-    return existsSync(f) ? readFileSync(f, 'utf8').trim() || undefined : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export interface AssembleOptions extends DiffSource {
@@ -620,7 +608,6 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     deterministic,
     knowledge,
     changeContext,
-    reviewerMd: loadReviewerMd(p.repoPath),
     graphStale,
     target,
     round: brain.round,
