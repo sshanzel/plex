@@ -15,12 +15,13 @@ export class CodeGraphDB {
   private readonly db: Database;
   private readonly conn: Connection;
 
-  constructor(public readonly dir: string) {
+  constructor(public readonly dir: string, opts?: { readOnly?: boolean }) {
     try {
       // Kùzu's single-writer file lock can bite HERE or lazily at first query (`rethrow`
       // handles the lazy path) — either way a same-path concurrent open becomes a clear
-      // RepoBusyError (different worktrees use different dirs and never hit this; ADR-30).
-      this.db = new Database(dir);
+      // RepoBusyError. readOnly=true lets multiple secondary worktrees share the base's
+      // graph concurrently without conflicting on the write lock (ADR-32).
+      this.db = opts?.readOnly ? new Database(dir, 0, true, true) : new Database(dir);
       this.conn = new Connection(this.db);
     } catch (e) {
       if (isLockError(e)) throw new RepoBusyError(dir);

@@ -227,7 +227,9 @@ async function main(): Promise<number> {
         `${flags.incremental ? 'Refreshing' : 'Indexing'} ${path.basename(path.resolve(repoPath))}`,
         () => indexRepo(repoPath, config, { incremental: Boolean(flags.incremental) }),
       );
-      if (res.incremental) {
+      if (res.shared) {
+        process.stdout.write(`Secondary worktree: sharing base graph at ${res.graphDir} (no copy — read-only).\n`);
+      } else if (res.incremental) {
         process.stdout.write(
           `${res.seeded ? 'Seeded from base worktree + applied' : 'Incrementally updated'} ${res.files} file(s) ` +
             `(+${res.added ?? 0} ~${res.modified ?? 0} -${res.deleted ?? 0}): ` +

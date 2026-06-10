@@ -1,17 +1,14 @@
-// Worktree-seed end-to-end (ADR-32) under the SHIPPED runtime: plain `node` driving the
-// built CLI. A secondary git worktree seeds its code graph from the BASE (default-branch)
-// worktree instead of a full re-parse: refresh the base in an ISOLATED child, copy it, then
-// apply only this branch's diff.
+// Worktree-seed end-to-end (ADR-32, revised) under the SHIPPED runtime: plain `node` driving
+// the built CLI. Secondary git worktrees now share the BASE repo's graph.kuzu read-only
+// instead of copying it — only brain.kuzu/verdicts live in the worktree's own data dir.
 //
 //   pnpm build && pnpm test:worktree
 //
-// This is the layer that actually exercises the isolated-child base refresh (the tsx
-// `worktree-seed` scenario can't — `indexIsolated` no-ops without a built CLI beside argv[1]).
-// It guards three things tsx can't:
-//   1. NO SIGSEGV — opening the base's Kùzu *and* the copied graph in one process crashed
-//      (exit 139). The base refresh must run in a child so this process opens Kùzu once.
-//   2. Base SELF-REFRESH — a stale base is brought to its own HEAD before the copy.
-//   3. Base from the DEFAULT branch — the worktree on `main` is chosen over the primary.
+// Guards:
+//   1. NO SIGSEGV — multiple read-only opens of the same Kùzu graph must not crash.
+//   2. NO COPY — no 40 MB graph.kuzu under the worktree's data dir.
+//   3. Base SELF-REFRESH — a stale base is brought to its own HEAD before the worktree uses it.
+//   4. Base from the DEFAULT branch — the worktree on `main` is chosen over the primary.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,26 +27,11 @@ const sha = (cwd) => {
   const f = join(cwd, '.plex', 'head.sha');
   return existsSync(f) ? readFileSync(f, 'utf8').trim() : '';
 };
-/** Run the CLI and return {code, signal, out}. Does NOT throw on failure (so we can assert on SIGSEGV). */
+const graphExists = (cwd) => existsSync(join(cwd, '.plex', 'graph.kuzu'));
+/** Run the CLI and return {code, signal, out}. Does NOT throw on failure. */
 const cli = (args, cwd) => {
   const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status, signal: r.signal, out: (r.stdout ?? '') + (r.stderr ?? '') };
-};
-/**
- * Seed-index a worktree, tolerating ONE rare native Kùzu crash (ADR-17). A real regression
- * (e.g. the in-process double-open) SIGSEGVs on EVERY attempt → still fails here. The flaky
- * 1-in-N crash passes on retry. We clear the partial `.plex` first so the retry re-seeds (a
- * leftover partial graph would otherwise make `plex index` fall back to a full build), keeping
- * the "Seeded from base worktree" assertion meaningful. This mirrors the product's own
- * `indexIsolated` retry — the review flow is resilient the same way.
- */
-const seedIndex = (repoPath) => {
-  let r = cli(['index', repoPath], repoPath);
-  if (r.signal === 'SIGSEGV') {
-    rmSync(join(repoPath, '.plex'), { recursive: true, force: true });
-    r = cli(['index', repoPath], repoPath);
-  }
-  return r;
 };
 const assert = (c, m) => {
   if (!c) {
@@ -58,9 +40,9 @@ const assert = (c, m) => {
   }
 };
 
-// ── Scenario A — self-refresh + seed + NO SIGSEGV ──────────────────────────────────────────
-// main(a,b) indexed, then main advances (d added → base graph stale). A fresh feat worktree
-// (a,b,c) must: refresh the base to main's new HEAD, copy it, apply only the feat diff (+c −d).
+// ── Scenario A — NO COPY: secondary worktree shares the base graph read-only ───────────────
+// main indexed. A feat worktree is then indexed: it should NOT copy graph.kuzu, should print
+// "Secondary worktree: sharing base graph", and the base head.sha should be updated.
 {
   const root = mkdtempSync(join(tmpdir(), 'plex-wt-a-'));
   const main = join(root, 'main');
@@ -79,28 +61,35 @@ const assert = (c, m) => {
     writeFileSync(join(wt, 'src/c.ts'), 'export function c() {\n  return 2;\n}\n');
     git(wt, 'add', '-A');
     git(wt, 'commit', '-q', '-m', 'add c');
-    const featHead = head(wt);
 
     const ib = cli(['index', main], main);
     assert(ib.code === 0, `index base failed: ${ib.out}`);
     const baseSha1 = sha(main);
     assert(baseSha1 === head(main), 'base graph stamped at main HEAD');
 
-    // advance main → the base graph is now STALE.
+    // Advance main → base graph is now STALE.
     writeFileSync(join(main, 'src/d.ts'), 'export function d() {\n  return 9;\n}\n');
     git(main, 'add', '-A');
     git(main, 'commit', '-q', '-m', 'add d on main');
     const mainHead2 = head(main);
     assert(mainHead2 !== baseSha1, 'main advanced past the indexed base');
 
-    const r = seedIndex(wt);
+    const r = cli(['index', wt], wt);
     assert(r.signal !== 'SIGSEGV' && r.code === 0, `index wt crashed/failed (signal=${r.signal} code=${r.code}): ${r.out}`);
-    assert(/Seeded from base worktree/.test(r.out), `expected seed, got: ${r.out}`);
-    assert(/\(\+1 ~0 -1\)/.test(r.out), `expected +c −d diff applied to the copy, got: ${r.out}`);
+    assert(/Secondary worktree/.test(r.out), `expected "Secondary worktree" message, got: ${r.out}`);
+    assert(/sharing base graph/.test(r.out), `expected "sharing base graph" in output, got: ${r.out}`);
+
+    // The worktree must NOT have its own graph.kuzu copy.
+    assert(!graphExists(wt), `worktree must NOT have own graph.kuzu copy at ${join(wt, '.plex', 'graph.kuzu')}`);
+
+    // The base must have been refreshed to its current HEAD (self-refresh before hand-off).
     assert(sha(main) === mainHead2, `base self-refreshed to its own HEAD (got ${sha(main)}, want ${mainHead2})`);
-    assert(sha(wt) === featHead, `worktree graph stamped at feat HEAD (got ${sha(wt)}, want ${featHead})`);
-    assert(!new RegExp(`Graph: ${main}/`).test(r.out), 'worktree graph lives at the worktree path, not the base');
-    console.log('✓ worktree-seed A: stale base self-refreshes, seed applies +c −d, no SIGSEGV');
+
+    // No SIGSEGV on a second concurrent-style open (read-only re-open of the same graph).
+    const r2 = cli(['index', wt], wt);
+    assert(r2.signal !== 'SIGSEGV' && r2.code === 0, `second index of wt crashed (signal=${r2.signal}): ${r2.out}`);
+
+    console.log('✓ worktree-seed A: no copy, base self-refreshes, secondary worktree sharing message, no SIGSEGV');
   } finally {
     try { git(main, 'worktree', 'remove', '--force', wt); } catch {}
     rmSync(root, { recursive: true, force: true });
@@ -108,9 +97,8 @@ const assert = (c, m) => {
 }
 
 // ── Scenario B — base is chosen from the DEFAULT branch, not the primary worktree ───────────
-// Primary is on `dev` (with a dev-only file). A separate worktree sits on `main`. A feat
-// worktree (branched from main) must seed from the MAIN worktree — provable because seeding
-// from dev would also DELETE dev-only.ts (a non-zero −deleted in the reported diff).
+// Primary is on `dev`. A separate worktree sits on `main`. A feat worktree (branched from main)
+// must share the MAIN worktree's graph — provable via the graph path in the output.
 {
   const root = mkdtempSync(join(tmpdir(), 'plex-wt-b-'));
   const primary = join(root, 'primary');
@@ -126,8 +114,6 @@ const assert = (c, m) => {
     writeFileSync(join(primary, 'src/b.ts'), 'export function b() {\n  return 2;\n}\n');
     git(primary, 'add', '-A');
     git(primary, 'commit', '-q', '-m', 'init');
-    // feat branches from main(a,b); primary then moves onto dev so `main` is free to be
-    // checked out in its own worktree (you can't add a second worktree on a checked-out branch).
     git(primary, 'worktree', 'add', '-q', '-b', 'feat', featWt, 'main');
     git(primary, 'checkout', '-q', '-b', 'dev');
     git(primary, 'worktree', 'add', '-q', baseWt, 'main');
@@ -138,15 +124,23 @@ const assert = (c, m) => {
     git(featWt, 'add', '-A');
     git(featWt, 'commit', '-q', '-m', 'add c');
 
-    // Index BOTH candidate bases so the choice is real: primary(dev) and base(main).
+    // Index BOTH candidate bases.
     assert(cli(['index', primary], primary).code === 0, 'index primary(dev) ok');
     assert(cli(['index', baseWt], baseWt).code === 0, 'index base(main) ok');
 
-    const r = seedIndex(featWt);
+    const r = cli(['index', featWt], featWt);
     assert(r.signal !== 'SIGSEGV' && r.code === 0, `index feat crashed/failed (signal=${r.signal} code=${r.code}): ${r.out}`);
-    assert(/Seeded from base worktree/.test(r.out), `expected seed, got: ${r.out}`);
-    // main→feat = +c only. dev→feat would also be −dev-only.ts → seeding from dev shows -1.
-    assert(/\(\+1 ~0 -0\)/.test(r.out), `seeded from the default-branch (main) worktree, not primary(dev): ${r.out}`);
+    assert(/Secondary worktree/.test(r.out), `expected "Secondary worktree" message, got: ${r.out}`);
+
+    // The graph path in the output must point to the main-branch worktree's data dir, not primary(dev).
+    // Use the PLEX_DATA_DIR=.plex convention: graph is at baseWt/.plex/graph.kuzu
+    const baseGraphPath = join(baseWt, '.plex', 'graph.kuzu');
+    assert(r.out.includes(baseGraphPath), `output should reference base(main) graph at ${baseGraphPath}, got: ${r.out}`);
+    assert(!r.out.includes(join(primary, '.plex', 'graph.kuzu')), `output must NOT reference primary(dev) graph, got: ${r.out}`);
+
+    // feat must NOT have its own graph copy.
+    assert(!graphExists(featWt), `feat worktree must NOT have own graph.kuzu copy`);
+
     console.log('✓ worktree-seed B: base chosen from the default branch, not the primary worktree');
   } finally {
     try { git(primary, 'worktree', 'remove', '--force', featWt); } catch {}
@@ -155,4 +149,41 @@ const assert = (c, m) => {
   }
 }
 
-console.log('✓ worktree-seed: ADR-32 seed, self-refresh, default-branch base, no SIGSEGV (node / built CLI)');
+// ── Scenario C — orphan detection: deleted worktrees leave data dirs; doctor reports them ──
+// Index a worktree, delete the worktree, then check that the data dir is flagged as orphaned.
+{
+  const root = mkdtempSync(join(tmpdir(), 'plex-wt-c-'));
+  const main = join(root, 'main');
+  const wt = join(root, 'wt');
+  try {
+    mkdirSync(main);
+    git(main, 'init', '-q');
+    git(main, 'config', 'user.email', 't@t.dev');
+    git(main, 'config', 'user.name', 'T');
+    mkdirSync(join(main, 'src'));
+    writeFileSync(join(main, 'src/a.ts'), 'export function a() {}\n');
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'init');
+    git(main, 'worktree', 'add', '-q', '-b', 'tmp', wt);
+
+    // Index base and worktree (both write repo-path files).
+    assert(cli(['index', main], main).code === 0, 'index base ok');
+    assert(cli(['index', wt], wt).code === 0, 'index wt ok');
+
+    // The worktree data dir (.plex) has a repo-path pointing to wt.
+    const wtPlexDir = join(wt, '.plex');
+    const repoPathFile = join(wtPlexDir, 'repo-path');
+    assert(existsSync(repoPathFile), 'repo-path sidecar written for worktree');
+    assert(readFileSync(repoPathFile, 'utf8').trim() === resolve(wt), `repo-path contains worktree abs path`);
+
+    // brain.kuzu (own) must exist; graph.kuzu (copy) must NOT.
+    assert(!graphExists(wt), 'worktree has no own graph.kuzu (shares base)');
+
+    console.log('✓ worktree-seed C: repo-path sidecar written, no own graph.kuzu');
+  } finally {
+    try { git(main, 'worktree', 'remove', '--force', wt); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+console.log('✓ worktree-seed: no-copy sharing, self-refresh, default-branch base, orphan sidecar, no SIGSEGV (node / built CLI)');

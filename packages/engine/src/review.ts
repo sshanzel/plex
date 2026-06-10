@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type {
@@ -52,9 +52,11 @@ export async function indexRepo(
   repoPath: string,
   config: ReviewerConfig,
   opts: { incremental?: boolean } = {},
-): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; added?: number; modified?: number; deleted?: number }> {
+): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; shared?: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
   ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
+  // Record this repo's path for orphan detection in `doctor gc`
+  try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
   const stamp = async (): Promise<void> => {
     // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25): the
     // review budget is two opens (neighborhood + brain, ADR-17) — staleness must not spend one.
@@ -88,29 +90,30 @@ export async function indexRepo(
     }
   }
 
-  // No graph yet → if this is a secondary git worktree whose BASE (the default-branch
-  // checkout) is already indexed, refresh that base to ITS OWN head, then COPY it and
-  // incrementally apply only this branch's diff (ADR-32). Only main's state ever lands in
-  // the base (a worktree's branch data never does), and the copy is independent — so N
-  // worktrees can't pollute the base, and a fresh worktree is seconds, not a full re-parse.
+  // No graph yet → if this is a secondary git worktree, refresh the BASE (default-branch
+  // checkout) and share its graph read-only. No 40 MB copy: every secondary worktree reads
+  // the base's graph.kuzu directly; only brain.kuzu/verdicts live in the worktree's own dir.
+  // This replaces the previous cpSync+updateCodeGraph approach (ADR-32).
   if (!existsSync(p.graphDir)) {
     const base = baseWorktree(p.repoPath, config);
     if (base) {
-      // Refresh the base to ITS OWN head in an ISOLATED child (ADR-17): opening the base's
-      // Kùzu in *this* process and then opening the copied graph below is two opens in one
-      // process — a SIGSEGV. The child keeps us to a single open here. Best-effort: in dev/tsx
-      // (no built CLI beside argv[1]) it no-ops and the incremental below reconciles any drift.
+      // Refresh the base to ITS OWN head in an ISOLATED child (ADR-17) — best-effort.
       indexIsolated(base.path, true);
-      try {
-        mkdirSync(path.dirname(p.graphDir), { recursive: true });
-        cpSync(base.graphDir, p.graphDir, { recursive: true });
-        const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
-        persistDeleted(res);
-        await stamp();
-        return { ...res, graphDir: p.graphDir, seeded: true };
-      } catch {
-        rmSync(p.graphDir, { recursive: true, force: true }); // partial/corrupt copy → full build
-      }
+      return {
+        graphDir: base.graphDir,
+        shared: true,
+        seeded: true,
+        incremental: true,
+        files: 0,
+        symbols: 0,
+        imports: 0,
+        refs: 0,
+        coChangePairs: 0,
+        commits: 0,
+        added: 0,
+        modified: 0,
+        deleted: 0,
+      };
     }
   }
 
@@ -473,39 +476,44 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     resolveChangeContext(opts.repoPath, opts.config, opts),
   ]);
 
-  // Auto-index on first use (ADR-30): if the repo was never indexed, build the graph in an
-  // ISOLATED child process so THIS process opens Kùzu only for the neighborhood + brain. The
-  // user never has to run `plex index` first.
-  if (!existsSync(p.graphDir)) {
-    if (opts.autoIndex !== false) indexIsolated(p.repoPath, false);
-    if (!existsSync(p.graphDir)) {
-      throw new Error(`No code graph at ${p.graphDir}, and auto-index could not run. Run \`plex index\` first.`);
+  // For a secondary git worktree, the code graph lives in the BASE repo's data dir (shared
+  // read-only). Brain/verdicts/blast-map/log still write to the worktree's own data dir.
+  const worktreeBase = baseWorktree(opts.repoPath, opts.config);
+  const graphP = worktreeBase ? repoPaths(worktreeBase.path, opts.config.dataDir) : p;
+  if (worktreeBase) {
+    // Own data dir may not exist yet if `index_repo` was never called explicitly.
+    ensureDataDir(p.reviewerDir);
+    try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
+  }
+
+  // Auto-index on first use (ADR-30): check the BASE graph for worktrees; build in an
+  // ISOLATED child so THIS process opens Kùzu only for the neighborhood + brain.
+  if (!existsSync(graphP.graphDir)) {
+    if (opts.autoIndex !== false) indexIsolated(graphP.repoPath, false);
+    if (!existsSync(graphP.graphDir)) {
+      const hint = worktreeBase ? `Run \`plex index ${worktreeBase.path}\` first.` : 'Run `plex index` first.';
+      throw new Error(`No code graph at ${graphP.graphDir}, and auto-index could not run. ${hint}`);
     }
   }
 
-  // Keep the graph fresh BEFORE computing blast radius (ADR-25). Staleness is read from the
-  // SIDECAR sha (no Kùzu), and any refresh runs in an ISOLATED child process — so THIS process
-  // opens Kùzu only for the neighborhood + brain below. Only a definite drift (behind > 0)
-  // auto-refreshes; an unknown sha (-1) is merely reported.
+  // Keep the BASE graph fresh BEFORE computing blast radius (ADR-25). Staleness is read from
+  // the sidecar sha (no Kùzu), and any refresh runs in an ISOLATED child process.
   let graphStale: GraphStaleness | undefined;
   {
-    const indexedSha = readIndexedSha(p.headShaFile);
-    const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
+    const indexedSha = readIndexedSha(graphP.headShaFile);
+    const behind = indexedSha ? await commitsBehind(graphP.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
-      // NOTE: a refresh DETACH-DELETEs committed deletions' nodes — their dependents are
-      // preserved by `indexRepo`'s sidecar capture (which the refresh child runs) and
-      // merged into the neighborhood after the walk below.
-      const refreshed = indexIsolated(p.repoPath, true);
+      const refreshed = indexIsolated(graphP.repoPath, true);
       graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
       graphStale = { indexedSha, behind, refreshed: false };
     }
   }
 
-  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open. We also pull the coupling
-  // AMONG the changed files here (for the parallel-review partition) so it's the same open.
+  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open. Open read-only for
+  // secondary worktrees so multiple concurrent worktree reviews can share the base graph.
   const changedPaths = diff.files.map((f) => f.path);
-  const db = new CodeGraphDB(p.graphDir);
+  const db = new CodeGraphDB(graphP.graphDir, worktreeBase ? { readOnly: true } : undefined);
   let repo: string;
   let nb: ReviewNeighborhood;
   let coupling: [string, string][] = [];
@@ -526,7 +534,9 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // (Uncommitted deletions keep their node and were already seeded by the walk itself.)
   const deletedDiffFiles = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
   if (deletedDiffFiles.length > 0) {
-    const sidecar = readDeletedNeighborsSidecar(p.reviewerDir);
+    // Read from the BASE graph's reviewerDir — that's where `indexRepo` wrote deleted-neighbor
+    // entries when the base was refreshed (worktrees share the base graph, so they share its sidecar too).
+    const sidecar = readDeletedNeighborsSidecar(graphP.reviewerDir);
     const captured = deletedDiffFiles.flatMap((f) => sidecar[f]?.neighbors ?? []);
     if (captured.length > 0) {
       const have = new Set(nb.neighbors.map((n) => String(n.node.props.path)));

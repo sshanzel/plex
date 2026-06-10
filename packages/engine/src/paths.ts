@@ -18,6 +18,8 @@ export interface RepoPaths {
   logFile: string;
   /** Indexed HEAD sha sidecar — staleness check without opening Kùzu (ADR-16/25). */
   headShaFile: string;
+  /** Plain-text file recording the absolute repoPath — lets `doctor` detect orphaned data dirs. */
+  repoPathFile: string;
 }
 
 /** A stable, filesystem-safe id for a repo's centralized data dir (basename + path hash). */
@@ -55,6 +57,7 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     analyzeStateFile: path.join(reviewerDir, 'analyze-state.json'),
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),
     headShaFile: path.join(reviewerDir, 'head.sha'),
+    repoPathFile: path.join(reviewerDir, 'repo-path'),
   };
 }
 
