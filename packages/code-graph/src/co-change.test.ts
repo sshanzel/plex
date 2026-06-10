@@ -1,5 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateCoChange, parseNameStatus, type CommitRecord } from './co-change';
+import { aggregateCoChange, parseNameStatus, resolveRenameArtifact, type CommitRecord } from './co-change';
+
+describe('resolveRenameArtifact', () => {
+  it('passes plain paths through untouched', () => {
+    expect(resolveRenameArtifact('src/db.ts')).toBe('src/db.ts');
+  });
+
+  it('resolves the plain rename form to the new path', () => {
+    expect(resolveRenameArtifact('src/old.ts => src/new.ts')).toBe('src/new.ts');
+  });
+
+  it('resolves the brace form WITHOUT dropping the shared prefix', () => {
+    expect(resolveRenameArtifact('packages/{old => new}/src/file.ts')).toBe('packages/new/src/file.ts');
+  });
+
+  it('handles an empty new segment (a directory level removed)', () => {
+    expect(resolveRenameArtifact('packages/{nested => }/file.ts')).toBe('packages/file.ts');
+  });
+});
 
 const opts = { maxCommitFiles: 25, halfLifeDays: 365, minPairCount: 1, nowSec: 1_000_000 };
 

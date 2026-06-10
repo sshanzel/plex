@@ -92,6 +92,21 @@ const RECORD = '';
  * co-change — ADR-26). Merge commits are excluded. This is the only impure part of
  * co-change.
  */
+/**
+ * Resolve a rename artifact from git's path output to the NEW path. Pure. Handles both the
+ * plain form (`old.ts => new.ts`) and the brace form (`dir/{old => new}/file.ts`, where the
+ * shared prefix/suffix sit OUTSIDE the braces — the old strip regex dropped that prefix).
+ * Defensive: `git log --name-only` without -M emits plain paths today, but a `-M`/config
+ * change must not silently corrupt co-change file ids.
+ */
+export function resolveRenameArtifact(line: string): string {
+  if (!line.includes(' => ')) return line;
+  return line
+    .replace(/\{([^{}]*) => ([^{}]*)\}/g, '$2') // brace segments → the new segment
+    .replace(/^.* => /, '') // plain "old => new" (no braces left) → the new path
+    .replace(/\/{2,}/g, '/'); // an empty new segment ("{old => }") leaves a doubled slash
+}
+
 export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {
   const args = ['log', '--no-merges', '--name-only', `--pretty=format:${RECORD}%ct`];
   if (maxCommits > 0) args.push('-n', String(maxCommits));
@@ -105,9 +120,7 @@ export async function readCommits(cwd: string, maxCommits: number, sinceRef?: st
       current = { tsSec: Number(line.slice(1)) || 0, files: [] };
       commits.push(current);
     } else if (line.trim() !== '' && current) {
-      // strip rename artifacts like "old => new" -> keep the new path
-      const file = line.includes(' => ') ? line.replace(/.*=>\s*/, '').replace(/[}]/g, '') : line;
-      current.files.push(file.trim());
+      current.files.push(resolveRenameArtifact(line).trim());
     }
   }
   return commits;
