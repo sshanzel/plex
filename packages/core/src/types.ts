@@ -40,6 +40,12 @@ export interface NormalizedDiff {
   baseRef: string;
   headRef?: string;
   files: DiffFile[];
+  /**
+   * Machine-generated files (lockfiles, bundles — `isGeneratedArtifact`) the diff touched
+   * but normalization DROPPED from `files`. Kept as a fact so a lockfile-only change is
+   * still visible as a supply-chain signal, just never read line-by-line.
+   */
+  generatedPaths?: string[];
 }
 
 /**

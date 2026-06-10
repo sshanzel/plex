@@ -115,10 +115,14 @@ index 1111111..2222222 100644
  settings:
    autoInstallPeers: true
 `;
-    expect(normalizeUnifiedDiff(LOCKFILE, 'main').files).toEqual([]);
+    const d = normalizeUnifiedDiff(LOCKFILE, 'main');
+    expect(d.files).toEqual([]);
+    expect(d.generatedPaths).toEqual(['pnpm-lock.yaml']); // the FACT survives (supply-chain signal)
     expect(addedTextByFile(LOCKFILE)).toEqual([]); // and never embedded for attribution
-    // a source file is untouched by the filter
-    expect(normalizeUnifiedDiff(SINGLE, 'main').files).toHaveLength(1);
+    // a source file is untouched by the filter (and carries no generatedPaths)
+    const clean = normalizeUnifiedDiff(SINGLE, 'main');
+    expect(clean.files).toHaveLength(1);
+    expect(clean.generatedPaths).toBeUndefined();
   });
 });
 

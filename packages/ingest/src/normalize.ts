@@ -85,10 +85,17 @@ export function normalizeUnifiedDiff(
 ): NormalizedDiff {
   // Generated artifacts (lockfiles, minified bundles, source maps, snapshots) are dropped
   // HERE, at the single entry point of the review flow — they never reach the context the
-  // agent reads, the deterministic runner, or the brain's round bookkeeping.
+  // agent reads, the deterministic runner, or the brain's round bookkeeping. Their PATHS
+  // are kept as a fact (`generatedPaths`): a lockfile-only diff is a supply-chain signal
+  // worth a heads-up even though its content is never read.
+  const generatedPaths: string[] = [];
   const files = parseDiff(text).filter((f) => {
     const p = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
-    return !isGeneratedArtifact(p);
+    if (isGeneratedArtifact(p)) {
+      generatedPaths.push(p);
+      return false;
+    }
+    return true;
   });
   const out: DiffFile[] = files.map((f) => {
     const path = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
@@ -108,5 +115,5 @@ export function normalizeUnifiedDiff(
     });
     return { path, oldPath, status: statusOf(f), hunks };
   });
-  return { baseRef, headRef, files: out };
+  return { baseRef, headRef, files: out, ...(generatedPaths.length > 0 ? { generatedPaths } : {}) };
 }

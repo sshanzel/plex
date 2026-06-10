@@ -57,18 +57,29 @@ async function computeRulePrevalence(
   const files = await listSourceFiles(repoPath, cap);
   if (files.length === 0) return new Map();
   const hits = new Map<string, number>([...rules].map((r) => [r, 0]));
-  for (const file of files) {
-    let text: string;
-    try {
-      text = await fs.readFile(file, 'utf8');
-    } catch {
-      continue;
-    }
-    const seen = new Set<string>();
-    for (const raw of analyzeSource(file, text)) {
-      if (rules.has(raw.rule) && !seen.has(raw.rule)) {
-        seen.add(raw.rule);
-        hits.set(raw.rule, (hits.get(raw.rule) ?? 0) + 1);
+  // Read in parallel chunks (the parse stays sequential — it's CPU-bound anyway); fully
+  // sequential reads made the scan IO-latency-bound on its 400-file cap.
+  const CHUNK = 32;
+  for (let i = 0; i < files.length; i += CHUNK) {
+    const chunk = files.slice(i, i + CHUNK);
+    const texts = await Promise.all(
+      chunk.map(async (file) => {
+        try {
+          return await fs.readFile(file, 'utf8');
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (let j = 0; j < chunk.length; j++) {
+      const text = texts[j];
+      if (text == null) continue;
+      const seen = new Set<string>();
+      for (const raw of analyzeSource(chunk[j]!, text)) {
+        if (rules.has(raw.rule) && !seen.has(raw.rule)) {
+          seen.add(raw.rule);
+          hits.set(raw.rule, (hits.get(raw.rule) ?? 0) + 1);
+        }
       }
     }
   }

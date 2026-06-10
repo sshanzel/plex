@@ -109,7 +109,8 @@ export function resolveRenameArtifact(line: string): string {
   return line
     .replace(/\{([^{}]*) => ([^{}]*)\}/g, '$2') // brace segments → the new segment
     .replace(/^.* => /, '') // plain "old => new" (no braces left) → the new path
-    .replace(/\/{2,}/g, '/'); // an empty new segment ("{old => }") leaves a doubled slash
+    .replace(/\/{2,}/g, '/') // an empty new segment ("{old => }") leaves a doubled slash
+    .replace(/^\//, ''); // …and a root-position one leaves a leading slash — ids are repo-relative
 }
 
 export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {

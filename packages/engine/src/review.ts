@@ -21,12 +21,13 @@ import {
   getMeta,
   commitsBehind,
   getCoChangeEdges,
+  getCoChangeDegrees,
   getCouplingDegrees,
   getImportEdges,
   getRefEdges,
   type BuildResult,
 } from '@plex/code-graph';
-import { computeNeighborhood } from '@plex/neighborhood';
+import { computeNeighborhood, associationStrength } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
 import { classifyChanges, reviewPlan, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
@@ -390,6 +391,44 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
   }
 }
 
+/**
+ * Direct dependents of files the diff DELETES, read from the graph BEFORE a refresh
+ * removes their nodes. Weighted like the walk's edges (association strength for co-change,
+ * the fixed import/ref base weights), distance 1 — a deleted module's blast is dominated
+ * by its direct importers anyway.
+ */
+async function captureDeletedNeighbors(graphDir: string, deleted: string[]): Promise<NeighborEntry[]> {
+  const db = new CodeGraphDB(graphDir);
+  try {
+    const [co, imp, refs] = await Promise.all([
+      getCoChangeEdges(db, deleted),
+      getImportEdges(db, deleted),
+      getRefEdges(db, deleted),
+    ]);
+    const coDeg = await getCoChangeDegrees(db, [...new Set(co.flatMap((e) => [e.src, e.dst]))]);
+    const deletedSet = new Set(deleted);
+    const best = new Map<string, { score: number; via: Set<NeighborEntry['via'][number]> }>();
+    const add = (dst: string, w: number, via: NeighborEntry['via'][number]): void => {
+      if (deletedSet.has(dst) || w <= 0) return;
+      const cur = best.get(dst) ?? { score: 0, via: new Set<NeighborEntry['via'][number]>() };
+      cur.score = Math.max(cur.score, Math.min(1, w));
+      cur.via.add(via);
+      best.set(dst, cur);
+    };
+    for (const e of co) add(e.dst, associationStrength(e.weight, coDeg.get(e.src) ?? e.weight, coDeg.get(e.dst) ?? e.weight), 'co-change');
+    for (const e of imp) add(e.dst, 0.4, 'import');
+    for (const e of refs) add(e.dst, 0.5, 'precise-ref');
+    return [...best].map(([id, v]) => ({
+      node: { id, label: 'File' as const, props: { path: id } },
+      score: v.score,
+      via: [...v.via],
+      distance: 1,
+    }));
+  } finally {
+    await db.close();
+  }
+}
+
 /** Assemble the review context: diff → neighborhood → deterministic findings → knowledge → brain round. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
@@ -413,10 +452,24 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // opens Kùzu only for the neighborhood + brain below. Only a definite drift (behind > 0)
   // auto-refreshes; an unknown sha (-1) is merely reported.
   let graphStale: GraphStaleness | undefined;
+  let preRefreshDeletedNeighbors: NeighborEntry[] = [];
   {
     const indexedSha = readIndexedSha(p.headShaFile);
     const behind = indexedSha ? await commitsBehind(p.repoPath, indexedSha) : -1;
     if (indexedSha && behind > 0 && opts.autoIndex !== false) {
+      // A COMMITTED deletion's node is DETACH-DELETEd by the refresh below — exactly the
+      // change whose dependents most need surfacing (a deleted module's importers now break).
+      // Capture those dependents from the PRE-refresh graph first (one short extra open,
+      // only on this deletion+stale path; the dogfood review caught this asymmetry — the
+      // uncommitted case kept its node, the committed branch/PR case lost it).
+      const deleted = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
+      if (deleted.length > 0) {
+        try {
+          preRefreshDeletedNeighbors = await captureDeletedNeighbors(p.graphDir, deleted);
+        } catch {
+          /* best-effort — a missing capture degrades to the old (empty) behavior */
+        }
+      }
       const refreshed = indexIsolated(p.repoPath, true);
       graphStale = { indexedSha, behind, refreshed };
     } else if (!indexedSha || behind !== 0) {
@@ -439,6 +492,25 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     couplingDeg = await getCouplingDegrees(db, changedPaths); // for per-finding blast enrichment
   } finally {
     await db.close();
+  }
+
+  // Merge the dependents captured BEFORE the refresh removed the deleted files' nodes —
+  // the walk above couldn't see them. Direct (1-hop) entries, deduped against what the
+  // walk did find, re-sorted and re-capped.
+  if (preRefreshDeletedNeighbors.length > 0) {
+    const have = new Set(nb.neighbors.map((n) => String(n.node.props.path)));
+    const changedSet = new Set(changedPaths);
+    for (const n of preRefreshDeletedNeighbors) {
+      const pth = String(n.node.props.path);
+      if (!have.has(pth) && !changedSet.has(pth)) nb.neighbors.push(n);
+    }
+    nb.neighbors.sort((a, b) => b.score - a.score);
+    nb.neighbors = nb.neighbors.slice(0, opts.config.neighborhood.maxNeighbors);
+    for (const f of diff.files) {
+      if (f.status === 'deleted' && !nb.changed.some((c) => c.file === f.path)) {
+        nb.changed.push({ repo, file: f.path, startLine: 1, endLine: 1 });
+      }
+    }
   }
 
   // Persist a per-file blast map for submit_findings to enrich each finding's `blast` (tuning.md §5):
@@ -523,6 +595,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,
+      ...(diff.generatedPaths?.length
+        ? [
+            `${diff.generatedPaths.length} machine-generated file(s) changed in this diff but are excluded from review (${diff.generatedPaths.join(', ')}). Mention this as a fact; a lockfile change with NO matching manifest edit can be a supply-chain signal worth confirming.`,
+          ]
+        : []),
       ...(graphStale?.refreshed
         ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
         : graphStale

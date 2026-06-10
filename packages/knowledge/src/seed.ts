@@ -40,11 +40,19 @@ export async function seedFromMarkdown(
   provider: EmbeddingProvider | null,
   md: string,
 ): Promise<number> {
-  const items = parseMarkdownPitfalls(md);
-  let added = 0;
-  for (const it of items) {
-    if (await store.hasPitfallTitled(it.title)) continue;
-    const [embedding] = provider ? await provider.embed([`${it.category}: ${it.title}`]) : [undefined];
+  // Dedupe first, embed ONCE as a batch — providers take batches, and one network call
+  // for N pitfalls beats N round-trips on a large plex.md.
+  const seen = new Set<string>();
+  const fresh: ParsedPitfall[] = [];
+  for (const it of parseMarkdownPitfalls(md)) {
+    if (seen.has(it.title) || (await store.hasPitfallTitled(it.title))) continue;
+    seen.add(it.title);
+    fresh.push(it);
+  }
+  if (fresh.length === 0) return 0;
+  const vecs = provider ? await provider.embed(fresh.map((it) => `${it.category}: ${it.title}`)) : [];
+  for (let i = 0; i < fresh.length; i++) {
+    const it = fresh[i]!;
     const pitfall: Pitfall = {
       id: pitfallId(it.title),
       title: it.title,
@@ -55,12 +63,11 @@ export async function seedFromMarkdown(
       confidence: 0.4,
       scope: 'global',
       incidentIds: [],
-      embedding,
+      embedding: vecs[i],
     };
     await store.addPitfall(pitfall);
-    added++;
   }
-  return added;
+  return fresh.length;
 }
 
 /**

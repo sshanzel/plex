@@ -308,27 +308,19 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
         strong.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
       // weak: a CoChange singleton is never created from one window (ADR-06 denoising), but
-      // sub-threshold evidence is no longer FORGOTTEN between windows either. Pairs that
-      // already have a stored CoChange edge accumulate into it; the rest are STAGED in
-      // CoChangePending (a lane read queries never traverse) and PROMOTE to a real edge
-      // when their cross-window total reaches minPairCount — without this, a coupling that
-      // lands one commit per window (e.g. a review-triggered refresh after every commit)
-      // stayed invisible until the next full rebuild. Pending resets on a full rebuild.
-      const weakStored: typeof weak = [];
-      const weakNew: typeof weak = [];
-      for (const p of weak) {
-        const hit = await db.run('MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) RETURN c.cnt AS cnt', { a: p.a, b: p.b });
-        (hit.length > 0 ? weakStored : weakNew).push(p);
-      }
-      await db.insertMany(
-        'MATCH (a:File {id:$a})-[c:CoChange]->(b:File {id:$b}) SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
-        weakStored.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
-      );
+      // sub-threshold evidence is no longer FORGOTTEN between windows either. ALL weak
+      // pairs are STAGED in CoChangePending (a lane read queries never traverse); the
+      // promotion below immediately folds staged weight onto pairs that already have a
+      // real CoChange edge (the `nowStored` arm — same accumulate arithmetic, same window)
+      // and PROMOTES the rest once their cross-window total reaches minPairCount. Without
+      // the staging, a coupling landing one commit per window (e.g. a review-triggered
+      // refresh after every commit) stayed invisible until the next full rebuild. Pending
+      // resets on a full rebuild.
       await db.insertMany(
         'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[p:CoChangePending]->(b) ' +
           'ON CREATE SET p.weight = $weight, p.cnt = $cnt ' +
           'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt',
-        weakNew.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
+        weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
       // Promote: staged pairs that crossed the threshold, plus any pending residue for a
       // pair that has since gained a real edge (its evidence belongs on the edge now).

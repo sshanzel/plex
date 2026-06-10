@@ -99,22 +99,23 @@ export async function retrieveRelevant(
 ): Promise<RetrievedPitfall[]> {
   const pitfalls = (await store.pitfalls()).filter((p) => inScope(p, repo));
   if (pitfalls.length === 0 || queryText.trim() === '') return [];
-  const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
-  const vectorless = pitfalls.filter((p) => !p.embedding || p.embedding.length === 0);
   let q: number[] | undefined;
   try {
     [q] = await provider.embed([queryText]);
   } catch {
     q = undefined; // transient provider failure → lexical for everything, never a failed review
   }
-  const scored: RetrievedPitfall[] = [];
-  if (q) {
-    const qv = q;
-    scored.push(...embedded.map((pitfall) => ({ pitfall, score: cosineSimilarity(qv, pitfall.embedding!) })));
-  } else {
-    const lex = lexicalScores(queryText, embedded);
-    scored.push(...embedded.map((pitfall, i) => ({ pitfall, score: lex[i]! })));
+  if (!q) {
+    // Outage path: ONE lexical pass over the whole in-scope corpus — scoring embedded and
+    // vectorless pitfalls against separate IDF bases would make the merged ranking
+    // apples-to-oranges.
+    const lex = lexicalScores(queryText, pitfalls);
+    return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore);
   }
+  const qv = q;
+  const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
+  const vectorless = pitfalls.filter((p) => !p.embedding || p.embedding.length === 0);
+  const scored: RetrievedPitfall[] = embedded.map((pitfall) => ({ pitfall, score: cosineSimilarity(qv, pitfall.embedding!) }));
   const lex = lexicalScores(queryText, vectorless);
   scored.push(...vectorless.map((pitfall, i) => ({ pitfall, score: lex[i]! })));
   return rankAndSlim(scored, topK, minScore);

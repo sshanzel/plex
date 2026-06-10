@@ -75,14 +75,15 @@ best-effort: a non-git dir simply has no co-change layer.
    whole-repo TS parse.
 4. **Co-change merges only the new commits** (`readCommits(…, sinceRef)`), aggregated with
    `minPairCount: 1` then split: pairs reaching the threshold **within the window**
-   create-or-accumulate (`MERGE … ON CREATE/ON MATCH`); sub-threshold pairs accumulate
-   into already-stored pairs, and the rest are **staged in `CoChangePending`** — a lane
-   read queries never traverse — where they accumulate **across windows** and PROMOTE to a
-   real `CoChange` edge once their total `cnt` reaches `minPairCount`. A `CoChange`
-   singleton is still never created from one window (ADR-06 denoising), but a coupling
-   landing one commit per window (a review-triggered refresh after every commit) is no
-   longer forgotten. Pending resets on a full rebuild. No epoch bookkeeping: the age clamp
-   gives new commits full recency, and decay re-baselines on every full build (ADR-26).
+   create-or-accumulate (`MERGE … ON CREATE/ON MATCH`); ALL sub-threshold pairs are
+   **staged in `CoChangePending`** — a lane read queries never traverse — and the same
+   update then promotes (a) staged pairs whose cross-window `cnt` reached `minPairCount`
+   and (b) staged residue for pairs that already have a real edge (folded onto the edge,
+   same accumulate arithmetic, same window). A `CoChange` singleton is still never created
+   from one window (ADR-06 denoising), but a coupling landing one commit per window (a
+   review-triggered refresh after every commit) is no longer forgotten. Pending resets on
+   a full rebuild. No epoch bookkeeping: the age clamp gives new commits full recency, and
+   decay re-baselines on every full build (ADR-26).
 No stored sha / undiffable sha (force-push) ⇒ `FullRebuildRequired` — callers fall back to
 `buildCodeGraph`. Worktree note (ADR-32): a secondary worktree's graph is seeded by
 *copying* the base graph then running this incremental path — the copy carries the BASE

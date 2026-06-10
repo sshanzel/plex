@@ -29,6 +29,10 @@ describe('resolveRenameArtifact', () => {
   it('handles an empty new segment (a directory level removed)', () => {
     expect(resolveRenameArtifact('packages/{nested => }/file.ts')).toBe('packages/file.ts');
   });
+
+  it('a root-position emptied segment leaves no leading slash (ids are repo-relative)', () => {
+    expect(resolveRenameArtifact('{src => }/file.ts')).toBe('file.ts');
+  });
 });
 
 const opts = { maxCommitFiles: 25, halfLifeDays: 365, minPairCount: 1, nowSec: 1_000_000 };
