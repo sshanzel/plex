@@ -77,6 +77,8 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 
 `awareness` findings are never auto-accepted (ADR-31; only explicit `acknowledge`/`reject`). Every exit returns a `reason` so `accepted: 0` is diagnosable: no open findings / no prior round (the split-brain tell) / head unresolvable / head unchanged / nothing added / N files changed but none matched. The same `recordFixAccepts` runs inline on the **next review** (step 8 above), so a standalone install closes the accept-loop with no responder (ADR-36).
 
+**Learning idempotency.** A finding feeds the knowledge base at most once: `submitVerdict` skips `learnIncident` when an accept verdict for the same `findingId` is already logged, and projects every explicit verdict onto the brain `Finding.outcome` (accept→`accepted`, reject→`rejected`, waive→`waived`, acknowledge→`acknowledged`) so a dispositioned finding leaves `priorFindings` and can't be re-accepted by later fix inference.
+
 ## Invariants & gotchas
 
 - **ADR-02**: nothing here ever feeds the reviewer prior reasoning — brain state, comments, and the audit log are facts/records only.

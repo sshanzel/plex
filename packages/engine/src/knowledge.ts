@@ -23,7 +23,7 @@ import {
   type ConsolidateResult,
   type Promotions,
 } from '@plex/knowledge';
-import { recordVerdict, type VerdictInput, type StoredVerdict } from './verdicts';
+import { recordVerdict, readVerdicts, type VerdictInput, type StoredVerdict } from './verdicts';
 import { Brain } from './brain';
 import { logAudit } from './audit';
 
@@ -194,8 +194,17 @@ export async function submitVerdict(
       }
     }
   }
+  // Learning-side idempotency: a re-accept of an already-accepted finding (an agent retry, or
+  // reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a second
+  // incident — duplicated evidence inflates the pitfall's Beta posterior. Checked BEFORE the
+  // append below so the new verdict can't match itself; the verdict line itself is still
+  // recorded (the log is append-only bookkeeping).
+  const alreadyAccepted =
+    input.kind === 'accept' &&
+    input.findingId != null &&
+    (await readVerdicts(repoPath, config)).some((v) => v.kind === 'accept' && v.findingId === input.findingId);
   const stored = await recordVerdict(repoPath, enriched, config);
-  if (input.kind === 'accept') {
+  if (input.kind === 'accept' && !alreadyAccepted) {
     const repoName = path.basename(path.resolve(repoPath));
     // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
     // similarity — so first-principles accepts (the common case) reinforce knowledge too.
@@ -218,6 +227,15 @@ export async function submitVerdict(
         findingId: input.findingId, kind: input.kind, scope: input.scope,
         title: input.title, file: input.file, line: input.line, ts: stored.ts,
       });
+      // Project the disposition onto the brain Finding so it leaves `priorFindings`: an
+      // explicitly dispositioned finding must not be re-matched by later fix inference
+      // (reconcile / the next review), which would re-accept it and learn the same evidence
+      // twice. recordFixAccepts overwrites accept→'fixed' right after — same family, finer term.
+      const outcomeByKind: Record<string, string> = {
+        accept: 'accepted', reject: 'rejected', waive: 'waived', acknowledge: 'acknowledged',
+      };
+      const projected = outcomeByKind[input.kind];
+      if (projected) await brain.markFindingOutcome(input.findingId, projected);
     } finally {
       if (!sharedBrain) await brain.close();
     }

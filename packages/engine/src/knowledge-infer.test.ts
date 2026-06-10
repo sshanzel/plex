@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveConfig } from '@plex/core';
 import { KnowledgeStore, FakeEmbeddingProvider } from '@plex/knowledge';
-import { inferPitfallId } from './knowledge';
+import { inferPitfallId, submitVerdict } from './knowledge';
 
 const base = {
   trigger: 't',
@@ -54,6 +54,19 @@ describe('inferPitfallId', () => {
 
     expect(await inferPitfallId(config, 'websocket reconnect backoff is unbounded')).toBeUndefined();
     expect(await inferPitfallId(config, undefined)).toBeUndefined();
+  });
+
+  it('re-accepting the same finding records ONE incident (learning-side idempotency)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'infer-idem-'));
+    const dataDir = join(dir, 'data');
+    const knowledgeDir = join(dir, 'knowledge');
+    const config = resolveConfig({ dataDir, knowledgeDir });
+    const input = { findingId: 'f1', kind: 'accept' as const, title: 'unbounded retry loop in poller', file: 'a.ts', line: 3 };
+
+    await submitVerdict(dir, input, config); // no target → no brain open (pure file I/O)
+    await submitVerdict(dir, input, config); // agent retry / reconcile re-match
+    const incidents = await new KnowledgeStore(knowledgeDir).incidents();
+    expect(incidents.length).toBe(1);
   });
 
   it('respects repo scoping (ADR-21): a repo-scoped pitfall only matches its origin repo', async () => {
