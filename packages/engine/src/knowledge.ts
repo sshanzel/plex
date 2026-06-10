@@ -1,10 +1,20 @@
 import path from 'node:path';
-import { safeEmbed, type ReviewerConfig, type CodeLocation, type Finding, type IncidentOutcome } from '@plex/core';
+import {
+  safeEmbed,
+  cosineSimilarity,
+  cosineBackground,
+  adaptiveFloor,
+  type ReviewerConfig,
+  type CodeLocation,
+  type Finding,
+  type IncidentOutcome,
+} from '@plex/core';
 import {
   KnowledgeStore,
   createEmbeddingProvider,
   retrieveRelevant,
   retrieveRelevantLexical,
+  lexicalScores,
   seedFromMarkdown,
   recordIncident,
   consolidatePitfalls,
@@ -75,6 +85,62 @@ export async function seedKnowledge(config: ReviewerConfig, md: string): Promise
   return seedFromMarkdown(knowledgeStore(config), createEmbeddingProvider(config.embedding), md);
 }
 
+// Floors for retroactively linking an accepted finding to a pitfall. Conservative on purpose:
+// a wrong link feeds one pitfall's confidence with another issue's evidence, which is worse
+// than learning nothing. The embed floor adapts UPWARD on anisotropic models (tuning.md §6);
+// lexical scores run lower than cosine, hence the lower bar.
+const INFER_EMBED_FLOOR = 0.7;
+const INFER_LEXICAL_FLOOR = 0.45;
+
+/**
+ * Best-effort: find the pitfall an accepted finding instantiates, so the accept reinforces it
+ * (ADR-10). Most agent findings are first-principles and carry no pitfallId — without this, an
+ * explicit "this is a real issue" verdict taught the knowledge base nothing. Embedding cosine
+ * where vectors exist; lexical IDF overlap for vectorless pitfalls (and key-less installs).
+ * Returns undefined on any failure — inference is enrichment, never a verdict blocker.
+ */
+export async function inferPitfallId(
+  config: ReviewerConfig,
+  title: string | undefined,
+  repo?: string,
+): Promise<string | undefined> {
+  if (!title?.trim()) return undefined;
+  try {
+    const pitfalls = (await knowledgeStore(config).pitfalls()).filter(
+      (p) => (p.scope ?? 'global') !== 'repo' || p.repo === repo,
+    );
+    if (pitfalls.length === 0) return undefined;
+    const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
+    const provider = createEmbeddingProvider(config.embedding);
+    let judgedSemantically = false;
+    if (provider && embedded.length > 0) {
+      const q = (await safeEmbed(provider, [title]))?.[0];
+      if (q) {
+        judgedSemantically = true;
+        const floor = adaptiveFloor(INFER_EMBED_FLOOR, cosineBackground(embedded.map((p) => p.embedding!)));
+        let best: { id: string; score: number } | undefined;
+        for (const p of embedded) {
+          const score = cosineSimilarity(q, p.embedding!);
+          if (score >= floor && (best == null || score > best.score)) best = { id: p.id, score };
+        }
+        if (best) return best.id;
+      }
+    }
+    // Lexical pass over what the semantic pass could NOT judge (vectorless pitfalls; everything
+    // when no provider) — never second-guess a semantic "not similar" with a keyword match.
+    const candidates = judgedSemantically ? pitfalls.filter((p) => !p.embedding || p.embedding.length === 0) : pitfalls;
+    if (candidates.length === 0) return undefined;
+    const lex = lexicalScores(title, candidates);
+    let bi = -1;
+    for (let i = 0; i < candidates.length; i++) {
+      if (lex[i]! >= INFER_LEXICAL_FLOOR && (bi < 0 || lex[i]! > lex[bi]!)) bi = i;
+    }
+    return bi >= 0 ? candidates[bi]!.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
@@ -130,10 +196,15 @@ export async function submitVerdict(
   }
   const stored = await recordVerdict(repoPath, enriched, config);
   if (input.kind === 'accept') {
+    const repoName = path.basename(path.resolve(repoPath));
+    // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
+    // similarity — so first-principles accepts (the common case) reinforce knowledge too.
+    const pitfallId = input.pattern ?? (await inferPitfallId(config, input.title, repoName));
     await learnIncident(config, {
+      repo: repoName,
       file: input.file,
       snippet: input.title,
-      pitfallId: input.pattern,
+      pitfallId,
       outcome: 'accepted',
     });
   }
