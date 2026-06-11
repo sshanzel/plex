@@ -84,7 +84,7 @@ Downstream users install via a **plugin — Claude Code *or* Codex** — not by 
 
 ```
 plugin/                                     # the "plex" plugin — Claude AND Codex read this one dir
-  .claude-plugin/plugin.json               # Claude manifest (NO version → git-SHA versioning; a push = an update)
+  .claude-plugin/plugin.json               # Claude manifest (versioned — bumped in lockstep by `pnpm release`)
   .codex-plugin/plugin.json                # Codex manifest → skills: ./codex/skills/
   .mcp.json                                # launches the engine for BOTH: npx -y -p @sshanzel/plex@<pinned> plex-mcp
   commands/review.md                        # Claude: the /plex:review command

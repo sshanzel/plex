@@ -52,6 +52,7 @@ const next =
   : die(`invalid bump "${bumpArg}" (expected patch|minor|major|X.Y.Z)`);
 const tag = `v${next}`;
 const mcpPath = `${ROOT}plugin/.mcp.json`;
+const claudePluginPath = `${ROOT}plugin/.claude-plugin/plugin.json`;
 const pinRe = /@sshanzel\/plex@[\d.]+/g;
 
 console.log(`\n▶ Release ${pkg.name}  ${cur} → ${next}  (tag ${tag})${dryRun ? '  [DRY RUN]' : ''}\n`);
@@ -64,6 +65,8 @@ let tagExists = false;
 try { cap(`git rev-parse -q --verify refs/tags/${tag}`); tagExists = true; } catch { /* absent = good */ }
 if (tagExists) die(`tag ${tag} already exists`);
 if (!pinRe.test(readFileSync(mcpPath, 'utf8'))) die(`no @sshanzel/plex@<version> pin found in plugin/.mcp.json`);
+const claudePlugin = JSON.parse(readFileSync(claudePluginPath, 'utf8'));
+if (!claudePlugin.version) die(`no version field in plugin/.claude-plugin/plugin.json`);
 
 // --- gates (what CI runs) ---
 if (skipTests) console.log('⚠ --skip-tests: skipping typecheck/test/build gates\n');
@@ -74,14 +77,16 @@ if (dryRun) {
   process.exit(0);
 }
 
-// --- bump BOTH in lockstep ---
+// --- bump ALL THREE in lockstep ---
 pkg.version = next;
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 writeFileSync(mcpPath, readFileSync(mcpPath, 'utf8').replace(pinRe, `@sshanzel/plex@${next}`));
-console.log(`\n✓ bumped package.json + plugin/.mcp.json pin → ${next}\n`);
+claudePlugin.version = next;
+writeFileSync(claudePluginPath, JSON.stringify(claudePlugin, null, 2) + '\n');
+console.log(`\n✓ bumped package.json + plugin/.mcp.json pin + plugin/.claude-plugin/plugin.json → ${next}\n`);
 
 // --- commit + tag (local) ---
-sh('git add package.json plugin/.mcp.json');
+sh('git add package.json plugin/.mcp.json plugin/.claude-plugin/plugin.json');
 sh(`git commit -m "chore(release): ${tag}"`);
 sh(`git tag -a ${tag} -m "${tag}"`);
 
