@@ -77,7 +77,7 @@ export async function postFindingsToPr(
   ranked: RankedFinding[],
   priorFindings: BrainFinding[],
   round: number,
-): Promise<{ posted: number } | null> {
+): Promise<{ posted: number } | { error: string }> {
   try {
     const diff = await getPrDiff({ pr, cwd });
     const payload = buildReviewPayload(ranked, {
@@ -89,7 +89,9 @@ export async function postFindingsToPr(
     if (payload.count === 0) return { posted: 0 };
     await postPrReview(cwd, pr, payload.body, payload.comments);
     return { posted: payload.count };
-  } catch {
-    return null; // a posting failure must never break the review
+  } catch (e) {
+    // Log to stderr so the failure is visible in MCP server output without breaking the review.
+    process.stderr.write(`[plex] auto-comment failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    return { error: e instanceof Error ? e.message : String(e) };
   }
 }

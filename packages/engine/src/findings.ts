@@ -56,7 +56,7 @@ export async function rankReviewFindings(
   config: ReviewerConfig,
   submitted: SubmittedFinding[],
   opts: RankReviewOptions = {},
-): Promise<RankedFinding[]> {
+): Promise<{ ranked: RankedFinding[]; autoComment?: { posted: number } | { error: string } }> {
   const repo = path.basename(path.resolve(repoPath));
   const agent: Finding[] = submitted.map((s, i) => ({
     id: `agent:${i}`,
@@ -132,8 +132,9 @@ export async function rankReviewFindings(
 
   // Auto-comment (ADR-34): when reviewing a PR and opted in, post the ranked stream as one
   // GitHub review — deduped against prior rounds. Best-effort: posting never breaks a review.
+  let autoComment: { posted: number } | { error: string } | undefined;
   if (config.autoComment && opts.source === 'pr' && opts.pr != null) {
-    await postFindingsToPr(repoPath, config, opts.pr, ranked, priorFindings, round);
+    autoComment = await postFindingsToPr(repoPath, config, opts.pr, ranked, priorFindings, round);
   }
   await logAudit(repoPath, config, {
     type: 'findings_submitted',
@@ -144,5 +145,5 @@ export async function rankReviewFindings(
     findings: ranked.map(auditFinding),
   });
 
-  return ranked;
+  return { ranked, ...(autoComment !== undefined ? { autoComment } : {}) };
 }

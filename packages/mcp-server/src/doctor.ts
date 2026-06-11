@@ -25,6 +25,8 @@ export interface DoctorReport {
   embeddings: string;
   knowledgeDir: string;
   dataDir: string;
+  /** Whether auto-comment is enabled in the effective config (opt-in: PLEX_AUTO_COMMENT or config.autoComment). */
+  autoComment: boolean;
   /**
    * Repo data dirs whose `repo-path` file points to a path no longer on disk.
    * Present only when orphans exist. Remove them with `plex gc` (or manually).
@@ -119,6 +121,7 @@ export function buildDoctorReport(args: {
       ? 'A NEWER build is on disk than this process loaded — reconnect Plex (/mcp → reconnect plex, or restart the session) so a fresh process picks it up. A long-lived stdio server keeps running its loaded build until then.'
       : 'Up to date — running the latest build on disk.',
     embeddings: config.embedding.provider,
+    autoComment: config.autoComment,
     knowledgeDir: config.knowledgeDir,
     dataDir: config.dataDir || '(centralized: ~/.plex/repos/<id>)',
     ...(orphanedRepos && orphanedRepos.length > 0 ? { orphanedRepos } : {}),

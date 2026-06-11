@@ -198,15 +198,16 @@ server.tool(
   },
   (a) =>
     guard(
-      async () => ({
-        ranked: await rankReviewFindings(a.repoPath ?? process.cwd(), config, a.findings as SubmittedFinding[], {
+      async () => {
+        const result = await rankReviewFindings(a.repoPath ?? process.cwd(), config, a.findings as SubmittedFinding[], {
           source: a.source,
           mode: a.mode,
           baseRef: a.baseRef,
           pr: a.pr,
           includeDeterministic: a.includeDeterministic,
-        }),
-      }),
+        });
+        return { ranked: result.ranked, ...(result.autoComment !== undefined ? { autoComment: result.autoComment } : {}) };
+      },
       'submit_findings',
     ),
 );

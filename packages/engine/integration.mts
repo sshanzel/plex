@@ -705,7 +705,7 @@ test('semantic-waiver', 'engine: a semantic waiver suppresses the same issue nex
 
     // Next run: the same issue (same text → identical fake vector → cosine 1.0) is suppressed,
     // and an unrelated finding is NOT.
-    const ranked = await rankReviewFindings(
+    const { ranked } = await rankReviewFindings(
       repo,
       config,
       [
@@ -766,7 +766,7 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
     git(repo, 'add', '-A');
 
     const config = resolveConfig({ dataDir: '.plex' });
-    const ranked = await rankReviewFindings(
+    const { ranked } = await rankReviewFindings(
       repo,
       config,
       [{ title: 'Possible null deref', severity: 'bug', confidence: 0.7, file: 'src/a.ts', startLine: 3, source: 'first-principles' }],
@@ -781,7 +781,7 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
     // from the stream — the mechanism the reviewer uses instead of emitting a contradicting nit.
     const det = ranked.find((r) => r.tags?.includes('no-debugger'))!;
     await recordVerdict(repo, { findingId: 'det-fp', kind: 'waive', scope: 'line', file: det.location.file, line: det.location.startLine, title: det.title }, config);
-    const reranked = await rankReviewFindings(
+    const { ranked: reranked } = await rankReviewFindings(
       repo,
       config,
       [{ title: 'Possible null deref', severity: 'bug', confidence: 0.7, file: 'src/a.ts', startLine: 3, source: 'first-principles' }],
