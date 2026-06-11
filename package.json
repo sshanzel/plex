@@ -55,6 +55,7 @@
     "test:worktree": "pnpm build && node scripts/worktree-seed-check.mjs",
     "test:cochange": "pnpm build && node scripts/cochange-check.mjs",
     "test:deletion": "pnpm build && node scripts/deleted-radius-check.mjs",
+    "test:agent-tools": "node scripts/check-agent-tools.mjs",
     "test:e2e": "pnpm test:brain && node scripts/worktree-seed-check.mjs && node scripts/cochange-check.mjs && node scripts/deleted-radius-check.mjs",
     "mcp": "tsx packages/mcp-server/src/index.ts",
     "plex": "tsx packages/cli/src/index.ts",
