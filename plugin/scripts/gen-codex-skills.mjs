@@ -41,6 +41,62 @@ facts; you provide the reasoning.
   blast radius, deterministic checks, accumulated pitfalls, and the round-aware signals that are
   the entire point. If a Plex call genuinely errors, report the exact error and stop; never
   silently substitute a manual review.
+
+**Intense mode:** If the user's request includes "intense" (or synonyms: thorough, critical,
+intensive), follow the standard procedure through step 2 to collect the grounding context, then
+enter the **Intense mode** section below instead of step 3. In Codex, intense mode runs
+sequentially through each concern rather than fanning out sub-agents.
+`;
+
+// Codex-neutral replacement for the "## 6. Intense mode" section — no Agent tool in Codex,
+// so it becomes a sequential structured sweep through each concern in order.
+const CODEX_INTENSE_SECTION = `## 6. Intense mode (Codex: sequential concern sweep)
+
+Enter this section when the user's request includes "intense" (or synonyms: thorough, critical,
+intensive). You have already called \`get_review_context\` in step 2 — do NOT call it again.
+
+Since Codex does not support parallel sub-agents, run each concern sweep **in order**,
+collecting findings as you go. Use the \`Read\` tool to inspect actual file contents at every
+step. Apply the full Plex context (blast radius, changed symbols, knowledge pitfalls,
+\`unexplainedChanges\`, \`deterministic\`) through the lens of each concern.
+
+Check \`reviewPlan.surface\`. If surface < 30, skip the dedicated Test Coverage sweep and fold
+it into the Correctness sweep.
+
+### Sweep 1 — Security
+
+Hunt for: injection (SQL, command, path traversal, template), auth/authz gaps, hardcoded
+secrets, trust boundary violations (untrusted data flowing to privileged operations), unsafe
+deserialization, CORS/CSP relaxations. Use blast radius to trace where changed data flows into
+security-relevant coupled files.
+
+### Sweep 2 — Correctness
+
+Hunt for: null/undefined mishandling (missing guards, hidden non-null assertions), missing
+\`await\`, unhandled promise rejections, races between concurrent mutations, empty \`catch\`
+blocks swallowing errors, unsafe \`as\` casts, off-by-ones, inverted conditions, edge cases
+(empty collections, boundary values, zero/negative). Use blast radius to check whether changed
+exports/signatures break coupled-file consumers.
+
+### Sweep 3 — Test Coverage
+
+Hunt for: new code paths with no test update, missing edge-case tests (null, empty, error and
+async failure paths), changed behavior with stale tests that still pass, tests made vacuous by
+the change, async paths covered only by synchronous tests. Use blast radius to find test files.
+
+### Sweep 4 — Line-by-Line
+
+Read every changed hunk carefully in ±20-line context AND blast-radius coupling points. Flag
+anything the previous sweeps may have missed at a micro level: subtly wrong variable name,
+condition almost right but inverted in one edge case, comment contradicting the code, changed
+default that silently breaks callers. Cross-reference \`unexplainedChanges\` against the hunk.
+
+---
+
+After all four sweeps, **deduplicate** (same file + overlapping line range ±5 + similar title →
+keep higher-confidence version), waive false-positive deterministic findings, then call
+\`mcp__plex__submit_findings\` ONCE with the merged array. Display using the standard ranked
+table. Add a one-line note that this was an intense review and list the four concerns covered.
 `;
 
 const banner = (src) =>
@@ -53,10 +109,12 @@ const written = [];
 {
   const name = 'plex-review';
   const description =
-    'Run a fresh-context, unbiased Plex code review of the current changes — grounded in the blast-radius code graph, deterministic checks, and accumulated review knowledge via the plex MCP. Use when the user asks to review a diff/branch/PR with Plex, or when a unit of work is complete and ready for review (a finished feature/branch, opening a PR, before a push). On-demand, not after every edit — a full review takes minutes.';
+    'Run a fresh-context, unbiased Plex code review of the current changes — grounded in the blast-radius code graph, deterministic checks, and accumulated review knowledge via the plex MCP. Use when the user asks to review a diff/branch/PR with Plex, or when a unit of work is complete and ready for review (a finished feature/branch, opening a PR, before a push). On-demand, not after every edit — a full review takes minutes. Include "intense" in the request to run a sequential concern sweep (Security → Correctness → Test Coverage → Line-by-Line) for high-stakes or large changes.';
   let body = stripFrontmatter(readFileSync(join(ROOT, 'agents', 'plex-reviewer.md'), 'utf8'));
   // Replace the whole Claude-specific "## 0. Load the Plex tools FIRST …" section up to the next header.
   body = body.replace(/## 0\. Load the Plex tools FIRST[\s\S]*?(?=\n## )/, CODEX_SECTION_0);
+  // Replace the "## 6. Intense mode" section (sub-agent version) with the sequential Codex version.
+  body = body.replace(/## 6\. Intense mode[\s\S]*?(?=\n## |$)/, CODEX_INTENSE_SECTION);
   body = adapt(body);
   const dir = join(OUT, name);
   mkdirSync(dir, { recursive: true });

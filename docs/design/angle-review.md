@@ -1,8 +1,8 @@
-# Design note — angle-based sub-agent review
+# Design note — intense mode (concern-focused sub-agent review)
 
-**Status:** planned. The coupling-cluster primitives it relies on (`partitionByCoupling`,
-`reviewPlan`) are already built; the orchestration (spawning sub-agents per angle) is the next
-step. Promote to an ADR when the first angle agent lands.
+**Status:** implemented. Shipped as `intense` mode inside `plex-reviewer` — invoked with
+`/plex:review intense` or by including "intense" (or: thorough, critical, intensive) in the
+review request.
 
 **Supersedes:** `docs/design/parallel-review.md` (parallel-by-coupling-cluster, retired — the
 cluster-fan-out never fired in practice because real changes are tightly coupled; a single
@@ -16,60 +16,64 @@ blob, so the guardrail kept choosing `single`. The gain was theoretical; the cos
 (orchestration overhead, context fragmentation across agents).
 
 The actual bottleneck is not *how many files* a reviewer sees — it's *how many concerns* a
-single pass has to hold at once: security, correctness, performance, and style have different
-attention patterns. An agent optimizing for all of them at once does each one shallowly.
+single pass has to hold at once: security, correctness, test coverage, and line-by-line scrutiny
+have different attention patterns. An agent optimizing for all of them at once does each one
+shallowly.
 
-## Approach: sub-agents per review angle
+## Approach: sub-agents per concern
 
-Spawn one sub-agent per review *angle* — each running a single focused pass — rather than one
-sub-agent per file cluster.
+Spawn one sub-agent per concern — each running a single focused pass over the **same full Plex
+context** — rather than one sub-agent per file cluster.
 
-Candidate angles (to be refined as we observe what a single-pass reviewer misses):
-
-| Angle | Focus |
+| Concern | Focus |
 |---|---|
-| Correctness | Logic bugs, edge cases, error handling, race conditions |
-| Security | Trust boundaries, input validation, auth, secrets |
-| Performance | Hot paths, N+1, allocations, unnecessary re-computation |
-| Contracts | API surface, breaking changes, type invariants, schema drift |
+| Security | Trust boundaries, injection, auth/authz, secrets, deserialization, CORS/CSP |
+| Correctness | Logic bugs, null/undefined, async errors, error handling, type safety, edge cases |
+| Test Coverage | Untested paths, missing edge-case tests, dead tests, async coverage gaps |
+| Line-by-Line | Careful hunk-by-hunk reading + blast-radius contract breakage at a micro level |
 
-Not every angle fires on every change — a config-only diff doesn't need a performance angle.
-The orchestrator decides which angles are relevant from the diff type + surface.
+## Key invariants
 
-## How `reviewPlan` metadata is reused
+**`get_review_context` is called once by the orchestrator (the main `plex-reviewer` agent).**
+Sub-agents receive the full context embedded in their prompt. Sub-agents do NOT call any Plex
+MCP tools — doing so would bump the PR brain round, corrupt round tracking, and cause duplicate
+blast-radius/staleness work.
 
-`reviewPlan` (pure, `@plex/findings`) is no longer used as a parallelization gate. Its output
-is repurposed as **scoping metadata** for angle agents:
+**All sub-agents receive the full Plex context.** Blast radius, changed symbols, knowledge
+pitfalls, `unexplainedChanges`, `openComments`, `priorRounds`, and `deterministic` findings are
+not exclusive to any one concern. Each sub-agent applies them through its own lens — a security
+sub-agent uses blast radius to trace trust-boundary violations; a correctness sub-agent uses it
+to check whether coupled-file consumers broke.
 
-**`units[].files`** — the coupling clusters (union-find over co-change + import edges). Each
-angle agent receives its assigned cluster as a "primary focus" list alongside the blast radius —
-rather than 20 files with no grouping, it sees which files move together and can reason about
-them as a subsystem. A high-`surface` change with multiple clusters may spawn an angle agent
-per cluster × angle, but the default is one instance of each angle over the whole diff.
+**`submit_findings` is called once by the orchestrator.** The orchestrator deduplicates across
+the four findings arrays (same file + overlapping line range ±5 + similar title → keep
+highest-confidence version) before calling submit. This prevents the same finding appearing four
+times and inflating the ranking budget.
 
-**Cross-cluster edges** — file pairs that appear in coupling edges *between* clusters are
-integration seams: a change in one cluster that can affect another. These surface as a dedicated
-"integration" angle (or are fed as annotated context to the correctness angle). This is the
-finding a per-cluster split would sever — here it becomes a first-class concern instead.
+**Surface threshold.** If `reviewPlan.surface < 30`, the test-coverage sub-agent is folded into
+the correctness sub-agent (3 agents instead of 4). Tiny diffs rarely have meaningful coverage
+gaps that need a dedicated pass.
 
-**`surface`** (changed symbols + blast-radius nodes) — proxy for review complexity. Low surface
-(< ~150) → skip the fan-out, a single pass is faster. High surface → spawn the angle fleet.
-The threshold mirrors the retired parallel-review guardrail.
+## How `reviewPlan` metadata is used
+
+`reviewPlan` (pure, `@plex/findings`) is no longer used as a parallelization gate. Its `surface`
+field serves as the threshold for folding the test-coverage agent (< 30). The `units[].files`
+coupling clusters are available in the context but not used as sub-agent scope boundaries —
+concern separation (not file-cluster separation) is the partitioning axis.
 
 ## Codex
 
-Codex does not support sub-agents. The `plex-review` Codex skill runs a single sequential pass.
-To compensate, its instructions are explicit and structured: it steps through each angle in
-order, naming what to look for at each step, so the model doesn't have to decide scope on the
-fly. The result is a deterministic, auditable sweep rather than open-ended "review this diff."
-The angle list and their focal questions are embedded directly in the skill body.
+Codex does not support sub-agents. The `plex-review` Codex skill (generated from
+`plex-reviewer.md` by `scripts/gen-codex-skills.mjs`) replaces the parallel fan-out with a
+sequential structured sweep: Security → Correctness → Test Coverage → Line-by-Line, each as a
+labeled section the model steps through in order. The result is a deterministic, auditable sweep
+rather than open-ended "review this diff."
 
 ## What does NOT change
 
-- `reviewPlan` / `partitionByCoupling` stays in `@plex/findings` — same code, repurposed role.
-- The single-reviewer path (`plex-reviewer` agent) is unchanged and remains the default for
-  small or moderately-sized changes.
-- The blast radius, deterministic findings, and knowledge retrieval are still pre-assembled by
-  `get_review_context` — angle agents receive grounding as facts, never re-call the context tool.
-- `submit_findings` is still a single consolidated call — the orchestrator merges and deduplicates
-  across angles before submitting.
+- The standard single-pass `plex-reviewer` path is unchanged — it remains the default.
+- Blast radius, deterministic findings, and knowledge retrieval are still pre-assembled by
+  `get_review_context` — sub-agents receive grounding as facts, never re-call the context tool.
+- `submit_findings` is still a single consolidated call.
+- `reviewPlan` / `partitionByCoupling` stays in `@plex/findings` — same code, `surface` field
+  repurposed as an agent-count threshold.
