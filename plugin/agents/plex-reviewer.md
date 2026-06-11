@@ -189,11 +189,11 @@ Prompt template:
 > **Context from Plex (do NOT call any Plex MCP tools — calling them would corrupt the PR brain round):**
 > [same context embedding]
 >
-> Use the `Read` tool to read every changed hunk in full context (±20 lines around each change) AND the blast-radius coupled files at their coupling points.
+> Use the `Read` tool to read every changed hunk in full context (±20 lines around each change) AND the blast-radius coupled files at their coupling points. **Skip test files** — a dedicated Test Coverage sub-agent handles those.
 >
 > Approach:
-> - Read each changed line carefully. For every changed export, function, or type, read the blast-radius coupled files to check whether the contract they relied on still holds.
-> - Flag anything the other reviewers (Security, Correctness, Test Coverage) may have missed at a micro level — a subtly wrong variable name, a condition that's almost right but inverted in one case, a comment that contradicts the code, a changed default that silently breaks callers.
+> - Read each changed line carefully. For every changed export, function, or type, read the blast-radius coupled non-test files to check whether the contract they relied on still holds.
+> - Flag anything the Security and Correctness reviewers may have missed at a micro level — a subtly wrong variable name, a condition that's almost right but inverted in one case, a comment that contradicts the code, a changed default that silently breaks callers.
 > - Cross-reference `unexplainedChanges` against the diff hunk context — if an unexplained region looks like a stale copy-paste or accidental change, flag it.
 >
 > Return a **raw JSON array** using the same schema as the Security sub-agent.
