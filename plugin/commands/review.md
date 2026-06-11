@@ -1,5 +1,6 @@
 ---
 description: Run a fresh, unbiased Plex review of the current change (or a named branch/PR).
+argument-hint: "[--pr <n> | --branch <base> | intense]"
 ---
 
 Run a **Plex** code review of the current change — an unbiased, fresh-context review grounded
