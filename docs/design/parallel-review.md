@@ -1,6 +1,9 @@
 # Design note — parallel (fan-out) review, gated by a coupling guardrail
 
-**Status:** proposed. The **guardrail + partition** (the make-or-break) is built as a pure, tested primitive (`packages/findings/src/review-plan.ts`); the orchestration (subagent/Workflow fan-out) and the MCP wiring are deferred. Promote to an ADR when the orchestration lands.
+**Status:** retired. The guardrail + partition shipped and works; the cluster fan-out never fired
+in practice because real changes are tightly coupled. A single reviewer was faster. Superseded by
+`docs/design/angle-review.md` (sub-agents per review angle). The `partitionByCoupling` /
+`reviewPlan` primitives are kept — repurposed as scoping metadata for angle agents.
 
 ## Problem
 

@@ -49,19 +49,15 @@ Packages are ESM, source-only (`exports` points at `src/index.ts`); `tsx`/`vites
 
 ## Reviewing Plex with Plex — the agent setup (contributors)
 
-Plex **dogfoods itself**: this repo ships the same reviewer agent + parallel-review skill + MCP registration that downstream users get, so a contributor's own PRs are reviewed by Plex. The agent + skill's canonical home is **`plugin/`** (the distributed plex plugin); the `.agents/` ↔ `.claude/` entries are symlinks pointing **into** it (mirroring this repo's `CLAUDE.md → AGENTS.md` convention), so both Claude Code and Codex find them. The PR-workflow commands (`/pr-master:respond`, `/pr-master:postmortem`, …) come from the **`pr-master@sshanzel`** plugin, enabled in `.claude/settings.json`:
+Plex **dogfoods itself**: this repo ships the same reviewer agent + MCP registration that downstream users get, so a contributor's own PRs are reviewed by Plex. The agent's canonical home is **`plugin/`** (the distributed plex plugin); the `.agents/` ↔ `.claude/` entries are symlinks pointing **into** it (mirroring this repo's `CLAUDE.md → AGENTS.md` convention), so both Claude Code and Codex find them. The PR-workflow commands (`/pr-master:respond`, `/pr-master:postmortem`, …) come from the **`pr-master@sshanzel`** plugin, enabled in `.claude/settings.json`:
 
 ```
 .mcp.json                                  # registers the `plex` MCP server (node dist/plex-mcp.js)
 .claude/
   settings.json                            # project MCP + pr-master@sshanzel + a permission allowlist
   agents/plex-reviewer.md      -> ../../plugin/agents/plex-reviewer.md         (symlink → plugin/)
-  skills/plex-parallel-review  -> ../../plugin/skills/plex-parallel-review     (symlink → plugin/)
-.agents/skills/                            # Codex/other agents read these
-  plex-parallel-review         -> ../../plugin/skills/plex-parallel-review     (symlink → plugin/)
 plugin/                                    # the REAL files — single source of truth (see Distribution)
   agents/plex-reviewer.md                  # the fresh-context, unbiased reviewer subagent
-  skills/plex-parallel-review/SKILL.md       # orchestrate a fan-out review when reviewPlan says so
 ```
 
 **One-time:** `pnpm build` (the `.mcp.json` runs the *built* `dist/plex-mcp.js` under node — never tsx, ADR-17/19). Open the repo in Claude Code and approve the `plex` project MCP when prompted (or it's pre-enabled via `.claude/settings.json`).
@@ -69,11 +65,11 @@ plugin/                                    # the REAL files — single source of
 **Crowded MCP sessions — `alwaysLoad`.** With many MCP servers connected, Claude Code **defers** most MCP tools behind tool-search (they aren't listed top-level), and a reviewer agent can waste minutes failing to find `mcp__plex__*` and fall back to a manual git review. The fix: `"alwaysLoad": true` on the plex server entry (`.mcp.json` here; or the per-project `~/.claude.json` registration `plex init` writes) — it exempts plex from deferral so its tools load eagerly. The server also declares `instructions` (helps tool-search), and the `plex-reviewer` agent is told to `ToolSearch("mcp__plex__")` if deferred and **never** fall back to a manual review. (Subagent `tools:` is an allow-list only — it does NOT un-defer.)
 
 **The loop (dogfooding your own PR):**
-1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts). For a **large** change, run the **`plex-parallel-review`** skill instead: it reads the `reviewPlan` Plex returns and, when the change splits into independent coupled clusters, fans out one reviewer per cluster and consolidates into one `submit_findings` (docs/design/parallel-review.md). The guardrail is conservative — small/tightly-coupled changes stay a single pass.
+1. `plex-reviewer` agent → `index_repo` (first time) → `get_review_context` → reason over the diff + blast radius → `submit_findings`, then stop (autonomous; no verdict prompts).
 2. Address feedback with **`/pr-master:respond`** (the pr-master plugin) → after pushing fixes it calls `reconcile_outcomes` (auto-`accept`s what you fixed) and `record_outcome reject`/`acknowledge` only for explicit dismissals. Silence is never a verdict.
 3. Durable lessons accrue in **Plex's own knowledge/brain** as you record outcomes; when a recurring pattern is worth a written guardrail, **`/pr-master:postmortem`** distills a merged PR's review themes into an `AGENTS.md` / ADR / milestone note (this supersedes the old `pr-review-documenter` skill).
 
-Editing the agent/skill: change the real file under **`plugin/…`** (the canonical home); the `.claude/` and `.agents/` symlinks pick it up (see **Distribution** below).
+Editing the agent: change the real file under **`plugin/agents/plex-reviewer.md`** (the canonical home); the `.claude/` symlink picks it up (see **Distribution** below).
 
 ### Distribution (Claude Code plugin via the `sshanzel/plugins` hub)
 
@@ -93,26 +89,23 @@ plugin/                                     # the "plex" plugin — Claude AND C
   .mcp.json                                # launches the engine for BOTH: npx -y -p @sshanzel/plex@<pinned> plex-mcp
   commands/review.md                        # Claude: the /plex:review command
   agents/plex-reviewer.md                  # Claude: the reviewer subagent — REAL file, canonical
-  skills/plex-parallel-review/SKILL.md     # the parallel-review orchestrator — REAL file, canonical
-  scripts/gen-codex-skills.mjs             # generates codex/skills/ from the agent + skill
+  scripts/gen-codex-skills.mjs             # generates codex/skills/ from the agent
   codex/skills/                            # GENERATED + committed (Codex has no agent/command type):
     plex-review/SKILL.md                   #   the agent → a plex-review skill (Codex-neutral tool wording)
-    plex-parallel-review/SKILL.md          #   + the parallel-review skill carried across
 .agents/plugins/marketplace.json           # (repo ROOT, not in plugin/) the Codex marketplace → ./plugin
 ```
 
-`plugin/` is the **single source of truth**: Claude reads `agents/` + `commands/` + `skills/`; Codex
-reads `codex/skills/`. The agent + parallel-review skill are canonical and **`codex/skills/` is
-generated** — edit the source, then `node plugin/scripts/gen-codex-skills.mjs` and commit (the
-generated files are committed so the Codex marketplace clone has them). **Dogfooding symlinks point
-*into* `plugin/`** (`.claude/agents/plex-reviewer.md`, `.claude/skills/plex-parallel-review`,
-`.agents/skills/plex-parallel-review` → `plugin/…`). Do NOT reintroduce a symlink that escapes
-`plugin/` — `git-subdir` sparse-clones only that dir for Claude, so an escaping link would break
-users' installs.
+`plugin/` is the **single source of truth**: Claude reads `agents/` + `commands/`; Codex reads
+`codex/skills/`. The agent is canonical and **`codex/skills/` is generated** — edit
+`agents/plex-reviewer.md`, then `node plugin/scripts/gen-codex-skills.mjs` and commit (the
+generated files are committed so the Codex marketplace clone has them). **Dogfooding symlink points
+*into* `plugin/`** (`.claude/agents/plex-reviewer.md` → `plugin/…`). Do NOT reintroduce a symlink
+that escapes `plugin/` — `git-subdir` sparse-clones only that dir for Claude, so an escaping link
+would break users' installs.
 
 Install — Claude: `/plugin marketplace add sshanzel/plugins` → `/plugin install plex@sshanzel`.
 Codex: `codex plugin marketplace add sshanzel/plex` (then the `plex-review` skill). **Naming rule:**
-`plex-*` (the reviewer agent/skill + `plex-parallel-review`) are Plex-coupled and ship in this plugin;
+`plex-*` (the reviewer agent + `plex-review` Codex skill) are Plex-coupled and ship in this plugin;
 the general PR-workflow skills live in the `pr-master` plugin (also in `sshanzel/plugins`) and only
 *detect* Plex. **The plugin pins the engine version** — `plugin/.mcp.json` launches
 `npx -y -p @sshanzel/plex@<version> plex-mcp` with an *exact* pin, so plugin (MD files) and engine

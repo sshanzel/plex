@@ -1,6 +1,6 @@
 {
   "name": "plex",
-  "description": "Local-first, unbiased AI code reviewer. A fresh-context reviewer agent grounded in a blast-radius code graph + accumulated review knowledge, a parallel-review orchestrator for large diffs, and a /plex:review command. The MCP engine is auto-fetched from npm (@sshanzel/plex) via npx — no separate install.",
+  "description": "Local-first, unbiased AI code reviewer. A fresh-context reviewer agent grounded in a blast-radius code graph + accumulated review knowledge, and a /plex:review command. The MCP engine is auto-fetched from npm (@sshanzel/plex) via npx — no separate install.",
   "author": {
     "name": "Lee Solevilla",
     "email": "sshanzel@yahoo.com"

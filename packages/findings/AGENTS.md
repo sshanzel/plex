@@ -1,8 +1,8 @@
 # @plex/findings
 
 The **pure scoring core** of the review pipeline: merge / dedup / rank / triage of findings, waiver
-matching (scoped + semantic), the round-delta classifiers used by reconcile, the parallel-review
-guardrail, and the ranking-quality measuring stick. **No I/O, no Kùzu, no embedding calls** — every
+matching (scoped + semantic), the round-delta classifiers used by reconcile, the coupling-cluster
+plan (metadata for angle-based sub-agent orchestration), and the ranking-quality measuring stick. **No I/O, no Kùzu, no embedding calls** — every
 function takes plain data (embeddings are computed at the boundary by `packages/engine`) and is
 unit-tested with literal values. Depends only on `@plex/core`.
 
@@ -22,7 +22,7 @@ via `engine/src/reconcile.ts`. Decision log: [`docs/adr/README.md`](../../docs/a
 | `src/rank.ts` | `rankFindings` — dedupe → signal → waivers → triage → sorted stream |
 | `src/waivers.ts` | `waiverMatches`/`isWaived` — scope matching + semantic match (ADR-27) |
 | `src/rounds.ts` | `classifyChanges` (feedback-driven vs unexplained, ADR-23); `findingAddressed[At]` / `findingAddressMatch` (ADR-28 fix matching for reconcile/auto-accept, with the matched-signal audit trail) |
-| `src/review-plan.ts` | `partitionByCoupling` (union-find) + `reviewPlan` — single vs parallel fan-out guardrail |
+| `src/review-plan.ts` | `partitionByCoupling` (union-find) + `reviewPlan` — coupling-cluster partition + surface score (metadata for angle-based orchestration) |
 | `src/eval.ts` | nDCG ranking quality vs outcome labels + `READINESS`/`rankingReadiness` re-weight gates |
 | `src/index.ts` | Barrel |
 

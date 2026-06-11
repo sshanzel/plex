@@ -1,7 +1,7 @@
 {
   "name": "plex",
   "version": "0.1.0",
-  "description": "Local-first, unbiased AI code reviewer for Codex: a fresh-context `plex-review` skill + a `plex-parallel-review` orchestrator for large diffs, grounded in a blast-radius code graph + accumulated review knowledge. The MCP engine is auto-fetched from npm (@sshanzel/plex) via npx — see this plugin's .mcp.json.",
+  "description": "Local-first, unbiased AI code reviewer for Codex: a fresh-context `plex-review` skill grounded in a blast-radius code graph + accumulated review knowledge. The MCP engine is auto-fetched from npm (@sshanzel/plex) via npx — see this plugin's .mcp.json.",
   "skills": "./codex/skills/",
   "author": {
     "name": "Lee Solevilla",

@@ -36,7 +36,7 @@ Plex still reviews without a key, just without the learning layer, and it remind
 
 ### Using Codex
 
-Codex installs the same plugin from its own marketplace. Codex has no agent type, so the reviewer ships as a `plex-review` skill, alongside the `plex-parallel-review` orchestrator:
+Codex installs the same plugin from its own marketplace. Codex has no agent type, so the reviewer ships as a `plex-review` skill:
 
 ```
 codex plugin marketplace add sshanzel/plex

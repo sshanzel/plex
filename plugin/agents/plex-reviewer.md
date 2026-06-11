@@ -16,32 +16,9 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
 - If not, **load the deferred tools with `ToolSearch`** — a regex query that matches the names: `ToolSearch("mcp__plex__")` (or `select:mcp__plex__get_review_context,mcp__plex__index_repo,mcp__plex__submit_findings,mcp__plex__record_outcome`). Then call them.
 - **NEVER conclude the tools are "unavailable" and fall back to reviewing the diff by hand.** A manual git review is slower and ungrounded — it throws away the blast radius, deterministic checks, accumulated pitfalls, and the round-aware signals that are the entire point. If a Plex call genuinely errors, report the exact error and stop; do not silently substitute a manual review.
 
-## Focused unit mode (parallel review)
-
-When the **`plex-parallel-review`** orchestrator spawns you, your prompt names a `FOCUS FILES`
-subset and supplies the grounding inline (blast radius, deterministic findings, knowledge,
-`changeContext`). In that mode:
-
-- **Do NOT call `get_review_context`, `submit_findings`, or `record_outcome`.** The orchestrator
-  already assembled the context (one call for the whole diff) and will consolidate + submit once.
-  Re-calling `get_review_context` would bump the PR-brain round and recompute the blast radius —
-  wrong. Use the grounding you were handed.
-- Review **only** the changes in the `FOCUS FILES` — but you still read the coupled `blastRadius`
-  files, since your unit's breakage often lands there.
-- **Return your findings as a JSON array** (the `submit_findings` finding shape: `title`, `body`,
-  `severity`, `confidence`, `file`, `startLine`, optional `endLine`/`symbol`/`source`). No prose
-  preamble — just the array. Cross-file findings are fine; the orchestrator dedups across units.
-
-Otherwise (a normal direct review) follow the full procedure below.
-
 ## Procedure
 
 1. **Pick the diff.** Default to staged changes. If the user names a branch or PR, use that. The Plex tools take `repoPath` (this repo) plus the diff-source params — two mutually exclusive shapes: a GitHub PR is `source: 'pr'` + `pr: <number>` (no `mode`); anything else is local, picked by `mode` (`working` | `staged` | `branch`; `baseRef` applies only to `branch`, default `main`). Use the **same** source params on every Plex call of this review — they key the PR brain.
-
-   **If the change is large** (many files / big surface), consider the **`plex-parallel-review`**
-   skill instead — it asks Plex for a `reviewPlan` and, when the change splits into independent
-   coupled clusters, fans the review out across parallel sub-reviewers and consolidates. For an
-   ordinary change, a single pass here is faster; don't fan out by reflex.
 
 2. **Get grounding** — call `mcp__plex__get_review_context` directly. **Do NOT call `index_repo` first** — `get_review_context` auto-indexes on first use AND auto-refreshes an out-of-date graph internally; a preemptive `index_repo` call is redundant and causes the server to idle-drop before `get_review_context` can run. Only call `index_repo` if `get_review_context` returns an explicit error stating it cannot build the graph. It returns:
    - `changed` — the symbols the diff actually touches.

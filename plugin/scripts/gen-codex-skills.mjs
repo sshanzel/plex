@@ -2,11 +2,10 @@
 // Generate the plex Codex skills from the canonical Claude sources.
 //
 // Codex has no "agent" or "command" type — its only reusable unit is a skill (SKILL.md under
-// .agents/skills). So the plex-reviewer AGENT becomes a `plex-review` skill, and the
-// plex-parallel-review skill is carried across. The Claude-Code-specific tool-loading guidance
-// (deferred tools + ToolSearch) is rewritten to Codex-neutral wording, and /pr-master:<x>
-// command references become "the pr-master-<x> skill". Edit the canonical source (agents/ or
-// skills/), then re-run: `node scripts/gen-codex-skills.mjs`.
+// .agents/skills). So the plex-reviewer AGENT becomes a `plex-review` skill. The
+// Claude-Code-specific tool-loading guidance (deferred tools + ToolSearch) is rewritten to
+// Codex-neutral wording, and /pr-master:<x> command references become "the pr-master-<x> skill".
+// Edit the canonical source (agents/ or skills/), then re-run: `node scripts/gen-codex-skills.mjs`.
 //
 // These live in codex/skills/ (not the plugin's top-level skills/) so the Claude plugin keeps
 // exposing the real agent + command, and only the Codex manifest reads this set.
@@ -27,11 +26,7 @@ const stripFrontmatter = (s) => {
 const adapt = (body) =>
   body
     // /pr-master:respond -> the `pr-master-respond` skill (consume optional surrounding backticks)
-    .replace(/`?\/pr-master:([a-z-]+)`?/g, 'the `pr-master-$1` skill')
-    // The Claude-side reviewer AGENT is `plex-reviewer`; on Codex it ships as the `plex-review`
-    // SKILL (generated above). Without this, the parallel orchestrator points workers at a
-    // name that doesn't exist in their world.
-    .replace(/`plex-reviewer`/g, '`plex-review`');
+    .replace(/`?\/pr-master:([a-z-]+)`?/g, 'the `pr-master-$1` skill');
 
 // Codex-neutral replacement for the agent's Claude-specific "Section 0" (deferred tools + ToolSearch).
 const CODEX_SECTION_0 = `## 0. Use the Plex tools (don't fall back to a hand review)
@@ -54,7 +49,7 @@ const banner = (src) =>
 rmSync(OUT, { recursive: true, force: true });
 const written = [];
 
-// 1. plex-reviewer AGENT  ->  plex-review SKILL
+// plex-reviewer AGENT  ->  plex-review SKILL
 {
   const name = 'plex-review';
   const description =
@@ -72,21 +67,5 @@ const written = [];
   written.push(name);
 }
 
-// 2. plex-parallel-review SKILL  ->  carried across (keep its frontmatter, adapt the body)
-{
-  const src = readFileSync(join(ROOT, 'skills', 'plex-parallel-review', 'SKILL.md'), 'utf8');
-  const fm = src.match(/^---\n[\s\S]*?\n---\n/)[0];
-  let body = adapt(stripFrontmatter(src))
-    // step 1's deferred-tools / ToolSearch sentence -> Codex-neutral
-    .replace(
-      /1\. \*\*Load the Plex tools\.\*\*[^\n]*\n[^\n]*/,
-      '1. **Use the Plex tools.** Call `mcp__plex__get_review_context` to start (from the plex MCP\n   server this plugin configures via `.mcp.json`). If the Plex tools aren\'t visible, ensure the\n   plex MCP server is enabled in your Codex config — never fall back to a hand review.',
-    );
-  const dir = join(OUT, 'plex-parallel-review');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'SKILL.md'), `${fm}\n${banner('skills/plex-parallel-review/SKILL.md')}${body.trimEnd()}\n`);
-  written.push('plex-parallel-review');
-}
-
-console.log(`Generated ${written.length} Codex skills in codex/skills/:`);
+console.log(`Generated ${written.length} Codex skill(s) in codex/skills/:`);
 for (const n of written) console.log(`  - ${n}`);
