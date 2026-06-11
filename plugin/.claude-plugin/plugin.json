@@ -1,6 +1,6 @@
 {
   "name": "plex",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Local-first, unbiased AI code reviewer. A fresh-context reviewer agent grounded in a blast-radius code graph + accumulated review knowledge, and a /plex:review command. The MCP engine is auto-fetched from npm (@sshanzel/plex) via npx — no separate install.",
   "author": {
     "name": "Lee Solevilla",
@@ -9,5 +9,12 @@
   "homepage": "https://github.com/sshanzel/plex",
   "repository": "https://github.com/sshanzel/plex",
   "license": "MIT",
-  "keywords": ["code-review", "ai", "mcp", "claude", "code-graph", "local-first"]
+  "keywords": [
+    "code-review",
+    "ai",
+    "mcp",
+    "claude",
+    "code-graph",
+    "local-first"
+  ]
 }
