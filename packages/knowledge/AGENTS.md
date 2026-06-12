@@ -18,7 +18,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
 | `src/promotion.ts` | `consolidatePitfalls` — Beta-Bernoulli confidence recompute from incident outcomes |
-| `src/stats.ts` | Pure primitives: `betaPosteriorMean`, `wilsonLowerBound` |
+| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
 ## The algorithms
