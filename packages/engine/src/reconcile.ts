@@ -52,7 +52,9 @@ export async function recordFixAccepts(
     if (f.severity === 'awareness') continue;
     const matchedBy = findingAddressMatch({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold });
     if (matchedBy) {
-      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', inferred: true, file: f.file, line: f.line, title: f.title }, config, target, brain);
+      // Pass the rule tag as `pattern` so an inferred accept can REFUTE a learned suppression
+      // (ADR-39): the brain id can't carry it, so without this a fix never pulls the tier back down.
+      await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', inferred: true, file: f.file, line: f.line, title: f.title, pattern: f.rule || undefined }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
       accepts.push({ findingId: f.id, title: f.title, file: f.file, line: f.line, matchedBy });
     }

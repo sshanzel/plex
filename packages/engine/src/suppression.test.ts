@@ -78,6 +78,32 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     expect(await tierOf(config)).not.toBe('suppress');
   });
 
+  it('item 1: an INFERRED accept refutes a suppression via `pattern` (brain id has no det: tag)', async () => {
+    const config = cfg();
+    for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) await reject(config, f);
+    expect(await tierOf(config)).toBe('suppress');
+    // reconcile/fix-inference path: a brain finding id (no det: rule) + the rule carried as `pattern`.
+    await learnSuppression(
+      config,
+      'myrepo',
+      { kind: 'accept', findingId: 'myrepo#x.ts:1#leftover-console-call', pattern: 'no-console', file: 'x.ts' },
+      true,
+    );
+    expect(await tierOf(config)).not.toBe('suppress'); // the auto-accept reversal now fires
+  });
+
+  it('item 3: repeated dismissals in the SAME file (line drift) count once, not N times', async () => {
+    const config = cfg();
+    // Same file, different line-bearing ids — a persistent violation drifting across rounds.
+    for (const line of [1, 5, 9, 13]) {
+      await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: `det:no-console:a.ts:${line}`, file: 'a.ts' }, true);
+    }
+    expect(await tierOf(config)).not.toBe('suppress'); // 4 line-drifted rejects in one file ≠ 4 independent
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissals = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    expect(dismissals).toHaveLength(1); // deduped by (rule, file)
+  });
+
   it('a retry (firstOfKind=false) does not double-count', async () => {
     const config = cfg();
     await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, false);

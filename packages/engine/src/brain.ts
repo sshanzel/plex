@@ -24,7 +24,7 @@ const excerpt = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '
 
 const SCHEMA = [
   'CREATE NODE TABLE IF NOT EXISTS Round(id STRING, target STRING, n INT64, ts STRING, headSha STRING, baseRef STRING, PRIMARY KEY(id))',
-  'CREATE NODE TABLE IF NOT EXISTS Finding(id STRING, target STRING, title STRING, severity STRING, confidence DOUBLE, signal DOUBLE, source STRING, file STRING, line INT64, triage STRING, outcome STRING, round INT64, blast DOUBLE, prevalence DOUBLE, agreement INT64, PRIMARY KEY(id))',
+  'CREATE NODE TABLE IF NOT EXISTS Finding(id STRING, target STRING, title STRING, severity STRING, confidence DOUBLE, signal DOUBLE, source STRING, file STRING, line INT64, triage STRING, outcome STRING, round INT64, blast DOUBLE, prevalence DOUBLE, agreement INT64, rule STRING, PRIMARY KEY(id))',
   'CREATE NODE TABLE IF NOT EXISTS Verdict(id STRING, target STRING, findingId STRING, kind STRING, scope STRING, ts STRING, title STRING, file STRING, line INT64, PRIMARY KEY(id))',
   'CREATE NODE TABLE IF NOT EXISTS Comment(id STRING, target STRING, body STRING, author STRING, file STRING, line INT64, PRIMARY KEY(id))',
 ];
@@ -50,6 +50,13 @@ export interface BrainFinding {
   title: string;
   /** Severity (bug|improvement|nit|awareness) — `awareness` is excluded from auto-accept (ADR-31). */
   severity?: string;
+  /**
+   * The deterministic rule tag (e.g. `no-console`), persisted so an INFERRED accept (reconcile /
+   * fix-inference) can pass it as `pattern` and thereby *refute* a learned suppression — the brain id
+   * (`target#file:line#title`) can't carry it, so without this the auto-accept reversal path (ADR-39
+   * "an accept pulls the tier back down") silently no-ops. Empty for non-deterministic findings.
+   */
+  rule?: string;
 }
 
 /**
@@ -100,7 +107,7 @@ export class Brain {
     // brain created before the raw ranking features (blast/prevalence/agreement, M12+ feature
     // persistence) lacks these columns. ADD COLUMN is the only way to backfill them; it throws
     // "already exists" on a brain that already has them, which we swallow — making open idempotent.
-    for (const col of ['blast DOUBLE DEFAULT 0.0', 'prevalence DOUBLE DEFAULT 0.0', 'agreement INT64 DEFAULT 0']) {
+    for (const col of ['blast DOUBLE DEFAULT 0.0', 'prevalence DOUBLE DEFAULT 0.0', 'agreement INT64 DEFAULT 0', "rule STRING DEFAULT ''"]) {
       try {
         await b.db.run(`ALTER TABLE Finding ADD ${col}`);
       } catch {
@@ -162,7 +169,7 @@ export class Brain {
     const rounds: RoundSummary[] = roundRows.map((r) => ({ n: Number(r.n), ts: str(r.ts) ?? '', headSha: str(r.headSha) || undefined }));
     const last = rounds[rounds.length - 1];
 
-    const findingRows = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title, fi.severity AS severity, fi.outcome AS outcome', { t: target });
+    const findingRows = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title, fi.severity AS severity, fi.outcome AS outcome, fi.rule AS rule', { t: target });
     const commentRows = await this.db.run('MATCH (c:Comment {target:$t}) RETURN c.file AS file, c.body AS body', { t: target });
 
     const signals: BrainSignal[] = [
@@ -171,7 +178,7 @@ export class Brain {
     ];
     const priorFindings: BrainFinding[] = findingRows
       .filter((r) => !str(r.outcome)) // un-outcomed ('' sentinel)
-      .map((r) => ({ id: str(r.id) ?? '', file: str(r.file) || undefined, line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '', severity: str(r.severity) }))
+      .map((r) => ({ id: str(r.id) ?? '', file: str(r.file) || undefined, line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '', severity: str(r.severity), rule: str(r.rule) || undefined }))
       .filter((f) => f.id && f.title);
 
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
@@ -233,7 +240,7 @@ export class Brain {
    * WITHOUT resetting the accrued `outcome` (a fixed finding stays fixed even if somehow re-raised). */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
     await this.db.insertMany(
-      'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree ' +
+      'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree, fi.rule=$rule ' +
         'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree',
       findings.map((f) => ({
         id: `${target}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
@@ -242,6 +249,8 @@ export class Brain {
         // Raw ranking features (tuning.md §"feature persistence"): the inputs to `signal`, stored so a
         // future re-weight/fit can learn from them. agreement = #independent sources (min 1 = itself).
         blast: f.blastRadius ?? 0, prev: f.prevalence ?? 0, agree: f.agreedSources?.length ?? 1,
+        // The rule tag (deterministic findings) so an inferred accept can refute a suppression (ADR-39).
+        rule: f.tags?.[0] ?? '',
       })),
     );
   }

@@ -291,6 +291,19 @@ export async function learnSuppression(
   const existing = (await store.pitfalls()).find((p) => p.id === id);
   // A correction with no existing negative pitfall has nothing to refute — don't mint one on accept.
   if (!existing && corrective) return;
+
+  // Drift-stable dedup (ADR-39): a deterministic finding's id embeds its LINE, so a persistent
+  // violation that shifts line across rounds re-keys and would double-count toward the ~4-independent
+  // Wilson `suppress` bar. Count at most ONE dismissal (and one correction) per (rule, file) — the
+  // conservative direction (fewer false suppressions). `firstOfKind` already covers same-line retries.
+  if (existing) {
+    const sameClass = (o: Incident['outcome']): boolean =>
+      dismissal ? o === 'rejected' : o === 'accepted' || o === 'fixed' || o === 'reverted';
+    const dup = (await store.incidents()).some(
+      (i) => i.pitfallId === id && i.file === input.file && sameClass(i.outcome),
+    );
+    if (dup) return;
+  }
   if (!existing) {
     const negative: Pitfall = {
       id,
@@ -371,7 +384,11 @@ export async function submitVerdict(
     // pitfall match would stack two inferences into the Beta posterior — a false locality
     // accept silently inflating a pitfall is worse than learning nothing. Inferred accepts
     // still record their incident (provenance), but only an explicit `pattern` links them.
-    const pitfallId = input.pattern ?? (input.inferred ? undefined : await inferPitfallId(config, input.title, repoName));
+    // An INFERRED accept never links a positive pitfall (avoids stacking two inferences into the
+    // posterior) — even when `pattern` is set, because reconcile now passes `pattern` as the rule tag
+    // purely to REFUTE a negative suppression (handled by `learnSuppression` above), not to link a
+    // positive one. An explicit accept still links by `pattern`, else infers by similarity.
+    const pitfallId = input.inferred ? undefined : (input.pattern ?? (await inferPitfallId(config, input.title, repoName)));
     await learnIncident(config, {
       repo: repoName,
       file: input.file,
