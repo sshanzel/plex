@@ -57,6 +57,10 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
     if (inc.length === 0) return p; // no outcomes yet → keep the prior confidence
     reinforced++;
     const { confirms, refutes } = confirmsAndRefutes(p, inc);
+    // For a NEGATIVE pitfall this `confidence` is INFORMATIONAL ONLY — the live ranking path
+    // (`engine` `loadSuppressions`) recomputes the suppress/demote tier from raw incident counts so a
+    // dismissal takes effect without a `consolidate` run, and never reads this stored value. It's kept
+    // for provenance/visibility; don't mistake it for the active suppression strength.
     const confidence = wilsonLowerBound(confirms, confirms + refutes);
     return { ...p, confidence, incidentIds: inc.map((i) => i.id) };
   });

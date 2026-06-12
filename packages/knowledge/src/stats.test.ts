@@ -1,16 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { betaPosteriorMean, wilsonLowerBound, suppressionTier } from './stats';
-
-describe('betaPosteriorMean', () => {
-  it('is α/(α+β)', () => {
-    expect(betaPosteriorMean(1, 1)).toBe(0.5); // uniform prior, no evidence
-    expect(betaPosteriorMean(3, 1)).toBe(0.75); // 2 accepts under Beta(1,1)
-    expect(betaPosteriorMean(1, 2.5)).toBeCloseTo(0.2857, 4); // 1 reject at cost 1.5
-  });
-  it('guards the empty case', () => {
-    expect(betaPosteriorMean(0, 0)).toBe(0);
-  });
-});
+import { wilsonLowerBound, suppressionTier } from './stats';
 
 describe('wilsonLowerBound', () => {
   it('returns 0 with no observations', () => {

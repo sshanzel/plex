@@ -1,17 +1,10 @@
 /**
  * Statistical primitives for outcome-driven knowledge confidence (see docs/design/tuning.md §1).
  *
- * Replaces the old path-dependent `confidence += 0.1·accept − 0.15·reject` rule — which clamped
- * (destroying information: a pitfall pinned at 1.0 from 3 accepts looked identical to one from 30)
- * and let one early reject bury a good pitfall forever — with the textbook Beta-Bernoulli estimate
- * of a success rate plus the Wilson lower bound for small-sample ranking.
+ * Pitfall confidence (both polarities) and the suppression tier rest on the **Wilson score lower
+ * bound** — the textbook small-sample estimate of a Bernoulli success rate. This replaced the old
+ * path-dependent `±0.1/±0.15` rule and the interim Beta posterior mean (+ `REJECT_COST`) — see ADR-39.
  */
-
-/** Posterior mean of a Beta(α, β) — the point estimate of a Bernoulli success rate. Pure. */
-export function betaPosteriorMean(alpha: number, beta: number): number {
-  const d = alpha + beta;
-  return d > 0 ? alpha / d : 0;
-}
 
 /**
  * Wilson score lower bound of a binomial success rate (Wilson 1927) — the principled way to RANK
