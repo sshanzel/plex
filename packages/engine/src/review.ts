@@ -160,6 +160,13 @@ function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string;
     if (!primary || path.resolve(primary.path) === self) return undefined; // we ARE the primary/base
 
     const def = defaultBranch(repoPath);
+    // A worktree that is ITSELF on the default branch is a canonical base — it must build its own
+    // graph, never share the (possibly non-default) primary. Without this, a default-branch secondary
+    // worktree shared the primary, leaving NO base graph for sibling feature worktrees to share, so
+    // they full-indexed. (Surfaced on Linux CI; macOS only passed via a path-resolution accident.)
+    const selfBranch = wts.find((w) => path.resolve(w.path) === self)?.branch;
+    if (def && selfBranch === def) return undefined;
+
     const onDefault = def ? wts.find((w) => w.branch === def && path.resolve(w.path) !== self) : undefined;
     const chosen = onDefault ?? primary;
     const graphDir = repoPaths(chosen.path, config.dataDir).graphDir;
@@ -195,8 +202,14 @@ function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const cli = path.join(path.dirname(entry), 'plex.js');
   if (!existsSync(cli)) return false;
   const args = incremental ? [cli, 'index', repoPath, '--incremental'] : [cli, 'index', repoPath];
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (spawnSync(process.execPath, args, { stdio: 'ignore' }).status === 0) return true;
+  // Retry the transient Kùzu-native SIGSEGV (ADR-17) — a native crash, not a logic failure, and
+  // `index` is idempotent (rebuilds from scratch), so a fresh child recovers. This flake is frequent
+  // on Linux, where a single attempt would fail the auto-index/refresh. Only SIGSEGV retries; a real
+  // failure (non-zero exit) won't be fixed by re-running, so stop early.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = spawnSync(process.execPath, args, { stdio: 'ignore' });
+    if (r.status === 0) return true;
+    if (r.signal !== 'SIGSEGV') break;
   }
   return false;
 }

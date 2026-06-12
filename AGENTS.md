@@ -115,8 +115,12 @@ bumped, and updating the plugin delivers the matching engine. The exact pin also
 <patch|minor|major|X.Y.Z>` does the lockstep dance — deterministic gates (typecheck/test/build) →
 bump BOTH `package.json` and the `plugin/.mcp.json` pin → commit + tag → `npm publish` → push →
 `gh release` (run it locally; `npm publish` needs your auth/OTP). The gate skips the kuzu-native
-E2Es (known ~1-in-N indexing flake) since CI runs them on every push — so the release command stays
-reliable. An un-bumped pin would leave users on the old
+E2Es (the indexing SIGSEGV flake, ADR-17) since CI runs them on every push — so the release command stays
+reliable. **The flake is now retried, not just tolerated:** every E2E check script's `cli` helper and
+the product's `indexIsolated` retry a `SIGSEGV` (only that signal — a real failure stops early), since
+`index` is idempotent. On Linux the per-index crash rate is high enough that a single attempt failed
+CI ~90% of runs (~6 indexes/check); the retry makes both CI and a real Linux user's auto-index reliable.
+An un-bumped pin would leave users on the old
 engine even after a plugin update, which is exactly the step the script keeps you from forgetting.
 
 ## Local services (must remember)

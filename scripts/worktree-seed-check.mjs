@@ -28,9 +28,17 @@ const sha = (cwd) => {
   return existsSync(f) ? readFileSync(f, 'utf8').trim() : '';
 };
 const graphExists = (cwd) => existsSync(join(cwd, '.plex', 'graph.kuzu'));
-/** Run the CLI and return {code, signal, out}. Does NOT throw on failure. */
+/** Run the CLI and return {code, signal, out}. Does NOT throw on failure.
+ * Retries the transient Kùzu-native SIGSEGV (ADR-17): a native crash, not a logic failure, and
+ * `index` is idempotent — a fresh child recovers. On Linux CI this flake hits often enough that a
+ * single attempt is unreliable (this check runs ~6 indexes, so even a ~30% per-index crash rate goes
+ * red ~90% of runs). Only SIGSEGV retries; a real non-zero exit returns immediately. */
 const cli = (args, cwd) => {
-  const r = spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  let r;
+  for (let i = 0; i < 8; i++) {
+    r = spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    if (r.signal !== 'SIGSEGV') break;
+  }
   return { code: r.status, signal: r.signal, out: (r.stdout ?? '') + (r.stderr ?? '') };
 };
 const assert = (c, m) => {

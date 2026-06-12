@@ -22,8 +22,18 @@ if (!existsSync(CLI)) {
 
 const env = { ...process.env, PLEX_DATA_DIR: '.plex' }; // in-repo data dir; no embeddings needed
 const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' });
-const cli = (args, cwd) =>
-  execFileSync(process.execPath, [CLI, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] }).toString();
+// Retry the transient Kùzu-native SIGSEGV (ADR-17): a native crash, not a logic failure, and `index`
+// is idempotent — a fresh child recovers. Only SIGSEGV retries; a real failure rethrows immediately.
+const cli = (args, cwd) => {
+  for (let i = 0; ; i++) {
+    try {
+      return execFileSync(process.execPath, [CLI, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] }).toString();
+    } catch (e) {
+      if (e.signal === 'SIGSEGV' && i < 8) continue;
+      throw e;
+    }
+  }
+};
 const assert = (c, m) => {
   if (!c) {
     console.error(`✗ ${m}`);

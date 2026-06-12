@@ -27,11 +27,20 @@ const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'pipe' });
 let cliCalls = 0;
 const cli = (args, cwd) => {
   const outFile = join(tmpdir(), `plex-cli-${process.pid}-${cliCalls++}.out`);
-  const fd = openSync(outFile, 'w');
-  try {
-    execFileSync(process.execPath, [CLI, ...args], { cwd, env, stdio: ['ignore', fd, 'inherit'] });
-  } finally {
-    closeSync(fd);
+  // Retry the transient Kùzu-native SIGSEGV (ADR-17): a native crash, not a logic failure, and
+  // `index` is idempotent. Truncate (`openSync 'w'`) per attempt so a crashed child's partial output
+  // can't leak into the parsed result. Only SIGSEGV retries; a real failure rethrows.
+  for (let i = 0; ; i++) {
+    const fd = openSync(outFile, 'w');
+    try {
+      execFileSync(process.execPath, [CLI, ...args], { cwd, env, stdio: ['ignore', fd, 'inherit'] });
+      break;
+    } catch (e) {
+      if (e.signal === 'SIGSEGV' && i < 8) continue;
+      throw e;
+    } finally {
+      closeSync(fd);
+    }
   }
   const out = readFileSync(outFile, 'utf8');
   rmSync(outFile, { force: true });
