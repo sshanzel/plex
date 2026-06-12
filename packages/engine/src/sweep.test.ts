@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { headAdvanced, isDebounced, jobDue } from './sweep';
+import { CLOSED_TARGET, isDeadTarget } from './sweep-helpers';
 
 // Pure decision helpers of the maintenance worker (ADR-43). The jobs themselves open Kùzu/git and are
 // covered by the integration scenario + the node E2E; these pin the idempotency-critical gates that
@@ -18,6 +19,18 @@ describe('headAdvanced — the per-target reconcile cursor (no-op when head unch
   it('is false when the head cannot be resolved (nothing to do)', () => {
     expect(headAdvanced('abc', undefined)).toBe(false);
     expect(headAdvanced(undefined, undefined)).toBe(false);
+  });
+});
+
+describe('isDeadTarget — a closed PR is skipped before the gh probe (no forever-reshell)', () => {
+  it('is true only for the CLOSED_TARGET sentinel cursor', () => {
+    expect(isDeadTarget(CLOSED_TARGET)).toBe(true);
+    expect(isDeadTarget('abc123')).toBe(false); // a normal sha cursor
+    expect(isDeadTarget(undefined)).toBe(false); // never swept yet
+  });
+  it('the sentinel never reads as head-advanced (so a dead target stays dead)', () => {
+    // A closed PR resolves head '' → headAdvanced false; the sentinel guard skips it earlier anyway.
+    expect(headAdvanced(CLOSED_TARGET, '')).toBe(false);
   });
 });
 

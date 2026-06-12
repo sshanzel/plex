@@ -34,6 +34,7 @@ import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/distill';
 import type { RetrievedPitfall } from '@plex/knowledge';
 import { repoPaths, ensureDataDir, type RepoPaths } from './paths';
+import { isDebounced } from './sweep-helpers';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
@@ -309,20 +310,25 @@ export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force 
     const main = resolveMainRepoPath(repoPath);
     const p = repoPaths(main, config.dataDir);
     if (!force) {
+      let markerMs: number | undefined;
       try {
-        if (Date.now() - statSync(p.sweepMarkerFile).mtimeMs < SWEEP_DEBOUNCE_MS) return false;
+        markerMs = statSync(p.sweepMarkerFile).mtimeMs;
       } catch {
-        /* no marker yet → proceed */
+        /* no marker yet → markerMs undefined → not debounced */
       }
-    }
-    try {
-      mkdirSync(p.reviewerDir, { recursive: true });
-      writeFileSync(p.sweepMarkerFile, new Date().toISOString(), 'utf8'); // debounce future spawns now
-    } catch {
-      /* best-effort */
+      if (isDebounced(markerMs, Date.now(), SWEEP_DEBOUNCE_MS)) return false;
     }
     const child = spawn(process.execPath, [cli, 'sweep', main], { detached: true, stdio: 'ignore' });
     child.unref();
+    // Stamp the debounce marker only AFTER the spawn succeeds — a spawn that throws should not
+    // suppress maintenance for the full window (the next trigger retries; the sweep's own
+    // single-flight lock prevents two near-simultaneous spawns from both running).
+    try {
+      mkdirSync(p.reviewerDir, { recursive: true });
+      writeFileSync(p.sweepMarkerFile, new Date().toISOString(), 'utf8');
+    } catch {
+      /* best-effort */
+    }
     return true;
   } catch {
     return false;

@@ -10,6 +10,10 @@ import { reconcileOutcomes } from './reconcile';
 import { consolidateKnowledge, embeddingReady } from './knowledge';
 import { analyzeRepo } from './analyze';
 import { indexIsolated, readIndexedSha, resolveMainRepoPath } from './review';
+import { CLOSED_TARGET, headAdvanced, isDeadTarget, jobDue } from './sweep-helpers';
+
+// Re-export the pure decision helpers so the engine barrel + sweep.test keep a single import surface.
+export { headAdvanced, isDebounced, jobDue } from './sweep-helpers';
 
 /**
  * The background maintenance worker (ADR-43). It is the reliable owner of every deferred Plex job
@@ -55,27 +59,6 @@ export interface SweepResult {
   locked: boolean;
 }
 
-// --- pure decision helpers (unit-tested without I/O) ---------------------------------------------
-
-/** Has main's head advanced past the per-target cursor? Undefined cursor → yes (first sweep). An
- *  unresolved head → false (nothing to do). */
-export function headAdvanced(cursor: string | undefined, currentHead: string | undefined): boolean {
-  if (!currentHead) return false;
-  return cursor !== currentHead;
-}
-
-/** Debounce: true (skip) when the marker is younger than the interval. Undefined marker → never debounced. */
-export function isDebounced(markerMtimeMs: number | undefined, nowMs: number, intervalMs: number): boolean {
-  return markerMtimeMs != null && nowMs - markerMtimeMs < intervalMs;
-}
-
-/** Cadence gate for a periodic job: true (run) when it has never run or the interval has elapsed. */
-export function jobDue(lastRunIso: string | undefined, nowMs: number, intervalMs: number): boolean {
-  if (!lastRunIso) return true;
-  const t = Date.parse(lastRunIso);
-  return Number.isNaN(t) || nowMs - t >= intervalMs;
-}
-
 // --- state + lock IO (best-effort) ----------------------------------------------------------------
 
 function loadSweepState(file: string, repo: string): SweepState {
@@ -96,22 +79,36 @@ function saveSweepState(file: string, state: SweepState): void {
   }
 }
 
-/** Acquire the single-flight lock (one sweep per data dir). Returns false if another sweep holds a
- *  FRESH lock; steals a stale one (a crashed sweep). Best-effort. */
+/** Acquire the single-flight lock (one sweep per data dir). `openSync(.., 'wx')` is the atomic
+ *  O_EXCL create — the loser of a race gets EEXIST and returns false. A lock older than
+ *  `STALE_LOCK_MS` (a crashed sweep) is stolen. The pid is stamped for debuggability.
+ *
+ *  This is a BEST-EFFORT debounce, not a hard mutex: the steal's unlink→create has a tiny TOCTOU
+ *  window where two sweeps that both see the SAME stale lock could both proceed. That's bounded and
+ *  harmless — every job is idempotent (cursors + `submitVerdict` dedup), and the only dangerous shared
+ *  resource (the brain) is guarded by Kùzu's own single-writer file lock, which surfaces as
+ *  `RepoBusyError` and is caught per-job (the colliding sweep just retries next time). */
 function acquireLock(lockFile: string, nowMs: number): boolean {
+  const claim = (): boolean => {
+    const fd = openSync(lockFile, 'wx'); // throws EEXIST if held
+    try {
+      writeFileSync(fd, String(process.pid));
+    } finally {
+      closeSync(fd);
+    }
+    return true;
+  };
   try {
     mkdirSync(path.dirname(lockFile), { recursive: true });
-    closeSync(openSync(lockFile, 'wx'));
-    return true;
+    return claim();
   } catch {
     try {
       if (nowMs - statSync(lockFile).mtimeMs > STALE_LOCK_MS) {
         unlinkSync(lockFile);
-        closeSync(openSync(lockFile, 'wx'));
-        return true;
+        return claim();
       }
     } catch {
-      /* lost the race / vanished — treat as held */
+      /* lost the steal race / vanished — treat as held */
     }
     return false;
   }
@@ -152,13 +149,20 @@ async function reconcileJob(ctx: JobCtx): Promise<JobResult> {
   let swept = 0;
   let busy = false;
   for (const t of targets) {
+    if (isDeadTarget(state.cursors[t.target])) continue; // closed PR — skip BEFORE the `gh` probe (no forever-reshell)
     const src = diffSourceFromTarget(t.target, t.baseRef);
     if (!src) continue;
     let head: string | undefined;
     try {
       head = src.source === 'pr' && src.pr != null ? await getPrHeadSha({ pr: src.pr, cwd }) : await getHeadSha(cwd);
     } catch {
-      continue; // can't resolve this target's head (e.g. a closed PR) → skip
+      continue; // transient head-resolution failure → retry next sweep
+    }
+    if (!head) {
+      // `getPrHeadSha` returns '' (not a throw) for a closed/deleted PR — stamp a sentinel so this
+      // target is skipped before the `gh` call next sweep, instead of re-probing it forever.
+      if (src.source === 'pr') state.cursors[t.target] = CLOSED_TARGET;
+      continue;
     }
     if (!headAdvanced(state.cursors[t.target], head)) continue; // cursor no-op
     try {
