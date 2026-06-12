@@ -53,4 +53,12 @@ describe('resolveConfig', () => {
     // cluster.test.ts and AnalyzeConfig. Pinned so a revert to 0.6 is caught.
     expect(resolveConfig().analyze.clusterThreshold).toBe(0.8);
   });
+
+  it('defaults the positive-decay block (ADR-42) and merges partial overrides', () => {
+    expect(resolveConfig().decay).toEqual({ halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 });
+    const cfg = resolveConfig({ decay: { halfLifeDays: 90 } as never });
+    expect(cfg.decay.halfLifeDays).toBe(90); // overridden
+    expect(cfg.decay.pruneFloor).toBe(defaultConfig.decay.pruneFloor); // sibling preserved
+    expect(cfg.decay.retrievalTiltFloor).toBe(0.5);
+  });
 });

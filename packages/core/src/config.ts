@@ -123,6 +123,23 @@ export interface ReviewerConfig {
     /** Half-life (days) of a `waive` dismissal — long. */
     waiveHalfLifeDays: number;
   };
+  /**
+   * Positive-pitfall recency decay (ADR-42). The positive KB ages like the suppression path (ADR-41):
+   * `consolidatePitfalls` recency-weights each incident's confirm/refute by `0.5^(ageDays/halfLifeDays)`
+   * (so a lesson that stopped recurring fades), retrieval tilts the score toward fresh evidence, and a
+   * pitfall whose decayed confidence falls below `pruneFloor` AND has gone quiet for `pruneMinAgeDays`
+   * is pruned (only the derived pitfall — its provenance Incidents stay, so it's re-derivable).
+   */
+  decay: {
+    /** Half-life (days) for an incident's reinforcement weight + the retrieval tilt. */
+    halfLifeDays: number;
+    /** Retrieval recency multiplier never drops below this — an old-but-real lesson still surfaces. */
+    retrievalTiltFloor: number;
+    /** Prune a pitfall whose recency-decayed confidence falls below this (AND it's gone quiet). */
+    pruneFloor: number;
+    /** Don't prune until the last incident is at least this old (days). */
+    pruneMinAgeDays: number;
+  };
 }
 
 import os from 'node:os';
@@ -166,6 +183,9 @@ export const defaultConfig: ReviewerConfig = {
   // reject ~12× shorter-lived than waive — a "not now" is mostly gone in ~a month, "this is wrong"
   // persists ~a year (co-change already uses halfLifeDays:365 as the long-end precedent).
   suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 },
+  // Positive pitfalls age slower than dismissals — 365d half-life (co-change's long-clock precedent);
+  // tilt floor keeps an old lesson visible; prune only a thin (≈1/1 Wilson) pitfall gone quiet a year.
+  decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 },
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
@@ -179,5 +199,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     analyze: { ...defaultConfig.analyze, ...overrides.analyze },
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
     suppression: { ...defaultConfig.suppression, ...overrides.suppression },
+    decay: { ...defaultConfig.decay, ...overrides.decay },
   };
 }

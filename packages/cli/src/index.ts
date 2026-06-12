@@ -369,7 +369,9 @@ async function main(): Promise<number> {
     }
     case 'consolidate': {
       const c = await consolidateKnowledge(config);
-      process.stdout.write(`Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes.\n`);
+      process.stdout.write(
+        `Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes${c.pruned ? `, pruned ${c.pruned} stale` : ''}.\n`,
+      );
       return 0;
     }
     default:

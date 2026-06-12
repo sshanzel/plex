@@ -116,3 +116,41 @@ describe('lexical retrieval (no embedding provider)', () => {
     expect(results[0]!.pitfall.title.toLowerCase()).toContain('tenant id');
   });
 });
+
+describe('retrieval recency tilt (ADR-42)', () => {
+  const provider = new FakeEmbeddingProvider();
+  const DAY = 86_400_000;
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it('a stale pitfall ranks below a fresh one of equal relevance; the floor keeps it visible', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-tilt-'));
+    const store = new KnowledgeStore(dir);
+    const now = new Date('2026-06-01T00:00:00.000Z');
+    const [qv] = await provider.embed(['tenant id validation']); // give both pitfalls the query's vector → equal cosine
+    // Distinct titles (store dedups by exact title), equal embedding → tilt is the only differentiator.
+    await store.addPitfall(pf({ id: 'fresh', title: 'A', embedding: qv, lastReinforcedAt: now.toISOString() }));
+    await store.addPitfall(pf({ id: 'stale', title: 'B', embedding: qv, lastReinforcedAt: new Date(now.getTime() - 3650 * DAY).toISOString() }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0, undefined, now, 365, 0.5);
+    expect(res[0]!.pitfall.id).toBe('fresh'); // fresh ranks first
+    const stale = res.find((r) => r.pitfall.id === 'stale')!;
+    const fresh = res.find((r) => r.pitfall.id === 'fresh')!;
+    expect(stale).toBeDefined(); // floor (0.5) keeps the old lesson above minScore — not erased
+    expect(stale.score).toBeLessThan(fresh.score);
+    expect(stale.score).toBeCloseTo(fresh.score * 0.5, 6); // tilt floored at 0.5 vs fresh tilt 1
+  });
+
+  it('an undated pitfall gets full weight (tilt 1) — outranks a very stale one', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-tilt2-'));
+    const store = new KnowledgeStore(dir);
+    const now = new Date('2026-06-01T00:00:00.000Z');
+    const [qv] = await provider.embed(['tenant id validation']);
+    await store.addPitfall(pf({ id: 'undated', title: 'A', embedding: qv })); // no lastReinforcedAt → tilt 1
+    await store.addPitfall(pf({ id: 'stale', title: 'B', embedding: qv, lastReinforcedAt: new Date(now.getTime() - 3650 * DAY).toISOString() }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0, undefined, now, 365, 0.5);
+    expect(res[0]!.pitfall.id).toBe('undated');
+  });
+});

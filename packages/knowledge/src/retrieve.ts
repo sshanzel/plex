@@ -1,5 +1,11 @@
 import { cosineSimilarity, type EmbeddingProvider, type Pitfall } from '@plex/core';
 import type { KnowledgeStore } from './store';
+import { recencyWeight } from './stats';
+
+/** Decay defaults so existing 6-arg callers (and undated test corpora) behave exactly as before:
+ *  an undated pitfall ages 0 days → `recencyWeight = 1` → `max(floor, 1) = 1` → score unchanged. */
+const DECAY_HALF_LIFE_DAYS = 365;
+const RETRIEVAL_TILT_FLOOR = 0.5;
 
 export interface RetrievedPitfall {
   pitfall: Pitfall;
@@ -69,8 +75,25 @@ const inScope = (p: Pitfall, repo?: string): boolean =>
 // `voyage-code-3` vector is 1024 floats ≈ 16KB serialized PER pitfall — returning topK of
 // them ships ~80KB / tens of thousands of tokens into every review context that the model
 // can't use. The stored pitfall keeps its vector; only the retrieved copy is slimmed.
-const rankAndSlim = (scored: RetrievedPitfall[], topK: number, minScore: number): RetrievedPitfall[] =>
+// Recency-tilt (ADR-42): multiply each score by `max(tiltFloor, 0.5^(ageDays/halfLife))` BEFORE the
+// minScore cut, so a stale lesson ranks lower (and can drop out) without mutating stored confidence —
+// read-only, reversible. `lastReinforcedAt` is the one field read (set by consolidation); undated →
+// ageDays 0 → weight 1 → tilt = max(floor, 1) = 1 (no change), preserving the no-decay test corpora.
+const rankAndSlim = (
+  scored: RetrievedPitfall[],
+  topK: number,
+  minScore: number,
+  nowMs: number,
+  halfLifeDays: number,
+  tiltFloor: number,
+): RetrievedPitfall[] =>
   scored
+    .map((r) => {
+      const t = r.pitfall.lastReinforcedAt ? Date.parse(r.pitfall.lastReinforcedAt) : NaN;
+      const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000;
+      const tilt = Math.max(tiltFloor, recencyWeight(ageDays, halfLifeDays));
+      return { pitfall: r.pitfall, score: r.score * tilt };
+    })
     .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
@@ -96,9 +119,13 @@ export async function retrieveRelevant(
   topK = 5,
   minScore = 0.05,
   repo?: string,
+  now: Date = new Date(),
+  halfLifeDays: number = DECAY_HALF_LIFE_DAYS,
+  retrievalTiltFloor: number = RETRIEVAL_TILT_FLOOR,
 ): Promise<RetrievedPitfall[]> {
   const pitfalls = (await store.pitfalls()).filter((p) => inScope(p, repo));
   if (pitfalls.length === 0 || queryText.trim() === '') return [];
+  const nowMs = now.getTime();
   let q: number[] | undefined;
   try {
     [q] = await provider.embed([queryText]);
@@ -110,7 +137,7 @@ export async function retrieveRelevant(
     // vectorless pitfalls against separate IDF bases would make the merged ranking
     // apples-to-oranges.
     const lex = lexicalScores(queryText, pitfalls);
-    return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore);
+    return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore, nowMs, halfLifeDays, retrievalTiltFloor);
   }
   const qv = q;
   const embedded = pitfalls.filter((p) => p.embedding && p.embedding.length > 0);
@@ -118,7 +145,7 @@ export async function retrieveRelevant(
   const scored: RetrievedPitfall[] = embedded.map((pitfall) => ({ pitfall, score: cosineSimilarity(qv, pitfall.embedding!) }));
   const lex = lexicalScores(queryText, vectorless);
   scored.push(...vectorless.map((pitfall, i) => ({ pitfall, score: lex[i]! })));
-  return rankAndSlim(scored, topK, minScore);
+  return rankAndSlim(scored, topK, minScore, nowMs, halfLifeDays, retrievalTiltFloor);
 }
 
 /**
@@ -132,9 +159,12 @@ export async function retrieveRelevantLexical(
   topK = 5,
   minScore = 0.05,
   repo?: string,
+  now: Date = new Date(),
+  halfLifeDays: number = DECAY_HALF_LIFE_DAYS,
+  retrievalTiltFloor: number = RETRIEVAL_TILT_FLOOR,
 ): Promise<RetrievedPitfall[]> {
   const pitfalls = (await store.pitfalls()).filter((p) => inScope(p, repo));
   if (pitfalls.length === 0 || queryText.trim() === '') return [];
   const lex = lexicalScores(queryText, pitfalls);
-  return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore);
+  return rankAndSlim(pitfalls.map((pitfall, i) => ({ pitfall, score: lex[i]! })), topK, minScore, now.getTime(), halfLifeDays, retrievalTiltFloor);
 }

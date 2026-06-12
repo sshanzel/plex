@@ -26,6 +26,10 @@ const numEnv = (v?: string): number | undefined => {
  *   PLEX_LLM_MODEL            model id for the analysis distiller
  *   PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS  recency-decay half-life of a `reject` (default 30)
  *   PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS   recency-decay half-life of a `waive` (default 365)
+ *   PLEX_DECAY_HALFLIFE_DAYS               positive-pitfall recency half-life (default 365)
+ *   PLEX_DECAY_RETRIEVAL_TILT_FLOOR        retrieval recency-tilt floor (default 0.5)
+ *   PLEX_DECAY_PRUNE_FLOOR                 prune below this decayed confidence (default 0.1)
+ *   PLEX_DECAY_PRUNE_MIN_AGE_DAYS          min days quiet before prune (default 365)
  */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
   const home = readHomeConfig();
@@ -46,6 +50,12 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   const supp: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number } = {};
   if (typeof home.suppression?.rejectHalfLifeDays === 'number') supp.rejectHalfLifeDays = home.suppression.rejectHalfLifeDays;
   if (typeof home.suppression?.waiveHalfLifeDays === 'number') supp.waiveHalfLifeDays = home.suppression.waiveHalfLifeDays;
+  // Positive-pitfall decay knobs (ADR-42) — same home/env reachability as suppression.
+  const dec: { halfLifeDays?: number; retrievalTiltFloor?: number; pruneFloor?: number; pruneMinAgeDays?: number } = {};
+  if (typeof home.decay?.halfLifeDays === 'number') dec.halfLifeDays = home.decay.halfLifeDays;
+  if (typeof home.decay?.retrievalTiltFloor === 'number') dec.retrievalTiltFloor = home.decay.retrievalTiltFloor;
+  if (typeof home.decay?.pruneFloor === 'number') dec.pruneFloor = home.decay.pruneFloor;
+  if (typeof home.decay?.pruneMinAgeDays === 'number') dec.pruneMinAgeDays = home.decay.pruneMinAgeDays;
 
   // --- environment (overrides home) ---
   if (env.PLEX_DATA_DIR) o.dataDir = env.PLEX_DATA_DIR;
@@ -69,6 +79,17 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   // `resolveConfig` deep-merge; with nothing supplied, leave it unset so defaults (30/365) apply.
   if (supp.rejectHalfLifeDays != null || supp.waiveHalfLifeDays != null) {
     o.suppression = { ...defaultConfig.suppression, ...supp };
+  }
+  const decHl = numEnv(env.PLEX_DECAY_HALFLIFE_DAYS);
+  const decTilt = numEnv(env.PLEX_DECAY_RETRIEVAL_TILT_FLOOR);
+  const decPruneFloor = numEnv(env.PLEX_DECAY_PRUNE_FLOOR);
+  const decPruneAge = numEnv(env.PLEX_DECAY_PRUNE_MIN_AGE_DAYS);
+  if (decHl != null) dec.halfLifeDays = decHl;
+  if (decTilt != null) dec.retrievalTiltFloor = decTilt;
+  if (decPruneFloor != null) dec.pruneFloor = decPruneFloor;
+  if (decPruneAge != null) dec.pruneMinAgeDays = decPruneAge;
+  if (dec.halfLifeDays != null || dec.retrievalTiltFloor != null || dec.pruneFloor != null || dec.pruneMinAgeDays != null) {
+    o.decay = { ...defaultConfig.decay, ...dec };
   }
 
   return resolveConfig({ ...o, ...overrides });
