@@ -63,4 +63,13 @@ describe('loadWaivers (which verdicts suppress the same finding next round)', ()
     const w = (await loadWaivers(repo, config)).find((x) => x.title === 'await in loop');
     expect(w).toMatchObject({ file: 'src/seed.ts', line: 12, scope: 'line' });
   });
+
+  it('item 2: a scope-less REJECT defaults to `line` (instance) — never `file` — so it cannot bury siblings', async () => {
+    // C1 (ADR-39): one reject must silence only the exact finding, not every finding in the file.
+    await recordVerdict(repo, { findingId: 'r', kind: 'reject', file: 'src/a.ts', line: 42, title: 'leftover console' }, config);
+    await recordVerdict(repo, { findingId: 'w', kind: 'waive', file: 'src/a.ts', line: 7, title: 'false positive' }, config);
+    const byTitle = Object.fromEntries((await loadWaivers(repo, config)).map((w) => [w.title, w]));
+    expect(byTitle['leftover console']!.scope).toBe('line'); // reject → instance-only
+    expect(byTitle['false positive']!.scope).toBe('file'); // waive keeps the broader default
+  });
 });

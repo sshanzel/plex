@@ -83,7 +83,11 @@ export async function loadWaivers(
   return stored
     .filter((v) => kinds.has(v.kind))
     .map((v) => ({
-      scope: v.scope ?? 'file',
+      // A `reject` ("not now") defaults to INSTANCE (`line`) scope, never `file`: one reject must
+      // silence only the exact finding it dismissed, not bury every unrelated finding in that file
+      // (C1, ADR-39). `waive`/`acknowledge` keep the broader `file` default. A reject's repo-wide
+      // effect comes only through the weighted negative-knowledge path, never a hard file waiver.
+      scope: v.scope ?? (v.kind === 'reject' ? 'line' : 'file'),
       file: v.file,
       line: v.line,
       title: v.title,
