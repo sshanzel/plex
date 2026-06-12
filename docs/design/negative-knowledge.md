@@ -209,7 +209,10 @@ end to end.
   match-or-mint a negative pitfall by cosine ≥ `adaptiveFloor(0.82,…)`, and rank via synthetic
   `pattern-repo` semantic waivers (reuses `waiverMatches`). Embedding-gated; `suppress`-tier only.
 
-The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d).
+The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d) —
+reachable via `~/.plex/config.json` (`"suppression": { "rejectHalfLifeDays", "waiveHalfLifeDays" }`,
+partial blocks merge with defaults) or `PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS` /
+`PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS`.
 
 **Two intended consequences worth naming (so they aren't read as bugs):**
 

@@ -13,6 +13,10 @@ import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
 export interface HomeConfig {
   embedding?: { provider?: EmbeddingProviderName; apiKey?: string; model?: string };
   llm?: { provider?: LlmProviderName; model?: string };
+  /** Learned-suppression recency-decay half-lives (ADR-41). Partial blocks merge with defaults
+   * (30d reject / 365d waive) in `resolveConfig`. Documented as the one tuning knob — so it must be
+   * reachable here, not just in `ReviewerConfig`. */
+  suppression?: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number };
 }
 
 export const homeConfigPath = (): string => path.join(os.homedir(), '.plex', 'config.json');
@@ -34,6 +38,7 @@ export function writeHomeConfig(patch: HomeConfig): HomeConfig {
     ...patch,
     embedding: { ...current.embedding, ...patch.embedding },
     llm: { ...current.llm, ...patch.llm },
+    suppression: { ...current.suppression, ...patch.suppression },
   };
   const f = homeConfigPath();
   mkdirSync(path.dirname(f), { recursive: true });

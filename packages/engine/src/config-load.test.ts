@@ -9,7 +9,7 @@ import { writeHomeConfig } from './home-config';
 // REAL home config via os.homedir(), so every test sandboxes $HOME to a temp dir (verified:
 // os.homedir() honors $HOME here) and clears PLEX_* env — otherwise results leak from the
 // dev machine. No Kùzu → vitest-safe.
-const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL'];
+const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS'];
 let home: string;
 let saved: Record<string, string | undefined>;
 
@@ -66,5 +66,27 @@ describe('loadConfig precedence', () => {
     process.env.PLEX_DATA_DIR = 'Y';
     expect(loadConfig().dataDir).toBe('Y');
     expect(loadConfig({ dataDir: 'X' }).dataDir).toBe('X'); // override wins
+  });
+
+  it('suppression half-lives default to 30/365 with empty home and no env', () => {
+    const c = loadConfig();
+    expect(c.suppression).toEqual({ rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 });
+  });
+
+  it('a ~/.plex/config.json suppression block reaches the config (the documented knob is reachable)', () => {
+    writeHomeConfig({ suppression: { rejectHalfLifeDays: 90, waiveHalfLifeDays: 500 } });
+    expect(loadConfig().suppression).toEqual({ rejectHalfLifeDays: 90, waiveHalfLifeDays: 500 });
+  });
+
+  it('a PARTIAL home suppression block merges with defaults (only the set field changes)', () => {
+    writeHomeConfig({ suppression: { rejectHalfLifeDays: 7 } });
+    expect(loadConfig().suppression).toEqual({ rejectHalfLifeDays: 7, waiveHalfLifeDays: 365 });
+  });
+
+  it('PLEX_SUPPRESSION_* env overrides home per-field; a non-numeric env is ignored', () => {
+    writeHomeConfig({ suppression: { rejectHalfLifeDays: 90, waiveHalfLifeDays: 500 } });
+    process.env.PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS = '14';
+    process.env.PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS = 'abc'; // non-numeric → ignored, home retained
+    expect(loadConfig().suppression).toEqual({ rejectHalfLifeDays: 14, waiveHalfLifeDays: 500 });
   });
 });
