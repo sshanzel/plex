@@ -58,7 +58,7 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     const decisions = await loadSuppressions(config, 'myrepo');
     const d = decisions.find((x) => x.key === 'no-console')!;
     expect(d.tier).toBe('suppress');
-    expect(d.dismissals).toBe(4); // the evidence basis travels with the decision (provenance)
+    expect(d.dismissals).toBeCloseTo(4, 4); // ~4 (recency-decayed; fresh incidents ≈ full weight, ADR-41)
     expect(d.corrections).toBe(0);
     // …and only ONE negative pitfall was minted for the rule (not one per dismissal).
     const negs = (await knowledgeStore(config).pitfalls()).filter((p) => p.polarity === 'negative');

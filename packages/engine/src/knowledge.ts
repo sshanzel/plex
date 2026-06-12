@@ -20,6 +20,8 @@ import {
   recordIncident,
   consolidatePitfalls,
   suppressionTier,
+  decayedCounts,
+  type Dismissal,
   type RetrievedPitfall,
   type ConsolidateResult,
 } from '@plex/knowledge';
@@ -135,7 +137,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string },
+  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive' },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -204,7 +206,11 @@ const PROMOTE_MIN_REPOS = 2;
  *     language-bound — a promoted `global@ts` decision can only ever match TS findings. There is NO
  *     language-agnostic auto-promotion (that stays certified-only).
  */
-export async function loadSuppressions(config: ReviewerConfig, repoName: string): Promise<SuppressionDecision[]> {
+export async function loadSuppressions(
+  config: ReviewerConfig,
+  repoName: string,
+  now: Date = new Date(),
+): Promise<SuppressionDecision[]> {
   const store = knowledgeStore(config);
   const [pitfalls, incidents] = await Promise.all([store.pitfalls(), store.incidents()]);
   const negatives = pitfalls.filter((p) => p.polarity === 'negative' && p.suppressKey);
@@ -215,12 +221,22 @@ export async function loadSuppressions(config: ReviewerConfig, repoName: string)
     if (!i.pitfallId) continue;
     (byPitfall.get(i.pitfallId) ?? byPitfall.set(i.pitfallId, []).get(i.pitfallId)!).push(i);
   }
+  const hl = { rejectDays: config.suppression.rejectHalfLifeDays, waiveDays: config.suppression.waiveHalfLifeDays };
+  const nowMs = now.getTime();
+  // Recency-decay the evidence (ADR-41): each dismissal contributes `recencyWeight` by its verb's
+  // half-life (reject fades fast, waive persists); corrections are durable. The decayed (fractional)
+  // counts feed `suppressionTier` unchanged — so a suppression ages back to demote/surface on its own.
   const countsOf = (p: Pitfall): { dismissals: number; corrections: number } => {
     const inc = byPitfall.get(p.id) ?? [];
-    return {
-      dismissals: inc.filter((i) => i.outcome === 'rejected').length,
-      corrections: inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length,
-    };
+    const dismissals: Dismissal[] = inc
+      .filter((i) => i.outcome === 'rejected')
+      .map((i) => {
+        const t = Date.parse(i.ts);
+        const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000; // unparseable ts → full weight
+        return { verb: i.verb ?? 'reject', ageDays }; // verb is authoritative; default reject (conservative)
+      });
+    const corrections = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length;
+    return decayedCounts(dismissals, corrections, hl);
   };
 
   const rank = { none: 0, demote: 1, suppress: 2 } as const;
@@ -328,8 +344,10 @@ export async function learnSuppression(
     snippet: key,
     pitfallId: id,
     outcome: dismissal ? 'rejected' : 'accepted',
-    // Provenance: the verb the scoring intentionally flattens (waive == reject as a dismissal) is
-    // preserved here so the history shows what kind of dismissal, where, and (via ts) when.
+    // The verb sets the recency-decay half-life (ADR-41): reject fades, waive persists. Authoritative
+    // (outcome:'rejected' flattens the two); only dismissals carry it.
+    verb: dismissal ? (input.kind === 'waive' ? 'waive' : 'reject') : undefined,
+    // Provenance note (human-readable history of what/where/when).
     note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}`,
   });
 }
