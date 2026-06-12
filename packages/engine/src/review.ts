@@ -160,6 +160,13 @@ function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string;
     if (!primary || path.resolve(primary.path) === self) return undefined; // we ARE the primary/base
 
     const def = defaultBranch(repoPath);
+    // A worktree that is ITSELF on the default branch is a canonical base — it must build its own
+    // graph, never share the (possibly non-default) primary. Without this, a default-branch secondary
+    // worktree shared the primary, leaving NO base graph for sibling feature worktrees to share, so
+    // they full-indexed. (Surfaced on Linux CI; macOS only passed via a path-resolution accident.)
+    const selfBranch = wts.find((w) => path.resolve(w.path) === self)?.branch;
+    if (def && selfBranch === def) return undefined;
+
     const onDefault = def ? wts.find((w) => w.branch === def && path.resolve(w.path) !== self) : undefined;
     const chosen = onDefault ?? primary;
     const graphDir = repoPaths(chosen.path, config.dataDir).graphDir;
