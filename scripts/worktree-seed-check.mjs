@@ -1,18 +1,22 @@
-// Worktree-seed end-to-end (ADR-32, revised) under the SHIPPED runtime: plain `node` driving
-// the built CLI. Secondary git worktrees now share the BASE repo's graph.kuzu read-only
-// instead of copying it — only brain.kuzu/verdicts live in the worktree's own data dir.
+// Worktree-seed end-to-end (ADR-32/ADR-40) under the SHIPPED runtime: plain `node` driving the
+// built CLI. A secondary git worktree gets its OWN graph.kuzu — a COPY of the base's, with its own
+// diff applied — and opens it NORMALLY. It does NOT share the base read-only: Kùzu 0.11.3's
+// read-only `Database` open SIGSEGVs on Linux (ADR-40), which is exactly what this guards against.
+// The worktree's data lives in-workspace (`<worktree>/.plex`, self-gitignored), so it dies with the
+// folder.
 //
 //   pnpm build && pnpm test:worktree
 //
 // Guards:
-//   1. NO SIGSEGV — multiple read-only opens of the same Kùzu graph must not crash.
-//   2. NO COPY — no 40 MB graph.kuzu under the worktree's data dir.
-//   3. Base SELF-REFRESH — a stale base is brought to its own HEAD before the worktree uses it.
-//   4. Base from the DEFAULT branch — the worktree on `main` is chosen over the primary.
+//   1. NO SIGSEGV + NORMAL open — the worktree's own graph never crashes (no read-only share).
+//   2. OWN GRAPH — the worktree has its own graph.kuzu copy in-workspace (not a shared base).
+//   3. Self-contained — graph + brain + sidecars live under `<worktree>/.plex`, self-gitignored.
+//   4. Auto-detect — without PLEX_DATA_DIR, a linked worktree still relocates in-workspace.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { tmpdir, homedir } from 'node:os';
+import { join, resolve, basename } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const CLI = resolve('dist/plex.js');
 if (!existsSync(CLI)) {
@@ -33,10 +37,10 @@ const graphExists = (cwd) => existsSync(join(cwd, '.plex', 'graph.kuzu'));
  * `index` is idempotent — a fresh child recovers. On Linux CI this flake hits often enough that a
  * single attempt is unreliable (this check runs ~6 indexes, so even a ~30% per-index crash rate goes
  * red ~90% of runs). Only SIGSEGV retries; a real non-zero exit returns immediately. */
-const cli = (args, cwd) => {
+const cli = (args, cwd, e = env) => {
   let r;
   for (let i = 0; i < 8; i++) {
-    r = spawnSync(process.execPath, [CLI, ...args], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    r = spawnSync(process.execPath, [CLI, ...args], { cwd, env: e, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     if (r.signal !== 'SIGSEGV') break;
   }
   return { code: r.status, signal: r.signal, out: (r.stdout ?? '') + (r.stderr ?? '') };
@@ -189,6 +193,48 @@ const assert = (c, m) => {
   } finally {
     try { git(main, 'worktree', 'remove', '--force', wt); } catch {}
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ── Scenario D — AUTO-DETECT: a linked worktree relocates in-workspace with NO PLEX_DATA_DIR ──
+// Scenarios A–C force `PLEX_DATA_DIR=.plex`, which short-circuits the worktree detection. This one
+// leaves it UNSET so the real `isLinkedWorktree` path runs (repoPaths sees the worktree's `.git`
+// FILE → `<worktree>/.plex`). A defensive cleanup removes the centralized dir auto-detect must
+// avoid, so a detection regression can't leave a stray dir under the real ~/.plex/repos.
+{
+  // repoId mirrors engine/src/paths.ts — the centralized dir a NON-worktree would use.
+  const repoId = (p) => {
+    const abs = resolve(p);
+    const base = basename(abs).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 40) || 'repo';
+    return `${base}-${createHash('sha1').update(abs).digest('hex').slice(0, 8)}`;
+  };
+  const root = mkdtempSync(join(tmpdir(), 'plex-wt-d-'));
+  const main = join(root, 'main');
+  const wt = join(root, 'wt');
+  const envAuto = { ...process.env, PLEX_EMBEDDING_PROVIDER: 'none' };
+  delete envAuto.PLEX_DATA_DIR; // unset → exercise auto-detection
+  const centralized = join(homedir(), '.plex', 'repos', repoId(wt));
+  try {
+    mkdirSync(join(main, 'src'), { recursive: true });
+    git(main, 'init', '-q');
+    git(main, 'config', 'user.email', 't@t.dev');
+    git(main, 'config', 'user.name', 'T');
+    writeFileSync(join(main, 'src/a.ts'), 'export function a() {\n  return 1;\n}\n');
+    git(main, 'add', '-A');
+    git(main, 'commit', '-q', '-m', 'init');
+    git(main, 'worktree', 'add', '-q', '-b', 'feat', wt);
+
+    const r = cli(['index', wt], wt, envAuto);
+    assert(r.signal !== 'SIGSEGV' && r.code === 0, `auto-detect index crashed/failed (signal=${r.signal}): ${r.out}`);
+    // The graph auto-relocated IN the worktree (detection fired) and NOT into the centralized root.
+    assert(graphExists(wt), `auto-detect must put the graph in-workspace at ${join(wt, '.plex', 'graph.kuzu')}, got: ${r.out}`);
+    assert(!existsSync(join(centralized, 'graph.kuzu')), `graph must NOT land in the centralized dir ${centralized}`);
+
+    console.log('✓ worktree-seed D: linked worktree auto-relocates in-workspace without PLEX_DATA_DIR');
+  } finally {
+    try { git(main, 'worktree', 'remove', '--force', wt); } catch {}
+    rmSync(root, { recursive: true, force: true });
+    rmSync(centralized, { recursive: true, force: true }); // defensive: never leak into the real ~/.plex
   }
 }
 
