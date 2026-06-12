@@ -117,7 +117,12 @@ export async function rankReviewFindings(
       }
     }
   }
-  const ranked = rankFindings(all, { waivers, semanticThreshold, suppressions });
+  const suppressionMap = new Map(suppressions.map((d) => [d.key, d.tier] as const));
+  const ranked = rankFindings(all, { waivers, semanticThreshold, suppressions: suppressionMap });
+  // Record only the suppressions that ACTUALLY matched a finding this review (the ones that shaped
+  // the output) as the audit-log provenance — not every active rule.
+  const appliedKeys = new Set(all.flatMap((f) => f.tags ?? []).filter((t) => suppressionMap.has(t)));
+  const appliedSuppressions = suppressions.filter((d) => appliedKeys.has(d.key));
 
   // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30). Key off the repo PATH
   // (basename), consistent with round recording + reconcile — never the graph meta (reviewTargetFor).
@@ -147,6 +152,9 @@ export async function rankReviewFindings(
     round,
     ts: new Date().toISOString(),
     findings: ranked.map(auditFinding),
+    ...(appliedSuppressions.length
+      ? { suppressions: appliedSuppressions.map((d) => ({ key: d.key, tier: d.tier, dismissals: d.dismissals, corrections: d.corrections })) }
+      : {}),
   });
 
   return { ranked, ...(autoComment !== undefined ? { autoComment } : {}) };

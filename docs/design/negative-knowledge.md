@@ -1,7 +1,7 @@
 # Design note — learned suppressions (negative knowledge) + language-aware scope promotion
 
-**Status:** **partially built** (steps 1–3 of the build order below shipped; step 4 — language-gated
-repo→global promotion — remains). Promote to ADR-39 when the model is complete. Builds on
+**Status:** **built** (all four build-order steps + provenance shipped; decay / re-surface probe /
+first-principles suppression deliberately deferred — see below). Promote to ADR-39. Builds on
 [`knowledge-decay.md`](knowledge-decay.md) (the weighting/aging machinery) and
 [`outcome-signals.md`](outcome-signals.md) (richer outcome grades).
 
@@ -182,16 +182,31 @@ Promotion runs in consolidation, mirroring positive↔negative:
    (`loadWaivers` honors only `waive`/`acknowledge` for the up-front prime).
 3. ✅ **Consolidation → earned repo-wide suppression** — polarity-aware Wilson in `consolidatePitfalls`
    (a dismissal confirms, an accept/fix refutes); `suppressionTier` decides suppress vs demote.
-4. ⬜ **`language` tag + language-gated repo→global promotion (C2)** — the `language` field is captured
-   at produce time (`languageOf`) and `loadSuppressions` already respects scope; still to build: the
-   promotion step (a repo negative seen across ≥N repos of a language → `global@lang`) and the
-   language gate on retrieval. **Strict:** never auto-promote to language-blind global.
+4. ✅ **Language-gated cross-repo promotion (C2)** — computed LIVE in `loadSuppressions` (no persisted
+   global entity, no incident duplication, no stale state): a key that earned `suppress` in ≥
+   `PROMOTE_MIN_REPOS` (2) distinct repos **of the same language** generalizes. Grouping by language
+   means TS and Python never merge, and — because a deterministic rule tag is itself language-bound —
+   a promoted `global@ts` decision can only ever match TS findings. **No** language-blind auto-promotion
+   (agnostic-global stays certified-only). `PROMOTE_MIN_REPOS` is a POLICY floor (how many independent
+   projects before generalizing is a risk choice), explicitly *not* a statistical one — kept ≥2 so one
+   repo can't self-promote.
 
-## Still open before ADR-39
+**Provenance (history of WHY a rule is listed).** Three layers: the brain's `Verdict` nodes hold the
+raw dismissals per round; each knowledge `Incident` carries a `note` with the originating verb
+(`reject`/`waive`) + finding id that `outcome:'rejected'` alone loses; and the audit log's
+`findings_submitted` event records the `suppressions` active for the review with their
+dismissal/correction counts and Wilson tier. So "why is `no-console` suppressed here?" is answerable
+end to end.
 
-- **Decay** (knowledge-decay.md) — gives reject ("not now") its time-reversibility vs waive ("wrong");
-  currently both are equal dismissal observations with no aging.
-- **Re-surface probe** for a `suppressed` rule (every K reviews / on material change) so a wrong
-  suppression is recoverable — not yet implemented.
-- **Knowledge-finding suppression** — today only deterministic rules (stable tag) learn suppression;
-  first-principles findings have no stable key.
+## Deliberately deferred (and why)
+
+- **Decay + re-surface probe** — both need a tuning **constant** (a half-life, or a "re-surface every
+  K reviews" cadence). Introducing one would reintroduce exactly the hand-tuned magic this effort
+  removed in favor of Wilson, so they're *not* built unsilently. Note the recovery path already
+  exists WITHOUT a probe: `suppressed` **sinks to the bottom of the stream, it is not deleted** — a
+  user who disagrees can still see and `accept` it, and one accept (a correction) drops the Wilson
+  tier. A time-based probe/decay is a UX refinement to decide on explicitly (it costs a constant).
+- **Knowledge-finding (first-principles) suppression** — only deterministic rules + explicit patterns
+  have a stable suppression key today; a first-principles finding's identity is "a line of code," so
+  repo-wide suppression would need semantic matching (ADR-27 territory) with its own false-positive
+  risk. Separate feature.

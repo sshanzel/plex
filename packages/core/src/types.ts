@@ -321,5 +321,12 @@ export interface Incident {
   file?: string;
   snippet?: string;
   outcome?: IncidentOutcome;
+  /**
+   * Provenance note — free text recording WHY this incident exists. For a learned-suppression
+   * dismissal it carries the originating verb + round (`reject @round3`), which `outcome:'rejected'`
+   * alone loses, so the history can answer "this rule got suppressed because it was waived once and
+   * rejected three times across rounds 2–5."
+   */
+  note?: string;
   ts: string;
 }

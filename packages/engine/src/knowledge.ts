@@ -135,7 +135,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string },
+  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -173,37 +173,95 @@ export function languageOf(file?: string): string | undefined {
   return EXT_LANG[path.extname(file).toLowerCase()];
 }
 
+/** A learned-suppression decision with the evidence that justifies it — the provenance the audit log
+ * records so "why is this rule demoted/suppressed?" is answerable. */
+export interface SuppressionDecision {
+  key: string;
+  tier: 'suppress' | 'demote';
+  dismissals: number;
+  corrections: number;
+  pitfallId: string;
+}
+
 /**
- * Read the learned suppression decision per rule tag for a repo (docs/design/negative-knowledge.md).
- * Computed LIVE from the negative pitfalls' incident counts via Wilson `suppressionTier`, so it's
- * fresh on every review WITHOUT waiting for `consolidate` to run (a dismissal takes effect on the
- * next review). Global negatives (scope ≠ `repo`) apply everywhere; repo negatives only to their
- * origin. Returned to ranking as plain `'suppress' | 'demote'` decisions.
+ * Generalize a per-repo suppression to all repos of its language once the SAME rule has independently
+ * earned `suppress` in at least this many distinct repos (C2). A POLICY floor, not a statistical one
+ * (Wilson governs whether a single repo suppresses; "how many independent projects before we
+ * generalize" is a risk choice) — kept small but ≥2 so one repo can never self-promote.
  */
-export async function loadSuppressions(
-  config: ReviewerConfig,
-  repoName: string,
-): Promise<Map<string, 'suppress' | 'demote'>> {
+const PROMOTE_MIN_REPOS = 2;
+
+/**
+ * Read the learned suppression decisions effective for a repo (docs/design/negative-knowledge.md).
+ * Computed LIVE from the negative pitfalls' incident counts via Wilson `suppressionTier`, so it's
+ * fresh on every review WITHOUT waiting for `consolidate` (a dismissal takes effect next review).
+ *
+ * Two sources, deduped by key (stronger tier wins):
+ *  1. This repo's OWN negative pitfalls.
+ *  2. **Cross-repo, language-gated promotion (C2):** a key that earned `suppress` in ≥
+ *     `PROMOTE_MIN_REPOS` distinct repos OF THE SAME LANGUAGE generalizes. Grouping by language means
+ *     a TS rule never merges with a Python one, and — because a deterministic rule tag is itself
+ *     language-bound — a promoted `global@ts` decision can only ever match TS findings. There is NO
+ *     language-agnostic auto-promotion (that stays certified-only).
+ */
+export async function loadSuppressions(config: ReviewerConfig, repoName: string): Promise<SuppressionDecision[]> {
   const store = knowledgeStore(config);
   const [pitfalls, incidents] = await Promise.all([store.pitfalls(), store.incidents()]);
-  const negatives = pitfalls.filter(
-    (p) => p.polarity === 'negative' && p.suppressKey && (p.scope !== 'repo' || p.repo === repoName),
-  );
-  if (negatives.length === 0) return new Map();
+  const negatives = pitfalls.filter((p) => p.polarity === 'negative' && p.suppressKey);
+  if (negatives.length === 0) return [];
+
   const byPitfall = new Map<string, Incident[]>();
   for (const i of incidents) {
     if (!i.pitfallId) continue;
     (byPitfall.get(i.pitfallId) ?? byPitfall.set(i.pitfallId, []).get(i.pitfallId)!).push(i);
   }
-  const out = new Map<string, 'suppress' | 'demote'>();
-  for (const p of negatives) {
+  const countsOf = (p: Pitfall): { dismissals: number; corrections: number } => {
     const inc = byPitfall.get(p.id) ?? [];
-    const dismissals = inc.filter((i) => i.outcome === 'rejected').length;
-    const corrections = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length;
+    return {
+      dismissals: inc.filter((i) => i.outcome === 'rejected').length,
+      corrections: inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length,
+    };
+  };
+
+  const rank = { none: 0, demote: 1, suppress: 2 } as const;
+  const best = new Map<string, SuppressionDecision>();
+  const consider = (d: SuppressionDecision): void => {
+    const prev = best.get(d.key);
+    if (!prev || rank[d.tier] > rank[prev.tier]) best.set(d.key, d);
+  };
+
+  // 1) This repo's own negatives (and any already-global one).
+  for (const p of negatives) {
+    if (p.scope === 'repo' && p.repo !== repoName) continue;
+    const { dismissals, corrections } = countsOf(p);
     const tier = suppressionTier(dismissals, corrections);
-    if (tier !== 'none') out.set(p.suppressKey!, tier);
+    if (tier !== 'none') consider({ key: p.suppressKey!, tier, dismissals, corrections, pitfallId: p.id });
   }
-  return out;
+
+  // 2) Cross-repo promotion, grouped by (key, language) so languages never merge.
+  const groups = new Map<string, Pitfall[]>();
+  for (const p of negatives) {
+    if (p.scope !== 'repo') continue;
+    const g = `${p.suppressKey} ${p.language ?? ''}`;
+    (groups.get(g) ?? groups.set(g, []).get(g)!).push(p);
+  }
+  for (const group of groups.values()) {
+    const suppressingRepos = new Set<string>();
+    let dismissals = 0;
+    let corrections = 0;
+    for (const p of group) {
+      const c = countsOf(p);
+      dismissals += c.dismissals;
+      corrections += c.corrections;
+      if (suppressionTier(c.dismissals, c.corrections) === 'suppress' && p.repo) suppressingRepos.add(p.repo);
+    }
+    if (suppressingRepos.size >= PROMOTE_MIN_REPOS) {
+      const k = group[0]!.suppressKey!;
+      consider({ key: k, tier: 'suppress', dismissals, corrections, pitfallId: `global@${group[0]!.language ?? ''}:${k}` });
+    }
+  }
+
+  return [...best.values()];
 }
 
 /**
@@ -257,6 +315,9 @@ export async function learnSuppression(
     snippet: key,
     pitfallId: id,
     outcome: dismissal ? 'rejected' : 'accepted',
+    // Provenance: the verb the scoring intentionally flattens (waive == reject as a dismissal) is
+    // preserved here so the history shows what kind of dismissal, where, and (via ts) when.
+    note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}`,
   });
 }
 
