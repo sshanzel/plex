@@ -195,8 +195,14 @@ function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const cli = path.join(path.dirname(entry), 'plex.js');
   if (!existsSync(cli)) return false;
   const args = incremental ? [cli, 'index', repoPath, '--incremental'] : [cli, 'index', repoPath];
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (spawnSync(process.execPath, args, { stdio: 'ignore' }).status === 0) return true;
+  // Retry the transient Kùzu-native SIGSEGV (ADR-17) — a native crash, not a logic failure, and
+  // `index` is idempotent (rebuilds from scratch), so a fresh child recovers. This flake is frequent
+  // on Linux, where a single attempt would fail the auto-index/refresh. Only SIGSEGV retries; a real
+  // failure (non-zero exit) won't be fixed by re-running, so stop early.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = spawnSync(process.execPath, args, { stdio: 'ignore' });
+    if (r.status === 0) return true;
+    if (r.signal !== 'SIGSEGV') break;
   }
   return false;
 }
