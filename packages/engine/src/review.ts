@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, statSync } from 'node:fs';
+import { spawnSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import type {
   ReviewerConfig,
@@ -33,7 +33,7 @@ import { classifyChanges, reviewPlan, isWaived, type RegionVec, type SignalVec, 
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/distill';
 import type { RetrievedPitfall } from '@plex/knowledge';
-import { repoPaths, ensureDataDir } from './paths';
+import { repoPaths, ensureDataDir, type RepoPaths } from './paths';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
@@ -98,15 +98,28 @@ export async function indexRepo(
   // SIGSEGVs on Linux (confirmed; no upstream fix available — ADR-32/ADR-39), so every secondary
   // worktree gets its OWN graph and opens it normally. The copy is cheap vs a full re-index and
   // independent, so concurrent worktree reviews never conflict on the single-writer lock.
-  if (!existsSync(p.graphDir)) {
+  // (Re)seed from the base (`main`) graph when EITHER there's no graph yet, OR `main` has advanced past
+  // the sha we seeded from AND main's own graph is already fresh — so the re-copy is cheap (ADR-43,
+  // user's model: keep the branch's base portion current). When main moved but its graph is itself
+  // stale (the copy CAN'T be cheaply brought current), we deliberately do NOT refresh main here — the
+  // review spawns the maintenance worker "tight" to refresh main, and the next review re-seeds cheap
+  // (the accepted first-review-may-be-stale trade-off). A full build below is the fallback when no base.
+  if (!existsSync(p.graphDir) || (await baseSeedState(p, config)) === 'reseed') {
     const base = baseWorktree(p.repoPath, config);
     if (base) {
-      indexIsolated(base.path, true); // refresh the base to ITS OWN head in an isolated child (ADR-17)
+      const firstSeed = !existsSync(p.graphDir);
+      if (firstSeed) indexIsolated(base.path, true); // initial seed: refresh the base to ITS OWN head (ADR-17)
       try {
+        if (!firstSeed) rmSync(p.graphDir, { recursive: true, force: true }); // re-seed: drop the stale copy first
         mkdirSync(path.dirname(p.graphDir), { recursive: true });
         cpSync(base.graphDir, p.graphDir, { recursive: true });
         const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
         persistDeleted(res);
+        try {
+          writeFileSync(p.baseShaFile, await getHeadSha(base.path), 'utf8'); // record the main sha we seeded from
+        } catch {
+          /* best-effort */
+        }
         await stamp();
         return { ...res, graphDir: p.graphDir, seeded: true };
       } catch {
@@ -118,6 +131,36 @@ export async function indexRepo(
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
   await stamp();
   return { ...res, graphDir: p.graphDir, incremental: false };
+}
+
+/**
+ * Resolve the CANONICAL base checkout (`main`) from any worktree — the default-branch worktree if one
+ * is checked out, else the primary worktree, else `repoPath` itself (ADR-43, the maintenance sweep
+ * always targets main: its data dir is centralized + durable, sidestepping the ADR-40 worktree-brain
+ * death). Unlike `baseWorktree` there is NO graph-exists gate — the sweep's GraphFreshnessJob creates
+ * main's graph. Best-effort: any git failure → `repoPath` (treat the current checkout as the base).
+ */
+export function resolveMainRepoPath(repoPath: string): string {
+  try {
+    const out = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath, encoding: 'utf8' });
+    if (out.status !== 0) return path.resolve(repoPath);
+    const wts: { path: string; branch?: string }[] = [];
+    let cur: { path: string; branch?: string } | null = null;
+    for (const line of out.stdout.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        cur = { path: line.slice('worktree '.length) };
+        wts.push(cur);
+      } else if (line.startsWith('branch ') && cur) {
+        cur.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+      }
+    }
+    const def = defaultBranch(repoPath);
+    const onDefault = def ? wts.find((w) => w.branch === def) : undefined;
+    const chosen = onDefault ?? wts[0];
+    return chosen ? path.resolve(chosen.path) : path.resolve(repoPath);
+  } catch {
+    return path.resolve(repoPath);
+  }
 }
 
 /** The repo's default branch (`origin/HEAD`, else `main`/`master`). undefined if unknown. */
@@ -173,12 +216,48 @@ function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string;
 }
 
 /** Read the sidecar indexed HEAD sha (no Kùzu). undefined if not indexed / pre-sidecar. */
-function readIndexedSha(headShaFile: string): string | undefined {
+export function readIndexedSha(headShaFile: string): string | undefined {
   try {
     return existsSync(headShaFile) ? readFileSync(headShaFile, 'utf8').trim() || undefined : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** The `main` HEAD sha a worktree's graph was seeded from (`base.sha`). undefined if not a seeded worktree. */
+function readBaseSha(baseShaFile: string): string | undefined {
+  try {
+    return existsSync(baseShaFile) ? readFileSync(baseShaFile, 'utf8').trim() || undefined : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A secondary worktree's base-graph staleness vs `main` (ADR-43, user's model). At review start we
+ * compare the sha the worktree seeded from (`base.sha`) against main's current HEAD:
+ *  - `fresh`        — main unchanged (or not a seeded worktree) → nothing to do.
+ *  - `reseed`       — main advanced AND main's graph is already fresh → cheap re-copy (indexRepo does it).
+ *  - `refresh-main` — main advanced but its graph is itself stale → the copy can't be cheaply updated,
+ *                     so the review spawns the maintenance worker "tight" to refresh main; THIS review
+ *                     proceeds on the current base (the accepted first-review-may-be-stale trade-off),
+ *                     the next one re-seeds. Best-effort: any ambiguity → `fresh`.
+ */
+type BaseSeedState = 'fresh' | 'reseed' | 'refresh-main';
+async function baseSeedState(p: RepoPaths, config: ReviewerConfig): Promise<BaseSeedState> {
+  if (!existsSync(p.graphDir)) return 'fresh'; // first seed is the existsSync branch, not here
+  const recorded = readBaseSha(p.baseShaFile);
+  if (!recorded) return 'fresh'; // not a seeded worktree (or pre-base-sha)
+  const base = baseWorktree(p.repoPath, config);
+  if (!base) return 'fresh';
+  let baseHead: string | undefined;
+  try {
+    baseHead = await getHeadSha(base.path);
+  } catch {
+    return 'fresh';
+  }
+  if (!baseHead || baseHead === recorded) return 'fresh'; // main unchanged since we seeded
+  return readIndexedSha(repoPaths(base.path, config.dataDir).headShaFile) === baseHead ? 'reseed' : 'refresh-main';
 }
 
 /**
@@ -192,7 +271,7 @@ function readIndexedSha(headShaFile: string): string | undefined {
  * full build self-heals: a partial graph from the crashed attempt makes the next `plex index`
  * skip the seed and fall to `buildCodeGraph`, which clears the dir first and rebuilds clean.
  */
-function indexIsolated(repoPath: string, incremental: boolean): boolean {
+export function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   const cli = path.join(path.dirname(entry), 'plex.js');
@@ -208,6 +287,46 @@ function indexIsolated(repoPath: string, incremental: boolean): boolean {
     if (r.signal !== 'SIGSEGV') break;
   }
   return false;
+}
+
+const SWEEP_DEBOUNCE_MS = 10 * 60 * 1000; // ≤1 background sweep per 10 min per data dir
+
+/**
+ * Fire-and-forget the background maintenance worker (ADR-43) for `main`. Unlike `indexIsolated` this
+ * uses `spawn` + `detached` + `unref` — it must NOT block the triggering review/MCP call. Resolves
+ * `main` (the sweep targets it from any worktree) and runs `plex sweep <main>`. Guards: no built CLI
+ * beside `argv[1]` → no-op (dev/tsx); a marker younger than the debounce → skip (the worker's own
+ * single-flight lock prevents overlap if two spawns still race). `force` bypasses the debounce — used
+ * by the review-start base-staleness path when a review actually needs main refreshed now ("tight").
+ * Returns true if it spawned. Best-effort: any failure → false, never throws into the caller.
+ */
+export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force = false): boolean {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return false;
+    const cli = path.join(path.dirname(entry), 'plex.js');
+    if (!existsSync(cli)) return false; // dev/tsx: no built CLI to spawn
+    const main = resolveMainRepoPath(repoPath);
+    const p = repoPaths(main, config.dataDir);
+    if (!force) {
+      try {
+        if (Date.now() - statSync(p.sweepMarkerFile).mtimeMs < SWEEP_DEBOUNCE_MS) return false;
+      } catch {
+        /* no marker yet → proceed */
+      }
+    }
+    try {
+      mkdirSync(p.reviewerDir, { recursive: true });
+      writeFileSync(p.sweepMarkerFile, new Date().toISOString(), 'utf8'); // debounce future spawns now
+    } catch {
+      /* best-effort */
+    }
+    const child = spawn(process.execPath, [cli, 'sweep', main], { detached: true, stdio: 'ignore' });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */
@@ -637,6 +756,17 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     changeContext: changeContext != null,
     unexplainedChanges: brain.unexplainedChanges.length,
   });
+
+  // Background maintenance worker (ADR-43): now that this review's Kùzu opens are closed, fire-and-
+  // forget a debounced sweep that keeps `main` fresh + closes landed loops. Force it "tight" (bypass
+  // the debounce) when this worktree's base copy is stale and main itself needs refreshing first — so
+  // the next review re-seeds from a current main. Best-effort; never blocks or breaks the review.
+  try {
+    const seedState = await baseSeedState(repoPaths(opts.repoPath, opts.config.dataDir), opts.config);
+    maybeSpawnSweep(opts.repoPath, opts.config, seedState === 'refresh-main');
+  } catch {
+    /* best-effort */
+  }
 
   return {
     repo,

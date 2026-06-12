@@ -23,6 +23,14 @@ export interface RepoPaths {
   /** Content-addressed embedding cache (stable, recurring texts e.g. finding titles) — so an
    * N-round PR embeds each title once, not N times. Doubles as local proof embeddings fired. */
   embedCacheFile: string;
+  /** Background maintenance worker (ADR-43) per-target reconcile cursor + per-job last-run. */
+  sweepStateFile: string;
+  /** Worker debounce marker — its mtime is the last sweep attempt (≤1 run / interval / data dir). */
+  sweepMarkerFile: string;
+  /** Worker single-flight lock — `openSync(..,'wx')` so only one sweep runs per data dir. */
+  sweepLockFile: string;
+  /** The base (`main`) HEAD sha a worktree's graph was SEEDED from (ADR-32/43) — staleness vs main. */
+  baseShaFile: string;
 }
 
 /**
@@ -89,6 +97,10 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     headShaFile: path.join(reviewerDir, 'head.sha'),
     repoPathFile: path.join(reviewerDir, 'repo-path'),
     embedCacheFile: path.join(reviewerDir, 'embed-cache.json'),
+    sweepStateFile: path.join(reviewerDir, 'sweep-state.json'),
+    sweepMarkerFile: path.join(reviewerDir, 'sweep-last.txt'),
+    sweepLockFile: path.join(reviewerDir, 'sweep.lock'),
+    baseShaFile: path.join(reviewerDir, 'base.sha'),
   };
 }
 

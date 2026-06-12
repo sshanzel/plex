@@ -55,5 +55,6 @@ jobs:
       # open-limit, ADR-17). `pnpm build` above already produced dist/, so call the scripts directly.
       - run: node scripts/brain-check.mjs # auto-index + rounds + changed-without-feedback
       - run: node scripts/worktree-seed-check.mjs # ADR-32 worktree graph seeding, no SIGSEGV
+      - run: node scripts/sweep-check.mjs # ADR-43 maintenance worker: refresh main + sidecars + idempotent
       - run: node scripts/cochange-check.mjs # incremental + cross-window co-change accumulation
       - run: node scripts/deleted-radius-check.mjs # deletion blast radius

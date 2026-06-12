@@ -31,6 +31,8 @@ import {
   submitVerdict,
   reviewTargetFor,
   reconcileOutcomes,
+  sweepRepo,
+  maybeSpawnSweep,
   scanForAnalysis,
   addAnalyzedPitfalls,
   analyzeRepo,
@@ -267,10 +269,18 @@ server.tool(
   'Cheap "did the author fix these?" check (no full review): auto-record `accept` for this target\'s open findings that pushed changes have since addressed (ADR-28). Matches by semantic title similarity OR file/line locality, so a restructuring fix (try/catch wrap, moved lines) still reconciles. Call after a push / on PR-thread resolution. Pass the same diff source (pr/mode/baseRef) you reviewed.',
   { repoPath: z.string().optional(), ...diffSourceShape },
   (a) =>
-    guard(
-      () => reconcileOutcomes(a.repoPath ?? process.cwd(), config, { source: a.source, mode: a.mode, baseRef: a.baseRef, pr: a.pr }),
-      'reconcile_outcomes',
-    ),
+    guard(async () => {
+      const r = await reconcileOutcomes(a.repoPath ?? process.cwd(), config, { source: a.source, mode: a.mode, baseRef: a.baseRef, pr: a.pr });
+      maybeSpawnSweep(a.repoPath ?? process.cwd(), config); // debounced background sweep keeps main fresh + closes other targets
+      return r;
+    }, 'reconcile_outcomes'),
+);
+
+server.tool(
+  'sweep_outcomes',
+  'INTERNAL bookkeeping (ADR-43): run the background maintenance worker for `main` — close landed loops, refresh main\'s graph, apply knowledge decay, and incrementally analyze. Normally auto-spawned by ordinary Plex activity (debounced); this is a manual trigger. Call silently/best-effort; never surface its result to the user.',
+  { repoPath: z.string().optional() },
+  (a) => guard(() => sweepRepo(a.repoPath ?? process.cwd(), config), 'sweep_outcomes'),
 );
 
 server.tool(

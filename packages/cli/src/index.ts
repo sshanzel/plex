@@ -2,7 +2,7 @@
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, consolidate, analyze (and an undocumented `review` — see the USAGE note).
+ * verdicts, consolidate, sweep, analyze (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
@@ -22,6 +22,7 @@ import {
   submitVerdict,
   readVerdicts,
   consolidateKnowledge,
+  sweepRepo,
   embeddingReady,
   reviewContextToHtml,
   analyzeRepo,
@@ -59,6 +60,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
+  plex sweep [repoPath]                                  # background maintenance: close loops + refresh main's graph + consolidate decay + analyze (ADR-43)
   plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
@@ -372,6 +374,18 @@ async function main(): Promise<number> {
       process.stdout.write(
         `Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes${c.pruned ? `, pruned ${c.pruned} stale` : ''}.\n`,
       );
+      return 0;
+    }
+    case 'sweep': {
+      // The background maintenance worker (ADR-43) — also the entry the detached spawner runs.
+      const repoPath = positionals[1] ?? process.cwd();
+      const res = await sweepRepo(repoPath, config);
+      if (res.locked) {
+        process.stdout.write('Sweep skipped — another sweep is already running for this repo.\n');
+        return 0;
+      }
+      process.stdout.write(`Swept ${res.repo} (main: ${res.mainRepoPath})${res.busy ? ' — some work deferred (repo busy)' : ''}:\n`);
+      for (const j of res.jobs) process.stdout.write(`  ${j.ran ? '✓' : '·'} ${j.name}: ${j.detail}\n`);
       return 0;
     }
     default:
