@@ -18,6 +18,31 @@ export function isDeadTarget(cursor: string | undefined): boolean {
   return cursor === CLOSED_TARGET;
 }
 
+/**
+ * Should an empty-head PR target be condemned to the dead sentinel? Only when `gh` *confirms* the PR
+ * is `CLOSED`/`MERGED` — NOT on a transient gh failure (which also yields '' from `getPrHeadSha`/
+ * `getPrState`, e.g. network/rate-limit/auth, or gh missing in the detached sweep env). A transient
+ * empty just retries next sweep; a genuinely closed PR stops being re-probed forever (ADR-43).
+ */
+export function deadPrSentinel(prState: string | undefined): boolean {
+  const s = (prState ?? '').toUpperCase();
+  return s === 'CLOSED' || s === 'MERGED';
+}
+
+/** Is the lock-holder process still alive? `process.kill(pid, 0)` signals nothing but probes existence:
+ *  no throw / `EPERM` (exists, other user) → alive; `ESRCH` (no such process) → dead. An unparseable
+ *  pid → assume alive (conservative — don't steal a lock we can't reason about). Used to steal a
+ *  CRASHED sweep's lock immediately instead of waiting out the 30-min mtime staleness (ADR-43). */
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
 /** Debounce: true (skip) when the marker is younger than the interval. Undefined marker → never debounced. */
 export function isDebounced(markerMtimeMs: number | undefined, nowMs: number, intervalMs: number): boolean {
   return markerMtimeMs != null && nowMs - markerMtimeMs < intervalMs;

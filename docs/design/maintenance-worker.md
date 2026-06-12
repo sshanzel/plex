@@ -91,8 +91,12 @@ the real path that tsx structurally can't.
 
 - A linked worktree's *own* brain still dies with its folder (ADR-40) — the worker targets durable
   `main`, it does not cross worktrees.
-- The `gh` PR-state is **not** a dependency — head-advance is detected offline (git head vs cursor);
-  `gh`-based precision is a future option.
+- Head-advance is detected offline (git head vs cursor). A PR target whose head resolves empty is
+  condemned to the terminal `CLOSED_TARGET` sentinel (stop re-probing) **only after `gh pr view`
+  confirms it's `CLOSED`/`MERGED`** — a transient gh failure (network/auth, or gh missing in the
+  detached env) just retries, so one outage never permanently disables a live PR's closure. **A
+  reopened PR is not auto-recovered by the sweep** (the sentinel is terminal) — but its closure rides
+  its re-review's inline reconcile (ADR-36), so this is an accepted narrow gap, not a lost loop.
 - It's per-machine. The MCP tools (`reconcile_outcomes`/`consolidate_knowledge`/`analyze_*`) are kept as
   proactive escape hatches but are no longer load-bearing.
 
