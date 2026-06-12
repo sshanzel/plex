@@ -15,6 +15,11 @@ const cfg = () => {
   dir = mkdtempSync(join(tmpdir(), 'plex-supp-'));
   return resolveConfig({ knowledgeDir: dir });
 };
+// With the deterministic test-only embedder, so the first-principles (semantic) path is exercised.
+const cfgEmbed = () => {
+  dir = mkdtempSync(join(tmpdir(), 'plex-supp-'));
+  return resolveConfig({ knowledgeDir: dir, embedding: { provider: 'fake' } });
+};
 
 describe('suppressionKeyFor', () => {
   it('parses the rule tag out of a deterministic finding id', () => {
@@ -146,5 +151,44 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
       await learnSuppression(config, 'pyRepo', { kind: 'reject', pattern: 'shared', findingId: `f${f}`, file: `${f}.py` }, true);
     // Neither language reached 2 distinct repos → no cross-language generalization.
     expect(await tierOf(config, 'freshRepo', 'shared')).toBeUndefined();
+  });
+});
+
+describe('first-principles suppression (semantic key, ADR-41)', () => {
+  const negsOf = async (config: ReturnType<typeof resolveConfig>) =>
+    (await knowledgeStore(config).pitfalls()).filter((p) => p.polarity === 'negative');
+  // A first-principles dismissal: no `det:` id, no pattern — only a title (the semantic key).
+  const fp = (config: ReturnType<typeof resolveConfig>, file: string, title = 'Possible null deref on `user.profile`') =>
+    learnSuppression(config, 'myrepo', { kind: 'reject', findingId: `agent:${file}`, title, file }, true);
+
+  it('mints an embedding-keyed negative pitfall (no suppressKey) for a dismissed first-principles finding', async () => {
+    const config = cfgEmbed();
+    await fp(config, 'a.ts');
+    const negs = await negsOf(config);
+    expect(negs).toHaveLength(1);
+    expect(negs[0]!.suppressKey).toBeUndefined(); // identity is the embedding, not a tag
+    expect(negs[0]!.embedding?.length).toBeGreaterThan(0);
+  });
+
+  it('accumulates repeated dismissals of the SAME issue onto ONE pitfall → suppress, carrying the vector', async () => {
+    const config = cfgEmbed();
+    for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) await fp(config, f); // same title → all match by cosine
+    const negs = await negsOf(config);
+    expect(negs).toHaveLength(1); // matched the first, did not mint duplicates
+    const d = (await loadSuppressions(config, 'myrepo')).find((x) => x.pitfallId === negs[0]!.id)!;
+    expect(d.tier).toBe('suppress');
+    expect(d.embedding?.length).toBeGreaterThan(0); // ranking matches findings semantically via this
+  });
+
+  it('does NOT learn first-principles suppression without an embedding provider (deterministic-only degradation)', async () => {
+    const config = cfg(); // provider 'none'
+    await fp(config, 'a.ts');
+    expect(await negsOf(config)).toHaveLength(0);
+  });
+
+  it('a corrective accept with no matching negative pitfall mints nothing', async () => {
+    const config = cfgEmbed();
+    await learnSuppression(config, 'myrepo', { kind: 'accept', findingId: 'agent:x', title: 'Unrelated', file: 'a.ts' }, true);
+    expect(await negsOf(config)).toHaveLength(0);
   });
 });
