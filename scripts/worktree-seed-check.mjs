@@ -14,9 +14,8 @@
 //   4. Auto-detect — without PLEX_DATA_DIR, a linked worktree still relocates in-workspace.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
-import { join, resolve, basename } from 'node:path';
-import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const CLI = resolve('dist/plex.js');
 if (!existsSync(CLI)) {
@@ -202,18 +201,16 @@ const assert = (c, m) => {
 // FILE → `<worktree>/.plex`). A defensive cleanup removes the centralized dir auto-detect must
 // avoid, so a detection regression can't leave a stray dir under the real ~/.plex/repos.
 {
-  // repoId mirrors engine/src/paths.ts — the centralized dir a NON-worktree would use.
-  const repoId = (p) => {
-    const abs = resolve(p);
-    const base = basename(abs).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 40) || 'repo';
-    return `${base}-${createHash('sha1').update(abs).digest('hex').slice(0, 8)}`;
-  };
   const root = mkdtempSync(join(tmpdir(), 'plex-wt-d-'));
   const main = join(root, 'main');
   const wt = join(root, 'wt');
-  const envAuto = { ...process.env, PLEX_EMBEDDING_PROVIDER: 'none' };
-  delete envAuto.PLEX_DATA_DIR; // unset → exercise auto-detection
-  const centralized = join(homedir(), '.plex', 'repos', repoId(wt));
+  // Point HOME at a temp dir so the CENTRALIZED root (`os.homedir()/.plex/repos/...`, what a
+  // NON-worktree would use) also lands under temp — the test can never touch the real ~/.plex, even
+  // if `isLinkedWorktree` regressed. No PLEX_DATA_DIR → the real auto-detection path runs.
+  const fakeHome = join(root, 'home');
+  mkdirSync(fakeHome, { recursive: true });
+  const envAuto = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, PLEX_EMBEDDING_PROVIDER: 'none' };
+  delete envAuto.PLEX_DATA_DIR;
   try {
     mkdirSync(join(main, 'src'), { recursive: true });
     git(main, 'init', '-q');
@@ -228,13 +225,12 @@ const assert = (c, m) => {
     assert(r.signal !== 'SIGSEGV' && r.code === 0, `auto-detect index crashed/failed (signal=${r.signal}): ${r.out}`);
     // The graph auto-relocated IN the worktree (detection fired) and NOT into the centralized root.
     assert(graphExists(wt), `auto-detect must put the graph in-workspace at ${join(wt, '.plex', 'graph.kuzu')}, got: ${r.out}`);
-    assert(!existsSync(join(centralized, 'graph.kuzu')), `graph must NOT land in the centralized dir ${centralized}`);
+    assert(!existsSync(join(fakeHome, '.plex', 'repos')), `graph must NOT land in the centralized root under ${join(fakeHome, '.plex')}`);
 
     console.log('✓ worktree-seed D: linked worktree auto-relocates in-workspace without PLEX_DATA_DIR');
   } finally {
     try { git(main, 'worktree', 'remove', '--force', wt); } catch {}
-    rmSync(root, { recursive: true, force: true });
-    rmSync(centralized, { recursive: true, force: true }); // defensive: never leak into the real ~/.plex
+    rmSync(root, { recursive: true, force: true }); // removes the worktrees AND the temp HOME
   }
 }
 
