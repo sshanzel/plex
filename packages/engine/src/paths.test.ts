@@ -68,6 +68,29 @@ describe('repoPaths', () => {
     expect(p.reviewerDir).toBe(path.join('/var/plexdata', id));
   });
 
+  it('a LINKED worktree (its `.git` is a file) defaults to IN-WORKSPACE `.plex` — dies with the worktree (ADR-40)', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'plex-wt-'));
+    try {
+      writeFileSync(path.join(dir, '.git'), 'gitdir: /somewhere/.git/worktrees/foo\n'); // worktree marker
+      const p = repoPaths(dir); // dataDir unset → would normally be centralized
+      expect(p.reviewerDir).toBe(path.join(dir, '.plex'));
+      expect(p.graphDir).toBe(path.join(dir, '.plex', 'graph.kuzu'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a MAIN checkout (its `.git` is a directory) stays centralized', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'plex-main-'));
+    try {
+      mkdirSync(path.join(dir, '.git')); // normal repo: .git is a directory
+      const p = repoPaths(dir);
+      expect(p.reviewerDir).toBe(path.join(os.homedir(), '.plex', 'repos', repoId(path.resolve(dir))));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('derives every artifact path from reviewerDir', () => {
     const p = repoPaths(abs, '.plex');
     const r = p.reviewerDir;

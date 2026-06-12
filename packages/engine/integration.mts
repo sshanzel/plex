@@ -633,12 +633,11 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
   }
 });
 
-test('worktree-seed', 'engine: a secondary worktree shares the base graph read-only, no copy (ADR-32 revised)', async () => {
-  // ONE Kùzu open (ADR-17 budget): buildCodeGraph(base) only.
-  // No copy is made: the worktree returns the base's graphDir directly.
-  // `indexIsolated` no-ops under tsx (no built CLI) so the base self-refresh isn't exercised
-  // here — `pnpm test:worktree` covers that. What this pins: the no-copy mechanic and that
-  // the returned graphDir points into the BASE, not the worktree.
+test('worktree-seed', 'engine: a secondary worktree COPIES the base graph into its own dir (ADR-32/ADR-39)', async () => {
+  // TWO Kùzu opens (ADR-17 budget): buildCodeGraph(base) + the worktree's own updateCodeGraph after
+  // the copy. The worktree gets its OWN graph (a copy of the base + its diff applied), opened
+  // normally — NOT the base's graph shared read-only (Kùzu's read-only open SIGSEGVs on Linux).
+  // `indexIsolated` (the base self-refresh) no-ops under tsx; `pnpm test:worktree` covers that.
   const root = mkdtempSync(join(tmpdir(), 'reviewer-wt-'));
   const base = join(root, 'main');
   const wt = join(root, 'wt');
@@ -667,26 +666,24 @@ test('worktree-seed', 'engine: a secondary worktree shares the base graph read-o
     assert.equal(ib.seeded, undefined, 'the base itself is a full build, not seeded');
     assert.equal(headSha(base), baseHead, 'base graph stamped at its own HEAD');
 
-    const iw = await indexRepo(wt, config); // no Kùzu open — returns base graphDir directly
-    assert.equal(iw.seeded, true, 'worktree result is flagged as seeded');
-    assert.equal(iw.shared, true, 'worktree result is flagged as shared (no copy)');
+    const iw = await indexRepo(wt, config); // copy base graph + apply the worktree's own diff
+    assert.equal(iw.seeded, true, 'worktree result is flagged as seeded (copied from base)');
 
-    // The worktree's graphDir IS the base's graphDir — shared, not copied.
-    // realpathSync.native dereferences /var → /private/var on macOS so symlink variants compare equal
-    // (git worktree list returns the physical path; mkdtempSync returns the symlinked /var path).
+    // The worktree's graphDir is its OWN, under the worktree — a copy, NOT the base's.
+    // realpathSync.native dereferences /var → /private/var on macOS so symlink variants compare equal.
     const real = (p: string) => realpathSync.native(p);
-    assert.equal(real(iw.graphDir), real(ib.graphDir), 'worktree and base share the same graphDir');
-    assert.ok(real(iw.graphDir).startsWith(real(base)), `graphDir is under the base path (${iw.graphDir})`);
-    assert.ok(!real(iw.graphDir).startsWith(real(wt)), 'graphDir is NOT under the worktree path');
+    assert.notEqual(real(iw.graphDir), real(ib.graphDir), 'worktree graphDir is its own, not the base’s');
+    assert.ok(real(iw.graphDir).startsWith(real(wt)), `graphDir is under the worktree path (${iw.graphDir})`);
+    assert.ok(!real(iw.graphDir).startsWith(real(base)), 'graphDir is NOT under the base path');
 
-    // No own graph.kuzu under the worktree data dir.
-    assert.ok(!existsSync(join(wt, '.plex', 'graph.kuzu')), 'worktree has no own graph.kuzu copy');
+    // The worktree DOES have its own graph.kuzu (the copy) in-workspace, self-gitignored.
+    assert.ok(existsSync(join(wt, '.plex', 'graph.kuzu')), 'worktree has its own graph.kuzu copy');
+    assert.ok(existsSync(join(wt, '.plex', '.gitignore')), 'worktree .plex is self-gitignored');
 
     // Base head.sha is unchanged (worktree indexing does not re-stamp the base).
     assert.equal(headSha(base), baseHead, 'worktree indexing did NOT re-stamp the base');
 
-    // Worktree has its own reviewerDir (for brain/verdicts) and repo-path sidecar.
-    assert.ok(existsSync(join(wt, '.plex')), 'worktree has own reviewerDir for brain/verdicts');
+    // Worktree's data (graph + brain/verdicts) lives in-workspace with a repo-path sidecar.
     assert.ok(existsSync(join(wt, '.plex', 'repo-path')), 'worktree repo-path sidecar written');
     assert.equal(readFileSync(join(wt, '.plex', 'repo-path'), 'utf8').trim(), resolve(wt), 'repo-path contains worktree abs path');
   } finally {

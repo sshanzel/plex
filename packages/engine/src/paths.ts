@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 
 export interface RepoPaths {
   repoPath: string;
@@ -25,6 +25,26 @@ export interface RepoPaths {
   embedCacheFile: string;
 }
 
+/**
+ * Is `repoPath` a checkout whose `.git` is a FILE (`gitdir: …` pointer) rather than a directory?
+ * That's true for a **linked git worktree** AND for a **git submodule** — both get in-workspace
+ * data, which is intentional and benign for both: a submodule's `<dir>/.plex` is self-gitignored
+ * and dies with the submodule checkout, exactly like a worktree. Cheap (one `stat`, no git spawn);
+ * any error → false (treat as a normal repo → centralized data, the safe default).
+ *
+ * Assumes `repoPath` is the **checkout root** (where `.git` lives) — which the whole engine already
+ * does (every git call uses `repoPath` as the cwd). A non-root subpath isn't a supported `repoPath`;
+ * it would simply read as a normal repo here (no `.git` at that level) and centralize.
+ */
+function isLinkedWorktree(repoPath: string): boolean {
+  try {
+    const g = path.join(repoPath, '.git');
+    return existsSync(g) && statSync(g).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** A stable, filesystem-safe id for a repo's centralized data dir (basename + path hash). */
 export function repoId(repoPath: string): string {
   const abs = path.resolve(repoPath);
@@ -45,7 +65,14 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
   const abs = path.resolve(repoPath);
   let reviewerDir: string;
   if (!dataDir) {
-    reviewerDir = path.join(os.homedir(), '.plex', 'repos', repoId(abs));
+    // A linked git worktree keeps its data IN the worktree (`<worktree>/.plex`, self-gitignored by
+    // `ensureDataDir`) rather than centralized — so its graph (a copy of the base's, ADR-32/ADR-39:
+    // never a read-only share, Kùzu's read-only open SIGSEGVs on Linux) and brain DIE WITH the
+    // worktree folder. No centralized orphan to garbage-collect. Falls back to centralized on any
+    // detection ambiguity. An explicit `dataDir` override still wins.
+    reviewerDir = isLinkedWorktree(abs)
+      ? path.join(abs, '.plex')
+      : path.join(os.homedir(), '.plex', 'repos', repoId(abs));
   } else if (path.isAbsolute(dataDir)) {
     reviewerDir = path.join(dataDir, repoId(abs));
   } else {

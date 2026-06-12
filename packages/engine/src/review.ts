@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import type {
@@ -54,7 +54,7 @@ export async function indexRepo(
   repoPath: string,
   config: ReviewerConfig,
   opts: { incremental?: boolean } = {},
-): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; shared?: boolean; added?: number; modified?: number; deleted?: number }> {
+): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
   ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
   // Record this repo's path for orphan detection in `doctor gc`
@@ -92,30 +92,26 @@ export async function indexRepo(
     }
   }
 
-  // No graph yet → if this is a secondary git worktree, refresh the BASE (default-branch
-  // checkout) and share its graph read-only. No 40 MB copy: every secondary worktree reads
-  // the base's graph.kuzu directly; only brain.kuzu/verdicts live in the worktree's own dir.
-  // This replaces the previous cpSync+updateCodeGraph approach (ADR-32).
+  // No graph yet → if this is a secondary git worktree whose base (default-branch checkout) is
+  // already indexed, COPY the base graph and refresh it to this worktree's head, instead of a full
+  // re-index. We do NOT share the base's graph read-only: Kùzu 0.11.3's read-only `Database` open
+  // SIGSEGVs on Linux (confirmed; no upstream fix available — ADR-32/ADR-39), so every secondary
+  // worktree gets its OWN graph and opens it normally. The copy is cheap vs a full re-index and
+  // independent, so concurrent worktree reviews never conflict on the single-writer lock.
   if (!existsSync(p.graphDir)) {
     const base = baseWorktree(p.repoPath, config);
     if (base) {
-      // Refresh the base to ITS OWN head in an ISOLATED child (ADR-17) — best-effort.
-      indexIsolated(base.path, true);
-      return {
-        graphDir: base.graphDir,
-        shared: true,
-        seeded: true,
-        incremental: true,
-        files: 0,
-        symbols: 0,
-        imports: 0,
-        refs: 0,
-        coChangePairs: 0,
-        commits: 0,
-        added: 0,
-        modified: 0,
-        deleted: 0,
-      };
+      indexIsolated(base.path, true); // refresh the base to ITS OWN head in an isolated child (ADR-17)
+      try {
+        mkdirSync(path.dirname(p.graphDir), { recursive: true });
+        cpSync(base.graphDir, p.graphDir, { recursive: true });
+        const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
+        persistDeleted(res);
+        await stamp();
+        return { ...res, graphDir: p.graphDir, seeded: true };
+      } catch {
+        rmSync(p.graphDir, { recursive: true, force: true }); // partial/corrupt copy → fall through to a full build
+      }
     }
   }
 
@@ -507,23 +503,18 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     resolveChangeContext(opts.repoPath, opts.config, opts),
   ]);
 
-  // For a secondary git worktree, the code graph lives in the BASE repo's data dir (shared
-  // read-only). Brain/verdicts/blast-map/log still write to the worktree's own data dir.
-  const worktreeBase = baseWorktree(opts.repoPath, opts.config);
-  const graphP = worktreeBase ? repoPaths(worktreeBase.path, opts.config.dataDir) : p;
-  if (worktreeBase) {
-    // Own data dir may not exist yet if `index_repo` was never called explicitly.
-    ensureDataDir(p.reviewerDir);
-    try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
-  }
+  // A secondary worktree has its OWN graph (copied from the base by `indexRepo`, ADR-32/ADR-39),
+  // opened normally — NOT the base's graph shared read-only (Kùzu's read-only open SIGSEGVs on
+  // Linux). So `graphP` is just this repo's own data dir, worktree or not.
+  const graphP = p;
+  ensureDataDir(p.reviewerDir);
 
-  // Auto-index on first use (ADR-30): check the BASE graph for worktrees; build in an
-  // ISOLATED child so THIS process opens Kùzu only for the neighborhood + brain.
+  // Auto-index on first use (ADR-30): build/seed this repo's graph in an ISOLATED child so THIS
+  // process opens Kùzu only for the neighborhood + brain.
   if (!existsSync(graphP.graphDir)) {
     if (opts.autoIndex !== false) indexIsolated(graphP.repoPath, false);
     if (!existsSync(graphP.graphDir)) {
-      const hint = worktreeBase ? `Run \`plex index ${worktreeBase.path}\` first.` : 'Run `plex index` first.';
-      throw new Error(`No code graph at ${graphP.graphDir}, and auto-index could not run. ${hint}`);
+      throw new Error(`No code graph at ${graphP.graphDir}, and auto-index could not run. Run \`plex index ${opts.repoPath}\` first.`);
     }
   }
 
@@ -541,10 +532,10 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     }
   }
 
-  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open. Open read-only for
-  // secondary worktrees so multiple concurrent worktree reviews can share the base graph.
+  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open, normal mode (the worktree owns
+  // its copied graph, so no read-only share).
   const changedPaths = diff.files.map((f) => f.path);
-  const db = new CodeGraphDB(graphP.graphDir, worktreeBase ? { readOnly: true } : undefined);
+  const db = new CodeGraphDB(graphP.graphDir);
   let repo: string;
   let nb: ReviewNeighborhood;
   let coupling: [string, string][] = [];
