@@ -1,13 +1,34 @@
-import { outcomeWeight, type Incident } from '@plex/core';
+import type { Incident, Pitfall } from '@plex/core';
 import type { KnowledgeStore } from './store';
-import { betaPosteriorMean } from './stats';
+import { wilsonLowerBound } from './stats';
 
-// Beta-Bernoulli model for pitfall confidence (tuning.md §1). Prior Beta(1,1) = Laplace's rule of
-// succession (an untested pitfall sits at 0.5 once evidence arrives); rejects cost 1.5× a confirm
-// (a false positive is dearer — this is the old +0.1/−0.15 asymmetry, now permanent and bounded).
-const PRIOR_ALPHA = 1;
-const PRIOR_BETA = 1;
-const REJECT_COST = 1.5;
+/**
+ * Pitfall confidence = the **Wilson score lower bound** of the rate at which the evidence CONFIRMS
+ * the pitfall's claim (Wilson 1927; the same primitive `suppressionTier` uses). One method for both
+ * polarities, no hand-tuned constants — no Beta prior to pick, no `REJECT_COST` multiplier, no
+ * `outcomeWeight` 1.5s. The lower bound is conservative by construction: a thin record stays low and
+ * tightens toward the raw rate only as evidence accrues, so confidence is an *honest* floor rather
+ * than an over-confident point estimate (and it's a pure function of the counts → idempotent, the
+ * property the old additive rule lacked).
+ *
+ * The claim flips with polarity:
+ *  - **positive** pitfall ("this is a real issue") — a CONFIRM is accept/fix/revert, a refute is reject.
+ *  - **negative** pitfall ("suppress this", docs/design/negative-knowledge.md) — a CONFIRM is a
+ *    dismissal (reject/waive logged as `rejected`), a refute is the user acting on it (accept/fix/revert).
+ */
+function confirmsAndRefutes(p: Pitfall, inc: Incident[]): { confirms: number; refutes: number } {
+  const isAccepting = (o: Incident['outcome']): boolean => o === 'accepted' || o === 'fixed' || o === 'reverted';
+  const negative = p.polarity === 'negative';
+  let confirms = 0;
+  let refutes = 0;
+  for (const i of inc) {
+    const accepting = isAccepting(i.outcome);
+    // negative: a dismissal (rejected) confirms suppression; an accept refutes it. positive: reverse.
+    if (negative ? i.outcome === 'rejected' : accepting) confirms++;
+    else if (negative ? accepting : i.outcome === 'rejected') refutes++;
+  }
+  return { confirms, refutes };
+}
 
 export interface ConsolidateResult {
   pitfalls: number;
@@ -15,9 +36,9 @@ export interface ConsolidateResult {
 }
 
 /**
- * Recompute pitfall confidence from linked incident outcomes — the feedback loop's
- * teeth (ADR-10). Accepted/fixed incidents strengthen a pitfall; rejected ones weaken
- * it. Pitfalls also accumulate their incident ids as provenance.
+ * Recompute pitfall confidence from linked incident outcomes — the feedback loop's teeth (ADR-10).
+ * Pitfalls also accumulate their incident ids as provenance. A pitfall with no incidents keeps its
+ * prior confidence.
  */
 export async function consolidatePitfalls(store: KnowledgeStore): Promise<ConsolidateResult> {
   const pitfalls = await store.pitfalls();
@@ -35,16 +56,8 @@ export async function consolidatePitfalls(store: KnowledgeStore): Promise<Consol
     const inc = byPitfall.get(p.id) ?? [];
     if (inc.length === 0) return p; // no outcomes yet → keep the prior confidence
     reinforced++;
-    // Beta-Bernoulli posterior mean over ALL linked outcomes, outcome-weighted (ADR-11):
-    // accepted/fixed contribute 1, reverted 1.5 (`outcomeWeight` — the warned-against change
-    // shipped and was later reverted: the strongest confirmation), rejected lands on the failure
-    // side at REJECT_COST. Idempotent by construction — it's a pure function of the counts, so
-    // re-running consolidate can't drift confidence the way the old additive rule did (no
-    // applied-set ledger needed). Real accept/reject evidence supersedes the prior
-    // estimate, which is what we want once a pitfall has a track record.
-    const s = inc.reduce((sum, i) => sum + outcomeWeight(i.outcome), 0);
-    const f = inc.filter((i) => i.outcome === 'rejected').length;
-    const confidence = betaPosteriorMean(PRIOR_ALPHA + s, PRIOR_BETA + REJECT_COST * f);
+    const { confirms, refutes } = confirmsAndRefutes(p, inc);
+    const confidence = wilsonLowerBound(confirms, confirms + refutes);
     return { ...p, confidence, incidentIds: inc.map((i) => i.id) };
   });
 

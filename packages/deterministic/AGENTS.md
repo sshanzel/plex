@@ -26,8 +26,8 @@ confidence in `@plex/findings`), and a rule the agent missed still reaches the u
 
 ## The rules (`src/builtin.ts`)
 
-Each rule emits a fixed severity + confidence — **separate axes** (ADR-04): `no-await-in-loop` is a
-real `improvement` we're only 0.55 sure about, not a "nit".
+Each rule emits a fixed severity + confidence — **separate axes** (ADR-04): `no-empty-catch` is a
+real `improvement` we're 0.85 sure about, not a "nit".
 
 | Rule | Trigger | Severity | Confidence |
 |---|---|---|---|
@@ -36,11 +36,15 @@ real `improvement` we're only 0.55 sure about, not a "nit".
 | `no-loose-equality` | `==`/`!=` where **neither** side is `null`/`undefined` (`== null` is exempt) | nit | 0.9 |
 | `no-console` | `console.<method>(...)` call | nit | 0.6 |
 | `no-empty-catch` | `catch` with an empty block | improvement | 0.85 |
-| `no-await-in-loop` | `await` lexically inside `for`/`for-of`/`for-in`/`while`/`do` | improvement | 0.55 |
 
-`analyzeSource` is a single recursive `visit(node, inLoop)` over a `ts.createSourceFile` AST (no
-type checker — syntax only). The `inLoop` flag **resets to false on entering any function** (incl.
-arrows/methods), so an `await` inside a callback defined in a loop body is correctly *not* flagged.
+> **Removed:** `no-await-in-loop` (`await` lexically inside a loop, improvement @ 0.55) — a
+> low-confidence perf heuristic that's frequently intentional (sequential ordering). It fired
+> unconditionally on every diff, and because deterministic rules have **no confidence-feedback
+> loop** (rejecting one only suppresses that file/line instance via a waiver, never the rule
+> itself), it re-surfaced no matter how often the user dismissed it. Dropped rather than demoted.
+
+`analyzeSource` is a single recursive `visit(node)` over a `ts.createSourceFile` AST (no
+type checker — syntax only).
 Lines are 1-based via `getLineAndCharacterOfPosition`. `scriptKind` maps the extension so `.tsx`
 /`.jsx`/plain JS parse correctly; `isSupportedSource` accepts
 `.ts .tsx .js .jsx .mts .cts .mjs .cjs` (`TS_EXTS`) — anything else is skipped.
@@ -104,7 +108,6 @@ though the agent gets everything else.
 ## Testing
 
 All **vitest units** (`pnpm test:unit`) — no Kùzu, so nothing needs the tsx-isolated integration
-lane (ADR-17). `src/builtin.test.ts` pins each rule (incl. the `== null` exemption and the
-loop/function boundary for `no-await-in-loop`); `src/runner.test.ts` uses a real temp-dir repo
+lane (ADR-17). `src/builtin.test.ts` pins each rule (incl. the `== null` exemption); `src/runner.test.ts` uses a real temp-dir repo
 fixture (root convention: real fixtures over synthetic strings) and pins the changed-range filter,
 the no-ranges (new file) fallthrough, the skip paths, and the `repoName` default.

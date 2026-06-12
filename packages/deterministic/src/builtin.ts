@@ -46,7 +46,7 @@ export function analyzeSource(file: string, text: string): RawFinding[] {
     out.push({ ...r, startLine: start(n), endLine: end(n) });
   };
 
-  const visit = (node: ts.Node, inLoop: boolean): void => {
+  const visit = (node: ts.Node): void => {
     if (node.kind === ts.SyntaxKind.DebuggerStatement) {
       add(node, { rule: 'no-debugger', title: 'Leftover `debugger` statement', body: 'A debugger statement will halt execution in dev tools and must not ship.', severity: 'bug', confidence: 0.95 });
     } else if (node.kind === ts.SyntaxKind.AnyKeyword) {
@@ -68,25 +68,11 @@ export function analyzeSource(file: string, text: string): RawFinding[] {
       add(node, { rule: 'no-console', title: 'Leftover `console` call', body: 'Remove debug logging or route through a logger.', severity: 'nit', confidence: 0.6 });
     } else if (ts.isCatchClause(node) && node.block.statements.length === 0) {
       add(node, { rule: 'no-empty-catch', title: 'Empty catch swallows errors', body: 'Silently swallowing errors hides failures — handle, rethrow, or log.', severity: 'improvement', confidence: 0.85 });
-    } else if (ts.isAwaitExpression(node) && inLoop) {
-      add(node, { rule: 'no-await-in-loop', title: '`await` inside a loop', body: 'Sequential awaits in a loop are often a perf bug — consider Promise.all if independent.', severity: 'improvement', confidence: 0.55 });
     }
 
-    const entersFunction =
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node);
-    const entersLoop =
-      ts.isForStatement(node) ||
-      ts.isForOfStatement(node) ||
-      ts.isForInStatement(node) ||
-      ts.isWhileStatement(node) ||
-      ts.isDoStatement(node);
-    const childInLoop = entersFunction ? false : entersLoop ? true : inLoop;
-    ts.forEachChild(node, (c) => visit(c, childInLoop));
+    ts.forEachChild(node, visit);
   };
 
-  visit(sf, false);
+  visit(sf);
   return out;
 }

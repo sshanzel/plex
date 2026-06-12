@@ -62,6 +62,34 @@ describe('rankFindings triage', () => {
     expect(ranked.find((f) => f.id === 'n')!.triage).toBe('convention');
   });
 
+  it('learned suppression: a rule tagged `suppress` → suppressed, `demote` → demoted (still visible)', () => {
+    const suppressions = new Map<string, 'suppress' | 'demote'>([
+      ['no-console', 'demote'],
+      ['no-await-in-loop', 'suppress'],
+    ]);
+    const ranked = rankFindings(
+      [
+        mk({ id: 'keep', severity: 'nit', tags: ['no-loose-equality'], location: { repo: 'r', file: 'a.ts', startLine: 1, endLine: 1 } }),
+        mk({ id: 'demoted', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'b.ts', startLine: 1, endLine: 1 } }),
+        mk({ id: 'gone', severity: 'improvement', tags: ['no-await-in-loop'], location: { repo: 'r', file: 'c.ts', startLine: 1, endLine: 1 } }),
+      ],
+      { suppressions },
+    );
+    expect(ranked.find((f) => f.id === 'keep')!.triage).toBe('surface');
+    expect(ranked.find((f) => f.id === 'demoted')!.triage).toBe('demoted');
+    expect(ranked.find((f) => f.id === 'gone')!.triage).toBe('suppressed');
+    // demoted sits below surface but above suppressed.
+    expect(ranked.map((f) => f.id)).toEqual(['keep', 'demoted', 'gone']);
+  });
+
+  it('an explicit waiver still wins over a learned demote', () => {
+    const ranked = rankFindings(
+      [mk({ id: 'x', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'legacy.ts', startLine: 1, endLine: 1 } })],
+      { suppressions: new Map([['no-console', 'demote']]), waivers: [{ scope: 'file', file: 'legacy.ts' }] },
+    );
+    expect(ranked[0]!.triage).toBe('suppressed'); // hard waiver, not the softer demote
+  });
+
   it('suppresses waived findings and sorts them last', () => {
     const waivers: Waiver[] = [{ scope: 'file', file: 'src/legacy.ts' }];
     const ranked = rankFindings(

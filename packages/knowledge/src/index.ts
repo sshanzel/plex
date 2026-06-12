@@ -12,4 +12,5 @@ export type { RetrievedPitfall } from './retrieve';
 export { recordIncident } from './incidents';
 export { consolidatePitfalls } from './promotion';
 export type { ConsolidateResult } from './promotion';
-export { betaPosteriorMean, wilsonLowerBound } from './stats';
+export { betaPosteriorMean, wilsonLowerBound, suppressionTier, Z_95, Z_68 } from './stats';
+export type { SuppressionTier } from './stats';

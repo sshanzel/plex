@@ -10,6 +10,7 @@ const base = {
   config: resolveConfig({ embedding: { provider: 'voyage' }, dataDir: '' }),
   node: 'v22.0.0',
   pid: 1234,
+  embeddingsActive: true,
 };
 
 describe('buildDoctorReport (the "is this build stale?" signal)', () => {
@@ -35,6 +36,31 @@ describe('buildDoctorReport (the "is this build stale?" signal)', () => {
     expect(r.embeddings).toBe('voyage');
     expect(r.dataDir).toMatch(/centralized/); // dataDir '' renders as the centralized note
     expect(r.knowledgeDir).toContain('.plex');
+  });
+
+  it('reports embeddings ACTIVE when the provider resolves', () => {
+    const r = buildDoctorReport({ ...base, embeddingsActive: true, loadedBuildMs: 1, onDiskBuildMs: 1 });
+    expect(r.embeddingsActive).toBe(true);
+    expect(r.embeddingsAdvice).toMatch(/active/i);
+  });
+
+  it('explains the empty-dashboard case: provider configured but NO KEY resolves', () => {
+    // The exact "voyage usage isn't showing up" tell — configured but silently degrading to lexical.
+    const r = buildDoctorReport({ ...base, embeddingsActive: false, loadedBuildMs: 1, onDiskBuildMs: 1 });
+    expect(r.embeddings).toBe('voyage'); // still reports the configured name…
+    expect(r.embeddingsActive).toBe(false); // …but flags it as not actually firing
+    expect(r.embeddingsAdvice).toMatch(/no key|dashboard/i);
+  });
+
+  it('reports embeddings OFF for provider none', () => {
+    const r = buildDoctorReport({
+      ...base,
+      config: resolveConfig({ embedding: { provider: 'none' }, dataDir: '' }),
+      embeddingsActive: false,
+      loadedBuildMs: 1,
+      onDiskBuildMs: 1,
+    });
+    expect(r.embeddingsAdvice).toMatch(/off/i);
   });
 
   it('renders unknown build times instead of an epoch date', () => {

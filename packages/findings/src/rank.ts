@@ -10,6 +10,14 @@ export interface RankOptions {
   prevalenceThreshold?: number;
   /** Cosine ≥ this lets pattern/category waivers suppress the same issue semantically (ADR-27). */
   semanticThreshold?: number;
+  /**
+   * LEARNED suppression decisions, keyed by a finding tag (a deterministic rule tag). Computed
+   * upstream from accumulated dismissals via Wilson (`@plex/knowledge` `suppressionTier`) and passed
+   * here as a plain decision so this package stays dep-light. `'suppress'` → suppressed bucket;
+   * `'demote'` → the low `demoted` bucket (still visible — a weighted "you keep skipping this", NOT a
+   * one-click kill, C1). An explicit waiver always wins over a learned demote.
+   */
+  suppressions?: Map<string, 'suppress' | 'demote'>;
 }
 
 const TRIAGE_PRIORITY: Record<RankedFinding['triage'], number> = {
@@ -17,8 +25,24 @@ const TRIAGE_PRIORITY: Record<RankedFinding['triage'], number> = {
   'systemic-migration': 1,
   awareness: 2,
   convention: 3,
-  suppressed: 4,
+  demoted: 4,
+  suppressed: 5,
 };
+
+/** The strongest learned-suppression decision across a finding's tags (suppress > demote). */
+function learnedSuppression(
+  tags: string[] | undefined,
+  suppressions: Map<string, 'suppress' | 'demote'> | undefined,
+): 'suppress' | 'demote' | undefined {
+  if (!suppressions || !tags) return undefined;
+  let demote = false;
+  for (const t of tags) {
+    const d = suppressions.get(t);
+    if (d === 'suppress') return 'suppress';
+    if (d === 'demote') demote = true;
+  }
+  return demote ? 'demote' : undefined;
+}
 
 /**
  * Merge, score, and triage findings into a single ranked stream (ADR-03/04/05/31).
@@ -40,12 +64,17 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
   const ranked: RankedFinding[] = dedupeFindings(findings).map((f) => {
     const signal = computeSignal(f, f.agreedSources.length, weights);
     let triage: RankedFinding['triage'];
+    const learned = learnedSuppression(f.tags, opts.suppressions);
     if (isWaived(f, waivers, opts.semanticThreshold)) {
       triage = 'suppressed'; // an `acknowledge` on a matching flag lands here too
+    } else if (learned === 'suppress') {
+      triage = 'suppressed'; // enough consistent dismissals to be 95%-confident (Wilson) — earned
     } else if (f.severity === 'awareness') {
       triage = 'awareness';
     } else if ((f.prevalence ?? 0) >= threshold) {
       triage = f.severity === 'bug' ? 'systemic-migration' : 'convention';
+    } else if (learned === 'demote') {
+      triage = 'demoted'; // leaning-dismissed but not yet certain — still visible, ranked low
     } else {
       triage = 'surface';
     }

@@ -34,6 +34,7 @@ import {
   scanForAnalysis,
   addAnalyzedPitfalls,
   analyzeRepo,
+  embeddingReady,
   type SubmittedFinding,
   type AgentPitfall,
 } from '@plex/engine';
@@ -358,6 +359,7 @@ server.tool(
           onDiskBuildMs: buildMtimeMs(),
           node: process.version,
           pid: process.pid,
+          embeddingsActive: embeddingReady(config),
         }),
       'doctor',
     ),

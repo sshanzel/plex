@@ -55,10 +55,15 @@ continuously in `deviation` (non-bugs only) and discretely in triage at
 (escalated), common + non-bug → **`convention`** (demoted). Suppression must never silence
 widespread real bugs.
 
-**Triage + ordering (`rank.ts`).** waived/acknowledged → `suppressed`; severity `awareness` →
-`awareness` (its own bucket — surfaced, never a nit, ADR-31); prevalent → as above; else
-`surface`. Sort by `TRIAGE_PRIORITY` (surface 0, systemic-migration 1, awareness 2, convention 3,
-suppressed 4), then signal descending. `rankFindings` also **strips the transient `embedding`**
+**Triage + ordering (`rank.ts`).** waived/acknowledged → `suppressed`; a **learned-suppression**
+`suppress` decision → `suppressed`; severity `awareness` → `awareness` (its own bucket — surfaced,
+never a nit, ADR-31); prevalent → as above; a learned `demote` → `demoted`; else `surface`. Sort by
+`TRIAGE_PRIORITY` (surface 0, systemic-migration 1, awareness 2, convention 3, demoted 4,
+suppressed 5), then signal descending. The `suppressions?: Map<tag, 'suppress'|'demote'>` option
+carries LEARNED dismissal decisions (computed upstream by `@plex/knowledge` `suppressionTier`, passed
+as a plain decision so this package stays dep-light — `learnedSuppression` picks the strongest across
+a finding's tags); an explicit waiver always outranks a learned `demote` (docs/design/negative-knowledge.md, C1).
+`rankFindings` also **strips the transient `embedding`**
 from the returned stream — it exists only so `isWaived` can match semantically; shipping a
 1024-float vector per finding floods the agent's context.
 

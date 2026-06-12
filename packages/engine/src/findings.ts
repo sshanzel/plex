@@ -7,6 +7,7 @@ import { rankFindings } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
+import { loadSuppressions } from './knowledge';
 import { reviewTargetFor } from './target';
 import { Brain, type BrainFinding } from './brain';
 import { logAudit, auditFinding } from './audit';
@@ -74,6 +75,9 @@ export async function rankReviewFindings(
 
   const det = opts.includeDeterministic === false ? [] : await getDeterministicFindings(repoPath, config, opts);
   const waivers = await loadWaivers(repoPath, config);
+  // Learned suppression (docs/design/negative-knowledge.md): accumulated dismissals demote/suppress
+  // a rule by tag, weighted via Wilson — computed live so it needs no `consolidate` run.
+  const suppressions = await loadSuppressions(config, repo);
 
   // Embed findings so semantic waivers (ADR-27) can suppress the same issue across rounds
   // even after wording/line changes. Best-effort: only when a real provider is configured
@@ -113,7 +117,7 @@ export async function rankReviewFindings(
       }
     }
   }
-  const ranked = rankFindings(all, { waivers, semanticThreshold });
+  const ranked = rankFindings(all, { waivers, semanticThreshold, suppressions });
 
   // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30). Key off the repo PATH
   // (basename), consistent with round recording + reconcile — never the graph meta (reviewTargetFor).

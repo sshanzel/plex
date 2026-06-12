@@ -23,7 +23,6 @@ describe('analyzeSource', () => {
   it('flags the codifiable issues', () => {
     expect(rules.has('no-explicit-any')).toBe(true);
     expect(rules.has('no-console')).toBe(true);
-    expect(rules.has('no-await-in-loop')).toBe(true);
     expect(rules.has('no-loose-equality')).toBe(true);
     expect(rules.has('no-debugger')).toBe(true);
     expect(rules.has('no-empty-catch')).toBe(true);
