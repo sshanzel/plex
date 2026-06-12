@@ -25,9 +25,17 @@ export interface RepoPaths {
   embedCacheFile: string;
 }
 
-/** Is `repoPath` a LINKED git worktree? Its `.git` is a FILE (`gitdir: …` pointer); a main/normal
- * checkout's `.git` is a directory. Cheap (one `stat`, no git spawn); any error → false (treat as a
- * normal repo, i.e. centralized data — the safe default). */
+/**
+ * Is `repoPath` a checkout whose `.git` is a FILE (`gitdir: …` pointer) rather than a directory?
+ * That's true for a **linked git worktree** AND for a **git submodule** — both get in-workspace
+ * data, which is intentional and benign for both: a submodule's `<dir>/.plex` is self-gitignored
+ * and dies with the submodule checkout, exactly like a worktree. Cheap (one `stat`, no git spawn);
+ * any error → false (treat as a normal repo → centralized data, the safe default).
+ *
+ * Assumes `repoPath` is the **checkout root** (where `.git` lives) — which the whole engine already
+ * does (every git call uses `repoPath` as the cwd). A non-root subpath isn't a supported `repoPath`;
+ * it would simply read as a normal repo here (no `.git` at that level) and centralize.
+ */
 function isLinkedWorktree(repoPath: string): boolean {
   try {
     const g = path.join(repoPath, '.git');
