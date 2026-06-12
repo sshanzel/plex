@@ -80,8 +80,17 @@ function saveSweepState(file: string, state: SweepState): void {
     // every reconcile cursor + cadence stamp is lost (full re-reconcile, heavy jobs re-fire). tmp+rename
     // makes the swap atomic — a reader sees either the old whole file or the new whole file, never a torn one.
     const tmp = `${file}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
-    renameSync(tmp, file);
+    try {
+      writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
+      renameSync(tmp, file);
+    } catch (e) {
+      try {
+        unlinkSync(tmp); // a failed rename (e.g. cross-device) leaves the tmp behind — clean it up
+      } catch {
+        /* already gone */
+      }
+      throw e;
+    }
   } catch {
     /* best-effort */
   }
@@ -199,7 +208,7 @@ async function reconcileJob(ctx: JobCtx): Promise<JobResult> {
       const r = await reconcileOutcomes(mainRepoPath, config, src);
       accepted += r.accepted;
       swept++;
-      if (head) state.cursors[t.target] = head; // advance only on success (even if accepted 0 — head checked)
+      state.cursors[t.target] = head; // advance only on success (even if accepted 0 — head checked); head is truthy here
     } catch (e) {
       if (isLockError(e)) busy = true; // leave cursor unadvanced → retry next sweep
       // any other error: best-effort, leave cursor, continue
