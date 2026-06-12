@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource, type Waiver } from '@plex/core';
 import { repoPaths } from './paths';
 import { runDeterministic } from '@plex/deterministic';
-import { rankFindings } from '@plex/findings';
+import { rankFindings, firedSemanticSuppressions } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
@@ -133,9 +133,13 @@ export async function rankReviewFindings(
   const suppressionMap = new Map(suppressions.filter((d) => !d.embedding).map((d) => [d.key, d.tier] as const));
   const ranked = rankFindings(all, { waivers: waiversAll, semanticThreshold, suppressions: suppressionMap });
   // Record only the suppressions that ACTUALLY matched a finding this review (the ones that shaped
-  // the output) as the audit-log provenance — not every active rule.
+  // the output) as the audit-log provenance — not every active rule. Two paths: DETERMINISTIC ones
+  // match by tag; FIRST-PRINCIPLES (embedding-keyed, ADR-41) ones have no tag, so `firedSemanticSuppressions`
+  // attributes them via the same `waiverMatches` cosine the ranking used (else they'd silently vanish
+  // from the trail). `all` still carries embeddings here (rankFindings strips them only from `ranked`).
   const appliedKeys = new Set(all.flatMap((f) => f.tags ?? []).filter((t) => suppressionMap.has(t)));
-  const appliedSuppressions = suppressions.filter((d) => appliedKeys.has(d.key));
+  const appliedSemantic = semanticThreshold == null ? [] : firedSemanticSuppressions(semanticSuppressions, all, semanticThreshold);
+  const appliedSuppressions = [...suppressions.filter((d) => appliedKeys.has(d.key)), ...appliedSemantic];
 
   // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30). Key off the repo PATH
   // (basename), consistent with round recording + reconcile — never the graph meta (reviewTargetFor).

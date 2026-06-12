@@ -20,7 +20,7 @@ via `engine/src/reconcile.ts`. Decision log: [`docs/adr/README.md`](../../docs/a
 | `src/dedupe.ts` | Cross-source merge: `dedupeKey` identity, noisy-OR confidence, `agreedSources` |
 | `src/signal.ts` | `computeSignal` — the ranking formula and `defaultWeights` |
 | `src/rank.ts` | `rankFindings` — dedupe → signal → waivers → triage → sorted stream |
-| `src/waivers.ts` | `waiverMatches`/`isWaived` — scope matching + semantic match (ADR-27) |
+| `src/waivers.ts` | `waiverMatches`/`isWaived` — scope matching + semantic match (ADR-27); `firedSemanticSuppressions` — audit attribution of first-principles suppressions that matched (ADR-41) |
 | `src/rounds.ts` | `classifyChanges` (feedback-driven vs unexplained, ADR-23); `findingAddressed[At]` / `findingAddressMatch` (ADR-28 fix matching for reconcile/auto-accept, with the matched-signal audit trail) |
 | `src/review-plan.ts` | `partitionByCoupling` (union-find) + `reviewPlan` — coupling-cluster partition + surface score (metadata for angle-based orchestration) |
 | `src/eval.ts` | nDCG ranking quality vs outcome labels + `READINESS`/`rankingReadiness` re-weight gates |

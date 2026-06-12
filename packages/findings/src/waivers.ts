@@ -38,3 +38,20 @@ export function waiverMatches(f: Finding, w: Waiver, semanticThreshold = 1.01): 
 export function isWaived(f: Finding, waivers: Waiver[], semanticThreshold?: number): boolean {
   return waivers.some((w) => waiverMatches(f, w, semanticThreshold));
 }
+
+/**
+ * Audit helper (ADR-41): of the embedding-keyed (first-principles) suppression decisions, the subset
+ * that actually FIRED — i.e. matched at least one finding through the same `pattern-repo` semantic
+ * cosine test the ranking used. These shaped the output and belong in the `findings_submitted` audit
+ * trail, which the tag-based scan misses (a semantic suppression carries no tag). Pure — literal
+ * vectors in tests; the matching predicate is `waiverMatches`, so the audit can't drift from ranking.
+ */
+export function firedSemanticSuppressions<T extends { embedding?: number[] }>(
+  decisions: T[],
+  findings: Finding[],
+  semanticThreshold: number,
+): T[] {
+  return decisions.filter(
+    (d) => d.embedding != null && findings.some((f) => waiverMatches(f, { scope: 'pattern-repo', embedding: d.embedding }, semanticThreshold)),
+  );
+}

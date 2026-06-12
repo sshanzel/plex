@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Finding, Waiver } from '@plex/core';
-import { waiverMatches, isWaived } from './waivers';
+import { waiverMatches, isWaived, firedSemanticSuppressions } from './waivers';
 import { rankFindings } from './rank';
 
 const finding = (over: Partial<Finding> = {}): Finding => ({
@@ -45,6 +45,36 @@ describe('semantic waiver matching (ADR-27)', () => {
     const f = finding({ title: 'reworded', embedding: [0.95, 0.05, 0] });
     const [r] = rankFindings([f], { waivers: [w], semanticThreshold: 0.82 });
     expect(r!.triage).toBe('suppressed');
+  });
+});
+
+describe('firedSemanticSuppressions — audit attribution (ADR-41)', () => {
+  // Embedding-keyed suppression decisions (their `key` is the negative pitfall id, not a tag).
+  const decision = (key: string, embedding: number[]) => ({ key, tier: 'suppress' as const, embedding });
+
+  it('returns only the semantic suppressions that matched a finding (the ones that shaped output)', () => {
+    const fired = decision('neg:r:fp:abc', [1, 0, 0]); // matches the finding below
+    const dormant = decision('neg:r:fp:xyz', [0, 0, 1]); // orthogonal — never matched
+    const f = finding({ embedding: [0.96, 0.05, 0] });
+    const applied = firedSemanticSuppressions([fired, dormant], [f], 0.82);
+    expect(applied.map((d) => d.key)).toEqual(['neg:r:fp:abc']);
+  });
+
+  it('attributes consistently with the ranking — a finding it suppresses is the one it audits', () => {
+    const d = decision('neg:r:fp:abc', [1, 0, 0]);
+    const f = finding({ title: 'reworded', embedding: [0.95, 0.05, 0] });
+    // The synthetic pattern-repo waiver this decision becomes suppresses f in the ranker…
+    const [r] = rankFindings([f], { waivers: [{ scope: 'pattern-repo', embedding: d.embedding }], semanticThreshold: 0.82 });
+    expect(r!.triage).toBe('suppressed');
+    // …and the same predicate attributes it in the audit trail.
+    expect(firedSemanticSuppressions([d], [f], 0.82)).toHaveLength(1);
+  });
+
+  it('a decision with no embedding, or below threshold, is not audited', () => {
+    const noEmbed = { key: 'neg:r:fp:k', tier: 'suppress' as const, embedding: undefined as number[] | undefined };
+    const below = decision('neg:r:fp:m', [0, 1, 0]);
+    const f = finding({ embedding: [0.96, 0.05, 0] });
+    expect(firedSemanticSuppressions([noEmbed, below], [f], 0.82)).toEqual([]);
   });
 });
 
