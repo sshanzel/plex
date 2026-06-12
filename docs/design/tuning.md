@@ -7,7 +7,7 @@ is tracked, not rediscovered.
 
 > **Principled-tuning rehaul (adopted).** A literature pass (with verified citations) replaced five
 > hand-tuned mechanisms with their textbook forms — each a tested commit:
-> 1. **Pitfall confidence → Beta-Bernoulli posterior mean + Wilson lower bound** (was `±0.1/±0.15`).
+> 1. **Pitfall confidence → Wilson score lower bound** (both polarities; was Beta posterior mean + `REJECT_COST`/`outcomeWeight` 1.5s, originally `±0.1/±0.15`). Suppression demote/suppress = `suppressionTier` (Wilson at 95%/1σ vs the 0.5 majority pivot). See ADR-39.
 > 2. **Co-change strength → Salton association strength** `co/√(degA·degB)` (was a raw count; removes the frequency confound).
 > 3. **Clustering cut → adaptive `μ+kσ` of the batch's own cosines** (was a fixed `0.8`).
 > 4. **Blast radius → personalized PageRank / RWR**, degree-normalized — *subsumes* the hub-damping (was BFS + `hubWeight`).
@@ -91,7 +91,9 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 | `WAIVER_SEMANTIC_THRESHOLD` | 0.82 floor | **adaptive — safe-direction (adopted)** | a waiver suppresses cosine-≥ findings. Now `max(0.82, μ+3σ)` of the batch's cosine background (`adaptiveFloor`) — on an anisotropic model the bar rises so it suppresses *less*; it can never fall below 0.82, so it never hides more than the fixed value did. |
 | `semanticThreshold` (fix-inference) | 0.6 floor | **adaptive — safe-direction (adopted)** | the auto-accept cut, `max(0.6, μ+3σ)` of the region/finding background — rises (auto-accepts *less*, surfaces *more*) on a high-baseline model, never below 0.6. With no embedder → background {0,0} → stays 0.6, locality unaffected. |
 | `analyze.clusterThreshold` | **adaptive** `μ+kσ` | **principled (adopted)** | the cut is now estimated from the **batch's own** pairwise-cosine background (`adaptiveCosineThreshold`, k=3) — a pair clusters only if it's k σ above this batch's typical pair, auto-adapting per model. The configured `0.8` is the small-batch (n<8) fallback. Anisotropy makes a fixed cutoff fragile (Mu & Viswanath 2018; Su 2021); estimating from data sidesteps it with no stored corpus. |
-| pitfall confidence | **Beta-Bernoulli** posterior mean | **principled (adopted)** | `confidence = (α0+s)/(α0+β0+s+1.5f)` with prior Beta(1,1) and rejects at 1.5× (was `±0.1/±0.15`). Idempotent, no clamp-loss, no path-dependence. `wilsonLowerBound` (Wilson 1927) available for small-sample ranking. `promotion.ts`. |
+| pitfall confidence | **Wilson lower bound** | **principled (adopted)** | `confidence = wilsonLowerBound(confirms, confirms+refutes)` (Wilson 1927) for BOTH polarities — replaced the Beta posterior mean + `PRIOR_ALPHA/BETA` + `REJECT_COST=1.5` + `outcomeWeight` 1.5s (all magic; ADR-39). Conservative on thin evidence, idempotent (pure function of counts). `promotion.ts`/`stats.ts`. |
+| suppression tier | **Wilson at 95% / 1σ vs 0.5** | **principled (adopted)** | `suppressionTier(dismissals, corrections)` — `suppress` when the 95% Wilson lower bound ≥ 0.5 (≈4 consistent dismissals), `demote` at the 1σ level (1–3). No hand-tuned floors; only the textbook confidence levels + the majority pivot. C1 (one dismissal can't bury a finding) holds by construction. `stats.ts`. |
+| `PROMOTE_MIN_REPOS` | `2` | **policy floor (deliberate)** | cross-repo, language-gated promotion of a suppression to `global@lang` needs the rule to have earned `suppress` in this many *distinct* repos (`engine/knowledge.ts`). NOT statistical — "how many independent projects before generalizing" is a risk choice; kept ≥2 so one repo can't self-promote. ADR-39 / docs/design/negative-knowledge.md. |
 | ~~promotion threshold~~ | — | removed | the markdown-promotion direction (graph → `plex.md`) was retired with `plex.md` (ADR-37); rule promotion gates on `tier === 'codifiable'`, not confidence. |
 
 ## Review plan (fan-out) — `config.reviewPlan` (ADR-34)
