@@ -319,6 +319,10 @@ export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force 
       if (isDebounced(markerMs, Date.now(), SWEEP_DEBOUNCE_MS)) return false;
     }
     const child = spawn(process.execPath, [cli, 'sweep', main], { detached: true, stdio: 'ignore' });
+    // A detached child reports fork failures (EMFILE/ENOMEM under process pressure) ASYNCHRONOUSLY via
+    // the 'error' event; with no listener Node escalates it to an uncaught exception on a later tick
+    // that the surrounding try/catch can't catch — which would crash the review. Swallow it (best-effort).
+    child.on('error', () => {});
     child.unref();
     // Stamp the debounce marker only AFTER the spawn succeeds — a spawn that throws should not
     // suppress maintenance for the full window (the next trigger retries; the sweep's own
