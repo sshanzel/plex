@@ -109,6 +109,56 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     expect(dismissals).toHaveLength(1); // deduped by (rule, file)
   });
 
+  it('item 2: a `waive` after a `reject` on the same file is recorded as an UPGRADE (both verbs on disk)', async () => {
+    const config = cfg();
+    // Escalation on the SAME (pitfall, file): "not now" → "this is wrong".
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    await learnSuppression(config, 'myrepo', { kind: 'waive', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissalIncs = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    // The waive WAS allowed through (unlike a flat reject re-dismissal) — both verbs on disk as provenance.
+    expect(dismissalIncs.map((i) => i.verb).sort()).toEqual(['reject', 'waive']);
+  });
+
+  it('item 2: a `reject` after a `waive` does NOT downgrade (monotone upgrade only)', async () => {
+    const config = cfg();
+    await learnSuppression(config, 'myrepo', { kind: 'waive', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissalIncs = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    expect(dismissalIncs.map((i) => i.verb)).toEqual(['waive']); // the later reject carried no new info → dropped
+  });
+
+  it('item 2: the upgraded `waive` half-life makes a suppression OUTLIVE an equivalent reject-only one', async () => {
+    // Two independent stores: `up` escalates each dismissal reject→waive; `ctrl` stays reject-only.
+    const upDir = mkdtempSync(join(tmpdir(), 'plex-supp-up-'));
+    const ctrlDir = mkdtempSync(join(tmpdir(), 'plex-supp-ctrl-'));
+    try {
+      const up = resolveConfig({ knowledgeDir: upDir });
+      const ctrl = resolveConfig({ knowledgeDir: ctrlDir });
+      for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) {
+        await learnSuppression(up, 'r', { kind: 'reject', findingId: `det:no-console:${f}:1`, file: f }, true);
+        await learnSuppression(up, 'r', { kind: 'waive', findingId: `det:no-console:${f}:1`, file: f }, true); // escalate
+        await learnSuppression(ctrl, 'r', { kind: 'reject', findingId: `det:no-console:${f}:1`, file: f }, true);
+      }
+      const tier = async (c: ReturnType<typeof resolveConfig>, now: Date) =>
+        (await loadSuppressions(c, 'r', now)).find((d) => d.key === 'no-console')?.tier;
+      const now = new Date();
+      // Fresh: both suppress (the upgrade collapses each pair to one vote, so `up` isn't over-counted).
+      expect(await tier(up, now)).toBe('suppress');
+      expect(await tier(ctrl, now)).toBe('suppress');
+      // +120d: reject (30d half-life) has decayed ~16× (0.5^4) → ctrl falls out entirely; the upgraded
+      // waive (365d) is still ~0.8 weight → `up` is still actively suppressing. This is the whole point
+      // of the escalation: a waive that lands after a reject must actually start persisting.
+      const aged = new Date(now.getTime() + 120 * 86_400_000);
+      expect(await tier(up, aged)).toBeDefined();
+      expect(await tier(ctrl, aged)).toBeUndefined();
+    } finally {
+      rmSync(upDir, { recursive: true, force: true });
+      rmSync(ctrlDir, { recursive: true, force: true });
+    }
+  });
+
   it('a retry (firstOfKind=false) does not double-count', async () => {
     const config = cfg();
     await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, false);

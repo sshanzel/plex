@@ -233,13 +233,23 @@ export async function loadSuppressions(
   // counts feed `suppressionTier` unchanged — so a suppression ages back to demote/surface on its own.
   const countsOf = (p: Pitfall): { dismissals: number; corrections: number } => {
     const inc = byPitfall.get(p.id) ?? [];
-    const dismissals: Dismissal[] = inc
-      .filter((i) => i.outcome === 'rejected')
-      .map((i) => {
-        const t = Date.parse(i.ts);
-        const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000; // unparseable ts → full weight
-        return { verb: i.verb ?? 'reject', ageDays }; // verb is authoritative; default reject (conservative)
-      });
+    // ONE dismissal vote per FILE (drift-stability), taking the STRONGEST verb recorded for that file:
+    // a `waive` escalation over a prior `reject` (ADR-41) upgrades to the persistent half-life rather
+    // than double-counting. Belt-and-suspenders: this enforces the one-vote-per-file invariant on the
+    // read side too, so even a stray duplicate dismissal can't inflate the Wilson bar.
+    const byFile = new Map<string, Incident[]>();
+    for (const i of inc) {
+      if (i.outcome !== 'rejected') continue;
+      const f = i.file ?? '';
+      (byFile.get(f) ?? byFile.set(f, []).get(f)!).push(i);
+    }
+    const dismissals: Dismissal[] = [];
+    for (const group of byFile.values()) {
+      const chosen = group.find((i) => (i.verb ?? 'reject') === 'waive') ?? group[0]!; // strongest verb wins
+      const t = Date.parse(chosen.ts);
+      const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000; // unparseable ts → full weight
+      dismissals.push({ verb: chosen.verb ?? 'reject', ageDays }); // verb authoritative; default reject (conservative)
+    }
     const corrections = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length;
     return decayedCounts(dismissals, corrections, hl);
   };
@@ -369,11 +379,20 @@ export async function learnSuppression(
   // Drift-stable dedup (ADR-39): count at most ONE dismissal (and one correction) per (pitfall, file)
   // — a line-rekeyed deterministic finding, or a reworded first-principles one that still matched the
   // same negative, must not double-count toward the Wilson bar. `firstOfKind` covers same-line retries.
+  // VERB UPGRADE (ADR-41): a dismissal isn't a flat dup — a `waive` ("this is wrong") is STRONGER than
+  // a `reject` ("not now"). So a `waive` recorded over only prior `reject`(s) is allowed through (it
+  // escalates the half-life from 30d to 365d); the read side (`countsOf`) then collapses the pair back
+  // to one vote with the strongest verb. A `reject` after any dismissal, or a `waive` after a `waive`,
+  // carries no new information and is still dropped — so the upgrade is strictly monotone (never downgrades).
   if (existing) {
-    const sameClass = (o: Incident['outcome']): boolean =>
-      dismissal ? o === 'rejected' : o === 'accepted' || o === 'fixed' || o === 'reverted';
-    const dup = (await store.incidents()).some((i) => i.pitfallId === id && i.file === input.file && sameClass(i.outcome));
-    if (dup) return;
+    const incs = await store.incidents();
+    if (dismissal) {
+      const prior = incs.filter((i) => i.pitfallId === id && i.file === input.file && i.outcome === 'rejected');
+      const blocked = input.kind === 'waive' ? prior.some((i) => (i.verb ?? 'reject') === 'waive') : prior.length > 0;
+      if (blocked) return;
+    } else if (incs.some((i) => i.pitfallId === id && i.file === input.file && (i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted'))) {
+      return;
+    }
   }
   if (toMint) await store.addPitfall(toMint);
   await learnIncident(config, {

@@ -208,6 +208,14 @@ end to end.
 - **First-principles suppression** ✅ — a finding with no key is keyed by its **title embedding**:
   match-or-mint a negative pitfall by cosine ≥ `adaptiveFloor(0.82,…)`, and rank via synthetic
   `pattern-repo` semantic waivers (reuses `waiverMatches`). Embedding-gated; `suppress`-tier only.
+- **Verb upgrade on re-dismissal** ✅ — the `(pitfall, file)` dedup is *verb-aware*, not flat. A
+  dismissal still counts once per file, but a `waive` ("this is wrong") recorded over a prior `reject`
+  ("not now") on the same file is allowed through as an **upgrade** — `learnSuppression` records it,
+  and `countsOf` collapses the pair back to one vote carrying the **stronger** verb (so the half-life
+  jumps 30d→365d and the suppression actually starts persisting). The upgrade is strictly monotone: a
+  `reject` after a `waive` carries no new information and is dropped (never a downgrade). Without this,
+  a user escalating reject→waive on the identical finding kept the short 30d decay and could never make
+  it stick.
 
 The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d) —
 reachable via `~/.plex/config.json` (`"suppression": { "rejectHalfLifeDays", "waiveHalfLifeDays" }`,
