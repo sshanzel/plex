@@ -198,15 +198,44 @@ raw dismissals per round; each knowledge `Incident` carries a `note` with the or
 dismissal/correction counts and Wilson tier. So "why is `no-console` suppressed here?" is answerable
 end to end.
 
-## Deliberately deferred (and why)
+## Built in ADR-41 (was deferred here)
 
-- **Decay + re-surface probe** — both need a tuning **constant** (a half-life, or a "re-surface every
-  K reviews" cadence). Introducing one would reintroduce exactly the hand-tuned magic this effort
-  removed in favor of Wilson, so they're *not* built unsilently. Note the recovery path already
-  exists WITHOUT a probe: `suppressed` **sinks to the bottom of the stream, it is not deleted** — a
-  user who disagrees can still see and `accept` it, and one accept (a correction) drops the Wilson
-  tier. A time-based probe/decay is a UX refinement to decide on explicitly (it costs a constant).
-- **Knowledge-finding (first-principles) suppression** — only deterministic rules + explicit patterns
-  have a stable suppression key today; a first-principles finding's identity is "a line of code," so
-  repo-wide suppression would need semantic matching (ADR-27 territory) with its own false-positive
-  risk. Separate feature.
+- **Decay** ✅ — `loadSuppressions` recency-decays each dismissal (`0.5^(ageDays/halfLife)`, wall-time)
+  and feeds the *decayed fractional* counts into the unchanged Wilson `suppressionTier`. Verb-specific
+  half-life (`reject` fades, `waive` persists; corrections durable). This is also the re-surface
+  mechanism — an aged suppression's effective N shrinks → the tier slides `suppress→demote→surface`.
+- **Re-surface probe** ✅ DROPPED — subsumed by decay (above); `suppressed` already sinks (not deletes).
+- **First-principles suppression** ✅ — a finding with no key is keyed by its **title embedding**:
+  match-or-mint a negative pitfall by cosine ≥ `adaptiveFloor(0.82,…)`, and rank via synthetic
+  `pattern-repo` semantic waivers (reuses `waiverMatches`). Embedding-gated; `suppress`-tier only.
+- **Verb upgrade on re-dismissal** ✅ — the `(pitfall, file)` dedup is *verb-aware*, not flat. A
+  dismissal still counts once per file, but a `waive` ("this is wrong") recorded over a prior `reject`
+  ("not now") on the same file is allowed through as an **upgrade** — `learnSuppression` records it,
+  and `countsOf` collapses the pair back to one vote carrying the **stronger** verb (so the half-life
+  jumps 30d→365d and the suppression actually starts persisting). The upgrade is strictly monotone: a
+  `reject` after a `waive` carries no new information and is dropped (never a downgrade). Without this,
+  a user escalating reject→waive on the identical finding kept the short 30d decay and could never make
+  it stick.
+
+The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d) —
+reachable via `~/.plex/config.json` (`"suppression": { "rejectHalfLifeDays", "waiveHalfLifeDays" }`,
+partial blocks merge with defaults) or `PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS` /
+`PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS`.
+
+**Two intended consequences worth naming (so they aren't read as bugs):**
+
+- **The `(pitfall, file)` dedup gives first-principles a lower evidence ceiling than deterministic —
+  on purpose.** Each *distinct deterministic rule tag* is its own negative pitfall, so two different
+  rules firing in one file each count their own dismissal. First-principles findings instead match by
+  cosine ≥ 0.82, so two *near-but-distinct* findings in the same file collapse onto the same negative
+  pitfall and the `(pitfall, file)` guard counts them once. That's not a leak — at that cosine they
+  *are* "the same issue" by our matching definition, and the guard is the drift-stability that keeps a
+  line-rekeyed or reworded finding from double-counting (same tradeoff as `inferPitfallId`). Accruing
+  to the `suppress` bar across *different files* is unaffected.
+- **A first-principles suppression silently no-ops on a per-review embed failure (it doesn't degrade —
+  it vanishes for that review).** The synthetic `pattern-repo` waiver carries *only* an embedding, so
+  if `safeEmbed` returns nothing that round, findings go unembedded, `waiverMatches`'s semantic branch
+  is false, and the suppression simply doesn't apply — reappearing the next review once embeds
+  recover. There is no identity fallback because a first-principles suppression *is* its embedding
+  (unlike a tag-keyed waiver). Deterministic suppression is unaffected — consistent with the
+  embeddings-optional posture: off, not broken.

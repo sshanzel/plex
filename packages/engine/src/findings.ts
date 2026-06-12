@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource } from '@plex/core';
+import { safeEmbed, cosineBackground, adaptiveFloor, type ReviewerConfig, type Finding, type RankedFinding, type Severity, type FindingSource, type Waiver } from '@plex/core';
 import { repoPaths } from './paths';
 import { runDeterministic } from '@plex/deterministic';
-import { rankFindings } from '@plex/findings';
+import { rankFindings, firedSemanticSuppressions } from '@plex/findings';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { resolveDiff, type DiffSource } from './diff';
 import { loadWaivers } from './verdicts';
@@ -78,10 +78,22 @@ export async function rankReviewFindings(
   // Learned suppression (docs/design/negative-knowledge.md): accumulated dismissals demote/suppress
   // a rule by tag, weighted via Wilson — computed live so it needs no `consolidate` run.
   const suppressions = await loadSuppressions(config, repo);
+  // Split suppressions: DETERMINISTIC (tag) are matched by tag in rankFindings; FIRST-PRINCIPLES
+  // (embedding-keyed, ADR-41) are routed through the EXISTING semantic-waiver path as synthetic
+  // `pattern-repo` waivers carrying the embedding — `waiverMatches` already does the cosine match, so
+  // no new matching code lands in the pure package. Semantic suppressions act only at the `suppress`
+  // tier (pattern-repo waivers are binary; a tagless semantic `demote` has nothing to explain it).
+  // NOTE: a semantic suppression carries ONLY an embedding (no identity fallback — it *is* its
+  // embedding). So if the per-review embed below fails (no provider / transient outage → findings
+  // unembedded), its `waiverMatches` semantic branch is false and the suppression silently no-ops for
+  // THIS review, reappearing next review once embeds recover. Deterministic suppression is unaffected
+  // (off, not broken — the embeddings-optional posture, docs/design/negative-knowledge.md).
+  const semanticSuppressions = suppressions.filter((d) => d.embedding && d.tier === 'suppress');
+  const semanticWaivers: Waiver[] = semanticSuppressions.map((d) => ({ scope: 'pattern-repo', embedding: d.embedding }));
+  const waiversAll = [...waivers, ...semanticWaivers];
 
-  // Embed findings so semantic waivers (ADR-27) can suppress the same issue across rounds
-  // even after wording/line changes. Best-effort: only when a real provider is configured
-  // and there's at least one semantic (embedded) waiver to match against.
+  // Embed findings so semantic waivers (ADR-27) + first-principles suppressions can match the same
+  // issue across rounds even after wording/line changes. Best-effort: only with a real provider.
   const all = [...agent, ...det];
 
   // Enrich each finding's `blast` from the sidecar the last get_review_context wrote (its file's
@@ -102,7 +114,7 @@ export async function rankReviewFindings(
   }
 
   let semanticThreshold: number | undefined;
-  if (waivers.some((w) => w.embedding)) {
+  if (waiversAll.some((w) => w.embedding)) {
     const provider = createEmbeddingProvider(config.embedding);
     if (provider) {
       // safeEmbed: a transient embedding failure degrades to identity-only waiver matching instead
@@ -117,12 +129,17 @@ export async function rankReviewFindings(
       }
     }
   }
-  const suppressionMap = new Map(suppressions.map((d) => [d.key, d.tier] as const));
-  const ranked = rankFindings(all, { waivers, semanticThreshold, suppressions: suppressionMap });
+  // Only the DETERMINISTIC (tag) suppressions go in the tag map; semantic ones ride the waiver path above.
+  const suppressionMap = new Map(suppressions.filter((d) => !d.embedding).map((d) => [d.key, d.tier] as const));
+  const ranked = rankFindings(all, { waivers: waiversAll, semanticThreshold, suppressions: suppressionMap });
   // Record only the suppressions that ACTUALLY matched a finding this review (the ones that shaped
-  // the output) as the audit-log provenance — not every active rule.
+  // the output) as the audit-log provenance — not every active rule. Two paths: DETERMINISTIC ones
+  // match by tag; FIRST-PRINCIPLES (embedding-keyed, ADR-41) ones have no tag, so `firedSemanticSuppressions`
+  // attributes them via the same `waiverMatches` cosine the ranking used (else they'd silently vanish
+  // from the trail). `all` still carries embeddings here (rankFindings strips them only from `ranked`).
   const appliedKeys = new Set(all.flatMap((f) => f.tags ?? []).filter((t) => suppressionMap.has(t)));
-  const appliedSuppressions = suppressions.filter((d) => appliedKeys.has(d.key));
+  const appliedSemantic = semanticThreshold == null ? [] : firedSemanticSuppressions(semanticSuppressions, all, semanticThreshold);
+  const appliedSuppressions = [...suppressions.filter((d) => appliedKeys.has(d.key)), ...appliedSemantic];
 
   // Persist into the PR brain (round-tagged) + audit log (ADR-22/24/30). Key off the repo PATH
   // (basename), consistent with round recording + reconcile — never the graph meta (reviewTargetFor).

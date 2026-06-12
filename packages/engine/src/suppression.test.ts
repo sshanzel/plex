@@ -15,6 +15,11 @@ const cfg = () => {
   dir = mkdtempSync(join(tmpdir(), 'plex-supp-'));
   return resolveConfig({ knowledgeDir: dir });
 };
+// With the deterministic test-only embedder, so the first-principles (semantic) path is exercised.
+const cfgEmbed = () => {
+  dir = mkdtempSync(join(tmpdir(), 'plex-supp-'));
+  return resolveConfig({ knowledgeDir: dir, embedding: { provider: 'fake' } });
+};
 
 describe('suppressionKeyFor', () => {
   it('parses the rule tag out of a deterministic finding id', () => {
@@ -58,7 +63,7 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     const decisions = await loadSuppressions(config, 'myrepo');
     const d = decisions.find((x) => x.key === 'no-console')!;
     expect(d.tier).toBe('suppress');
-    expect(d.dismissals).toBe(4); // the evidence basis travels with the decision (provenance)
+    expect(d.dismissals).toBeCloseTo(4, 4); // ~4 (recency-decayed; fresh incidents ≈ full weight, ADR-41)
     expect(d.corrections).toBe(0);
     // …and only ONE negative pitfall was minted for the rule (not one per dismissal).
     const negs = (await knowledgeStore(config).pitfalls()).filter((p) => p.polarity === 'negative');
@@ -104,6 +109,56 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     expect(dismissals).toHaveLength(1); // deduped by (rule, file)
   });
 
+  it('item 2: a `waive` after a `reject` on the same file is recorded as an UPGRADE (both verbs on disk)', async () => {
+    const config = cfg();
+    // Escalation on the SAME (pitfall, file): "not now" → "this is wrong".
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    await learnSuppression(config, 'myrepo', { kind: 'waive', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissalIncs = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    // The waive WAS allowed through (unlike a flat reject re-dismissal) — both verbs on disk as provenance.
+    expect(dismissalIncs.map((i) => i.verb).sort()).toEqual(['reject', 'waive']);
+  });
+
+  it('item 2: a `reject` after a `waive` does NOT downgrade (monotone upgrade only)', async () => {
+    const config = cfg();
+    await learnSuppression(config, 'myrepo', { kind: 'waive', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissalIncs = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    expect(dismissalIncs.map((i) => i.verb)).toEqual(['waive']); // the later reject carried no new info → dropped
+  });
+
+  it('item 2: the upgraded `waive` half-life makes a suppression OUTLIVE an equivalent reject-only one', async () => {
+    // Two independent stores: `up` escalates each dismissal reject→waive; `ctrl` stays reject-only.
+    const upDir = mkdtempSync(join(tmpdir(), 'plex-supp-up-'));
+    const ctrlDir = mkdtempSync(join(tmpdir(), 'plex-supp-ctrl-'));
+    try {
+      const up = resolveConfig({ knowledgeDir: upDir });
+      const ctrl = resolveConfig({ knowledgeDir: ctrlDir });
+      for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) {
+        await learnSuppression(up, 'r', { kind: 'reject', findingId: `det:no-console:${f}:1`, file: f }, true);
+        await learnSuppression(up, 'r', { kind: 'waive', findingId: `det:no-console:${f}:1`, file: f }, true); // escalate
+        await learnSuppression(ctrl, 'r', { kind: 'reject', findingId: `det:no-console:${f}:1`, file: f }, true);
+      }
+      const tier = async (c: ReturnType<typeof resolveConfig>, now: Date) =>
+        (await loadSuppressions(c, 'r', now)).find((d) => d.key === 'no-console')?.tier;
+      const now = new Date();
+      // Fresh: both suppress (the upgrade collapses each pair to one vote, so `up` isn't over-counted).
+      expect(await tier(up, now)).toBe('suppress');
+      expect(await tier(ctrl, now)).toBe('suppress');
+      // +120d: reject (30d half-life) has decayed ~16× (0.5^4) → ctrl falls out entirely; the upgraded
+      // waive (365d) is still ~0.8 weight → `up` is still actively suppressing. This is the whole point
+      // of the escalation: a waive that lands after a reject must actually start persisting.
+      const aged = new Date(now.getTime() + 120 * 86_400_000);
+      expect(await tier(up, aged)).toBeDefined();
+      expect(await tier(ctrl, aged)).toBeUndefined();
+    } finally {
+      rmSync(upDir, { recursive: true, force: true });
+      rmSync(ctrlDir, { recursive: true, force: true });
+    }
+  });
+
   it('a retry (firstOfKind=false) does not double-count', async () => {
     const config = cfg();
     await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, false);
@@ -146,5 +201,44 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
       await learnSuppression(config, 'pyRepo', { kind: 'reject', pattern: 'shared', findingId: `f${f}`, file: `${f}.py` }, true);
     // Neither language reached 2 distinct repos → no cross-language generalization.
     expect(await tierOf(config, 'freshRepo', 'shared')).toBeUndefined();
+  });
+});
+
+describe('first-principles suppression (semantic key, ADR-41)', () => {
+  const negsOf = async (config: ReturnType<typeof resolveConfig>) =>
+    (await knowledgeStore(config).pitfalls()).filter((p) => p.polarity === 'negative');
+  // A first-principles dismissal: no `det:` id, no pattern — only a title (the semantic key).
+  const fp = (config: ReturnType<typeof resolveConfig>, file: string, title = 'Possible null deref on `user.profile`') =>
+    learnSuppression(config, 'myrepo', { kind: 'reject', findingId: `agent:${file}`, title, file }, true);
+
+  it('mints an embedding-keyed negative pitfall (no suppressKey) for a dismissed first-principles finding', async () => {
+    const config = cfgEmbed();
+    await fp(config, 'a.ts');
+    const negs = await negsOf(config);
+    expect(negs).toHaveLength(1);
+    expect(negs[0]!.suppressKey).toBeUndefined(); // identity is the embedding, not a tag
+    expect(negs[0]!.embedding?.length).toBeGreaterThan(0);
+  });
+
+  it('accumulates repeated dismissals of the SAME issue onto ONE pitfall → suppress, carrying the vector', async () => {
+    const config = cfgEmbed();
+    for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) await fp(config, f); // same title → all match by cosine
+    const negs = await negsOf(config);
+    expect(negs).toHaveLength(1); // matched the first, did not mint duplicates
+    const d = (await loadSuppressions(config, 'myrepo')).find((x) => x.pitfallId === negs[0]!.id)!;
+    expect(d.tier).toBe('suppress');
+    expect(d.embedding?.length).toBeGreaterThan(0); // ranking matches findings semantically via this
+  });
+
+  it('does NOT learn first-principles suppression without an embedding provider (deterministic-only degradation)', async () => {
+    const config = cfg(); // provider 'none'
+    await fp(config, 'a.ts');
+    expect(await negsOf(config)).toHaveLength(0);
+  });
+
+  it('a corrective accept with no matching negative pitfall mints nothing', async () => {
+    const config = cfgEmbed();
+    await learnSuppression(config, 'myrepo', { kind: 'accept', findingId: 'agent:x', title: 'Unrelated', file: 'a.ts' }, true);
+    expect(await negsOf(config)).toHaveLength(0);
   });
 });

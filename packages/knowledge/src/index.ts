@@ -12,5 +12,5 @@ export type { RetrievedPitfall } from './retrieve';
 export { recordIncident } from './incidents';
 export { consolidatePitfalls } from './promotion';
 export type { ConsolidateResult } from './promotion';
-export { wilsonLowerBound, suppressionTier, Z_95, Z_68 } from './stats';
-export type { SuppressionTier } from './stats';
+export { wilsonLowerBound, suppressionTier, recencyWeight, decayedCounts, Z_95, Z_68 } from './stats';
+export type { SuppressionTier, DecayHalfLives, Dismissal } from './stats';

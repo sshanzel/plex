@@ -4,7 +4,7 @@ export { dedupeFindings, dedupeKey, normalizeTitle } from './dedupe';
 export type { MergedFinding } from './dedupe';
 export { computeSignal, severityWeight, defaultWeights } from './signal';
 export type { SignalWeights } from './signal';
-export { waiverMatches, isWaived } from './waivers';
+export { waiverMatches, isWaived, firedSemanticSuppressions } from './waivers';
 export { classifyChanges, findingAddressed, findingAddressedAt, findingAddressMatch } from './rounds';
 export type { RegionVec, SignalVec, ClassifyOptions } from './rounds';
 export { partitionByCoupling, reviewPlan } from './review-plan';

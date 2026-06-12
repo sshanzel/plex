@@ -46,3 +46,45 @@ export function suppressionTier(dismissals: number, corrections: number): Suppre
   if (wilsonLowerBound(dismissals, total, Z_68) >= 0.5) return 'demote';
   return 'none';
 }
+
+/** Per-verb half-lives (days) for dismissal recency-decay. Corrections are durable (no knob). */
+export interface DecayHalfLives {
+  /** `reject` ("not now") fades fast. */
+  rejectDays: number;
+  /** `waive` ("this is wrong") persists. */
+  waiveDays: number;
+}
+
+/** One aged dismissal: its verb (sets the half-life) and age in days. */
+export type Dismissal = { verb: 'reject' | 'waive'; ageDays: number };
+
+/**
+ * Exponential recency weight: `0.5^(ageDays / halfLifeDays)`. A non-positive OR non-finite half-life
+ * means "never decays" (weight 1) — this both matches the documented intent and keeps the function
+ * TOTAL: `halfLifeDays = 0` would otherwise give `0.5^Infinity = 0` (or `0.5^NaN = NaN` at age 0),
+ * and a NEGATIVE half-life would INVERT decay (`0.5^negative > 1`, growing with age). A misconfigured
+ * `config.suppression` half-life must never silently disable or over-apply suppression — it degrades
+ * to no-decay, not to NaN. Negative ages clamp to 0 (future-dated → full weight). Pure.
+ */
+export function recencyWeight(ageDays: number, halfLifeDays: number): number {
+  if (!Number.isFinite(halfLifeDays) || halfLifeDays <= 0) return 1;
+  return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
+}
+
+/**
+ * Decay the suppression evidence by recency (the keystone of the negative-knowledge loop, ADR-41):
+ * each dismissal contributes `recencyWeight` instead of a flat 1, with a verb-specific half-life
+ * (reject fades, waive persists). **Corrections are durable** — each contributes full weight 1: the
+ * user acting on a finding is permanent evidence it was real, and must not fade and let a stale
+ * suppression creep back. The decayed (fractional) counts feed straight into `suppressionTier` —
+ * Wilson takes plain numbers, so as evidence ages the effective N shrinks, the interval widens, and
+ * the tier slides `suppress → demote → none` (this is also the re-surface mechanism — no probe).
+ */
+export function decayedCounts(
+  dismissals: Dismissal[],
+  correctionsCount: number,
+  hl: DecayHalfLives,
+): { dismissals: number; corrections: number } {
+  const d = dismissals.reduce((s, x) => s + recencyWeight(x.ageDays, x.verb === 'waive' ? hl.waiveDays : hl.rejectDays), 0);
+  return { dismissals: d, corrections: correctionsCount };
+}

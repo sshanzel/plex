@@ -1,6 +1,6 @@
 # Design note — knowledge decay (aging unreinforced pitfalls)
 
-**Status:** proposed (not built). Captures the gap + a plan so we don't rediscover it. Promote to an ADR when we commit. Surfaced by the post-M12 lifecycle audit.
+**Status:** **partially built (ADR-41).** Recency decay shipped for the **suppression** (negative-knowledge) path — `loadSuppressions` weights each dismissal by `0.5^(ageDays/halfLife)` (wall-time, verb-specific half-life; `@plex/knowledge` `recencyWeight`/`decayedCounts`). What remains proposed below is decay for the **positive pitfall / retrieval** path (`consolidatePitfalls` + retrieval recency-tilt + pruning). The suppression decay validated the approach; extend it here when the positive KB grows large enough to matter.
 
 ## Problem
 

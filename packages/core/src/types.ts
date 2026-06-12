@@ -328,5 +328,12 @@ export interface Incident {
    * rejected three times across rounds 2–5."
    */
   note?: string;
+  /**
+   * The dismissal verb for a learned-suppression incident (`reject` = "not now" → fast decay;
+   * `waive` = "this is wrong" → slow decay). The authoritative source for recency-decay half-life
+   * selection (ADR-41) — `outcome: 'rejected'` alone flattens the two. Absent on corrections and
+   * pre-decay incidents (which default to `reject`, the conservative short half-life).
+   */
+  verb?: 'reject' | 'waive';
   ts: string;
 }

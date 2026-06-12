@@ -4,6 +4,7 @@ import {
   cosineSimilarity,
   cosineBackground,
   adaptiveFloor,
+  hashId,
   type ReviewerConfig,
   type CodeLocation,
   type Finding,
@@ -20,6 +21,8 @@ import {
   recordIncident,
   consolidatePitfalls,
   suppressionTier,
+  decayedCounts,
+  type Dismissal,
   type RetrievedPitfall,
   type ConsolidateResult,
 } from '@plex/knowledge';
@@ -135,7 +138,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string },
+  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive' },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -176,11 +179,14 @@ export function languageOf(file?: string): string | undefined {
 /** A learned-suppression decision with the evidence that justifies it — the provenance the audit log
  * records so "why is this rule demoted/suppressed?" is answerable. */
 export interface SuppressionDecision {
+  /** Match identity: a deterministic rule tag, or the pitfall id for a first-principles (semantic) one. */
   key: string;
   tier: 'suppress' | 'demote';
   dismissals: number;
   corrections: number;
   pitfallId: string;
+  /** Present for FIRST-PRINCIPLES suppressions (ADR-41) — match findings SEMANTICALLY (cosine), not by tag. */
+  embedding?: number[];
 }
 
 /**
@@ -204,10 +210,15 @@ const PROMOTE_MIN_REPOS = 2;
  *     language-bound — a promoted `global@ts` decision can only ever match TS findings. There is NO
  *     language-agnostic auto-promotion (that stays certified-only).
  */
-export async function loadSuppressions(config: ReviewerConfig, repoName: string): Promise<SuppressionDecision[]> {
+export async function loadSuppressions(
+  config: ReviewerConfig,
+  repoName: string,
+  now: Date = new Date(),
+): Promise<SuppressionDecision[]> {
   const store = knowledgeStore(config);
   const [pitfalls, incidents] = await Promise.all([store.pitfalls(), store.incidents()]);
-  const negatives = pitfalls.filter((p) => p.polarity === 'negative' && p.suppressKey);
+  // Include both deterministic (keyed) and first-principles (embedding-keyed) negatives (ADR-41).
+  const negatives = pitfalls.filter((p) => p.polarity === 'negative' && (p.suppressKey || p.embedding?.length));
   if (negatives.length === 0) return [];
 
   const byPitfall = new Map<string, Incident[]>();
@@ -215,12 +226,32 @@ export async function loadSuppressions(config: ReviewerConfig, repoName: string)
     if (!i.pitfallId) continue;
     (byPitfall.get(i.pitfallId) ?? byPitfall.set(i.pitfallId, []).get(i.pitfallId)!).push(i);
   }
+  const hl = { rejectDays: config.suppression.rejectHalfLifeDays, waiveDays: config.suppression.waiveHalfLifeDays };
+  const nowMs = now.getTime();
+  // Recency-decay the evidence (ADR-41): each dismissal contributes `recencyWeight` by its verb's
+  // half-life (reject fades fast, waive persists); corrections are durable. The decayed (fractional)
+  // counts feed `suppressionTier` unchanged — so a suppression ages back to demote/surface on its own.
   const countsOf = (p: Pitfall): { dismissals: number; corrections: number } => {
     const inc = byPitfall.get(p.id) ?? [];
-    return {
-      dismissals: inc.filter((i) => i.outcome === 'rejected').length,
-      corrections: inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length,
-    };
+    // ONE dismissal vote per FILE (drift-stability), taking the STRONGEST verb recorded for that file:
+    // a `waive` escalation over a prior `reject` (ADR-41) upgrades to the persistent half-life rather
+    // than double-counting. Belt-and-suspenders: this enforces the one-vote-per-file invariant on the
+    // read side too, so even a stray duplicate dismissal can't inflate the Wilson bar.
+    const byFile = new Map<string, Incident[]>();
+    for (const i of inc) {
+      if (i.outcome !== 'rejected') continue;
+      const f = i.file ?? '';
+      (byFile.get(f) ?? byFile.set(f, []).get(f)!).push(i);
+    }
+    const dismissals: Dismissal[] = [];
+    for (const group of byFile.values()) {
+      const chosen = group.find((i) => (i.verb ?? 'reject') === 'waive') ?? group[0]!; // strongest verb wins
+      const t = Date.parse(chosen.ts);
+      const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000; // unparseable ts → full weight
+      dismissals.push({ verb: chosen.verb ?? 'reject', ageDays }); // verb authoritative; default reject (conservative)
+    }
+    const corrections = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length;
+    return decayedCounts(dismissals, corrections, hl);
   };
 
   const rank = { none: 0, demote: 1, suppress: 2 } as const;
@@ -235,13 +266,21 @@ export async function loadSuppressions(config: ReviewerConfig, repoName: string)
     if (p.scope === 'repo' && p.repo !== repoName) continue;
     const { dismissals, corrections } = countsOf(p);
     const tier = suppressionTier(dismissals, corrections);
-    if (tier !== 'none') consider({ key: p.suppressKey!, tier, dismissals, corrections, pitfallId: p.id });
+    if (tier !== 'none') {
+      // First-principles (embedding-keyed) negatives use the pitfall id as `key` and carry the
+      // `embedding` so ranking matches findings SEMANTICALLY rather than by tag (ADR-41).
+      consider(
+        p.suppressKey
+          ? { key: p.suppressKey, tier, dismissals, corrections, pitfallId: p.id }
+          : { key: p.id, tier, dismissals, corrections, pitfallId: p.id, embedding: p.embedding },
+      );
+    }
   }
 
   // 2) Cross-repo promotion, grouped by (key, language) so languages never merge.
   const groups = new Map<string, Pitfall[]>();
   for (const p of negatives) {
-    if (p.scope !== 'repo') continue;
+    if (p.scope !== 'repo' || !p.suppressKey) continue; // cross-repo promotion is deterministic-only
     const g = `${p.suppressKey} ${p.language ?? ''}`;
     (groups.get(g) ?? groups.set(g, []).get(g)!).push(p);
   }
@@ -276,63 +315,114 @@ export async function loadSuppressions(config: ReviewerConfig, repoName: string)
 export async function learnSuppression(
   config: ReviewerConfig,
   repoName: string,
-  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string },
+  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string; title?: string },
   firstOfKind: boolean,
 ): Promise<void> {
   if (!firstOfKind) return;
   const dismissal = input.kind === 'reject' || input.kind === 'waive';
   const corrective = input.kind === 'accept';
   if (!dismissal && !corrective) return;
-  const key = suppressionKeyFor(input);
-  if (!key) return;
 
   const store = knowledgeStore(config);
-  const id = `neg:${repoName}:${key}`;
-  const existing = (await store.pitfalls()).find((p) => p.id === id);
-  // A correction with no existing negative pitfall has nothing to refute — don't mint one on accept.
-  if (!existing && corrective) return;
+  const key = suppressionKeyFor(input);
 
-  // Drift-stable dedup (ADR-39): a deterministic finding's id embeds its LINE, so a persistent
-  // violation that shifts line across rounds re-keys and would double-count toward the ~4-independent
-  // Wilson `suppress` bar. Count at most ONE dismissal (and one correction) per (rule, file) — the
-  // conservative direction (fewer false suppressions). `firstOfKind` already covers same-line retries.
-  if (existing) {
-    const sameClass = (o: Incident['outcome']): boolean =>
-      dismissal ? o === 'rejected' : o === 'accepted' || o === 'fixed' || o === 'reverted';
-    const dup = (await store.incidents()).some(
-      (i) => i.pitfallId === id && i.file === input.file && sameClass(i.outcome),
+  // Resolve the negative pitfall this incident attaches to. Two identities:
+  //  - DETERMINISTIC: a stable `suppressKey` (rule tag / explicit pattern) → keyed pitfall.
+  //  - FIRST-PRINCIPLES (no key, ADR-41): the finding's TITLE EMBEDDING. Match-or-mint against
+  //    existing embedding-keyed negatives by cosine (conservative ~0.82 — a wrong merge pollutes
+  //    another suppression's evidence). Embedding-gated: no provider/title → no learning (degrade to
+  //    deterministic-only). Both paths then share the dedup + incident record below.
+  let id: string;
+  let existing: Pitfall | undefined;
+  let toMint: Pitfall | undefined;
+
+  if (key) {
+    id = `neg:${repoName}:${key}`;
+    existing = (await store.pitfalls()).find((p) => p.id === id);
+    if (!existing && corrective) return; // nothing to refute
+    if (!existing) {
+      toMint = {
+        id, polarity: 'negative', suppressKey: key, title: `suppress:${key}@${repoName}`, trigger: key,
+        why: `Learned suppression — the \`${key}\` rule was dismissed in ${repoName}.`,
+        category: 'suppression', tier: 'codifiable', confidence: 0, scope: 'repo', repo: repoName,
+        language: languageOf(input.file), incidentIds: [],
+      };
+    }
+  } else {
+    const provider = createEmbeddingProvider(config.embedding);
+    const title = input.title?.trim();
+    if (!provider || !title) return; // no stable key without embeddings → deterministic-only degradation
+    const vec = (await safeEmbed(provider, [title]))?.[0];
+    if (!vec) return; // transient embed failure → skip (best-effort, never fail the verdict)
+    const negs = (await store.pitfalls()).filter(
+      (p) => p.polarity === 'negative' && p.embedding?.length && (p.scope !== 'repo' || p.repo === repoName),
     );
-    if (dup) return;
+    const matched = bestEmbeddingMatch(vec, negs);
+    if (matched) {
+      id = matched.id;
+      existing = matched;
+    } else {
+      if (corrective) return; // nothing to refute
+      id = `neg:${repoName}:fp:${hashId(title)}`;
+      existing = (await store.pitfalls()).find((p) => p.id === id); // id-collision guard (same title)
+      if (!existing) {
+        toMint = {
+          id, polarity: 'negative', title: `suppress(fp):${title.slice(0, 60)}@${repoName}`, trigger: title,
+          why: `Learned suppression — a first-principles finding ("${title.slice(0, 80)}") was dismissed in ${repoName}.`,
+          category: 'suppression', tier: 'judgmental', confidence: 0, scope: 'repo', repo: repoName,
+          language: languageOf(input.file), embedding: vec, incidentIds: [],
+        };
+      }
+    }
   }
-  if (!existing) {
-    const negative: Pitfall = {
-      id,
-      polarity: 'negative',
-      suppressKey: key,
-      title: `suppress:${key}@${repoName}`,
-      trigger: key,
-      why: `Learned suppression — the \`${key}\` rule was dismissed in ${repoName}.`,
-      category: 'suppression',
-      tier: 'codifiable',
-      confidence: 0,
-      scope: 'repo',
-      repo: repoName,
-      language: languageOf(input.file),
-      incidentIds: [],
-    };
-    await store.addPitfall(negative);
+
+  // Drift-stable dedup (ADR-39): count at most ONE dismissal (and one correction) per (pitfall, file)
+  // — a line-rekeyed deterministic finding, or a reworded first-principles one that still matched the
+  // same negative, must not double-count toward the Wilson bar. `firstOfKind` covers same-line retries.
+  // VERB UPGRADE (ADR-41): a dismissal isn't a flat dup — a `waive` ("this is wrong") is STRONGER than
+  // a `reject` ("not now"). So a `waive` recorded over only prior `reject`(s) is allowed through (it
+  // escalates the half-life from 30d to 365d); the read side (`countsOf`) then collapses the pair back
+  // to one vote with the strongest verb. A `reject` after any dismissal, or a `waive` after a `waive`,
+  // carries no new information and is still dropped — so the upgrade is strictly monotone (never downgrades).
+  if (existing) {
+    const incs = await store.incidents();
+    if (dismissal) {
+      const prior = incs.filter((i) => i.pitfallId === id && i.file === input.file && i.outcome === 'rejected');
+      const blocked = input.kind === 'waive' ? prior.some((i) => (i.verb ?? 'reject') === 'waive') : prior.length > 0;
+      if (blocked) return;
+    } else if (incs.some((i) => i.pitfallId === id && i.file === input.file && (i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted'))) {
+      return;
+    }
   }
+  if (toMint) await store.addPitfall(toMint);
   await learnIncident(config, {
     repo: repoName,
     file: input.file,
-    snippet: key,
+    snippet: key ?? id,
     pitfallId: id,
     outcome: dismissal ? 'rejected' : 'accepted',
-    // Provenance: the verb the scoring intentionally flattens (waive == reject as a dismissal) is
-    // preserved here so the history shows what kind of dismissal, where, and (via ts) when.
+    // The verb sets the recency-decay half-life (ADR-41): reject fades, waive persists. Authoritative
+    // (outcome:'rejected' flattens the two); only dismissals carry it.
+    verb: dismissal ? (input.kind === 'waive' ? 'waive' : 'reject') : undefined,
     note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}`,
   });
 }
+
+/** First-principles match (ADR-41): the embedding-keyed negative pitfall most similar to `vec`,
+ * if cosine clears `adaptiveFloor(0.82, …)` — conservative, biased toward minting a fresh suppression
+ * over polluting an existing one's evidence (mirrors `inferPitfallId`). undefined if none. */
+function bestEmbeddingMatch(vec: number[], negatives: Pitfall[]): Pitfall | undefined {
+  if (negatives.length === 0) return undefined;
+  const floor = adaptiveFloor(FP_EMBED_FLOOR, cosineBackground(negatives.map((p) => p.embedding!)));
+  let best: { p: Pitfall; score: number } | undefined;
+  for (const p of negatives) {
+    const score = cosineSimilarity(vec, p.embedding!);
+    if (score >= floor && (best == null || score > best.score)) best = { p, score };
+  }
+  return best?.p;
+}
+
+const FP_EMBED_FLOOR = 0.82; // ≈ WAIVER_SEMANTIC_THRESHOLD; conservative, bias toward minting
 
 
 /**

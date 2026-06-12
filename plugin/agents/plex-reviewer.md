@@ -221,6 +221,7 @@ Cutting these is as important as finding real bugs; each false positive erodes t
 - **Likely-intentional changes** that are part of the broader change's purpose, even if they look surprising in isolation — check `changeContext` before assuming a mistake.
 - **General-quality wishes** ("add tests", "could be cleaner", "more docs") unless the change introduces a concrete defect.
 - **Test coverage gaps for code `changeContext` explicitly marks as a spike or prototype.**
+- **Already-answered "is this intentional?" Flags.** An `awareness`/Flag earns its place only when the answer is genuinely *open*. If an adjacent code comment, ADR, or design doc already documents the thing as a deliberate tradeoff ("intended drift-stability tradeoff", "off, not broken — the embeddings-optional posture", a `// NOTE:` explaining the choice), the question is already settled — re-asking it is reporting noise, not value. Don't raise it. (This is the boundary on the "raising it IS the value" rule above: that holds when nothing in the code/docs answers it; it does **not** license re-surfacing a tradeoff the author already wrote down.)
 
 A deterministic finding that lands in one of these buckets: **waive it** (step 3), don't relay it.
 

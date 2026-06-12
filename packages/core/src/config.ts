@@ -111,6 +111,18 @@ export interface ReviewerConfig {
     /** Clusters smaller than this are folded in, never given their own reviewer. */
     minClusterFiles: number;
   };
+  /**
+   * Learned-suppression recency decay (ADR-41). A dismissal's weight halves every N days, by verb —
+   * so a `reject` ("not now") fades and a `waive` ("this is wrong") persists; corrections (accept/fix)
+   * are durable (no knob). The clock is **wall-time** (incidents carry a `ts`); a review-count clock
+   * is the documented future alternative (would need a per-incident round number).
+   */
+  suppression: {
+    /** Half-life (days) of a `reject` dismissal — short. */
+    rejectHalfLifeDays: number;
+    /** Half-life (days) of a `waive` dismissal — long. */
+    waiveHalfLifeDays: number;
+  };
 }
 
 import os from 'node:os';
@@ -151,6 +163,9 @@ export const defaultConfig: ReviewerConfig = {
   autoComment: false, // opt-in: PLEX_AUTO_COMMENT=true / ~/.plex/config.json
   autoCommentSkipNits: false, // nits have value — posted by default; opt out via PLEX_AUTO_COMMENT_SKIP_NITS
   reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 },
+  // reject ~12× shorter-lived than waive — a "not now" is mostly gone in ~a month, "this is wrong"
+  // persists ~a year (co-change already uses halfLifeDays:365 as the long-end precedent).
+  suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 },
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
@@ -163,5 +178,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     llm: { ...defaultConfig.llm, ...overrides.llm },
     analyze: { ...defaultConfig.analyze, ...overrides.analyze },
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
+    suppression: { ...defaultConfig.suppression, ...overrides.suppression },
   };
 }

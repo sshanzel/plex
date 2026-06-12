@@ -1,10 +1,18 @@
 import {
   resolveConfig,
+  defaultConfig,
   type ReviewerConfig,
   type EmbeddingProviderName,
   type LlmProviderName,
 } from '@plex/core';
 import { readHomeConfig } from './home-config';
+
+/** Parse a numeric env var; undefined/empty/non-finite → undefined (ignored, not 0). */
+const numEnv = (v?: string): number | undefined => {
+  if (v == null || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 /**
  * Build a config from, in increasing precedence: defaults < `~/.plex/config.json` (written
@@ -16,6 +24,8 @@ import { readHomeConfig } from './home-config';
  *   PLEX_EMBEDDING_PROVIDER   voyage | openai | gemini | ollama | none (default none)
  *   PLEX_LLM_PROVIDER         analysis distiller: claude-cli | anthropic | openai
  *   PLEX_LLM_MODEL            model id for the analysis distiller
+ *   PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS  recency-decay half-life of a `reject` (default 30)
+ *   PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS   recency-decay half-life of a `waive` (default 365)
  */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
   const home = readHomeConfig();
@@ -31,6 +41,11 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
     };
   }
   if (home.llm?.provider) o.llm = { provider: home.llm.provider, ...(home.llm.model ? { model: home.llm.model } : {}) };
+  // Suppression half-lives (ADR-41) — the documented tuning knob, so it must be reachable from the
+  // home config (not just programmatic overrides). Collect home values; env may override below.
+  const supp: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number } = {};
+  if (typeof home.suppression?.rejectHalfLifeDays === 'number') supp.rejectHalfLifeDays = home.suppression.rejectHalfLifeDays;
+  if (typeof home.suppression?.waiveHalfLifeDays === 'number') supp.waiveHalfLifeDays = home.suppression.waiveHalfLifeDays;
 
   // --- environment (overrides home) ---
   if (env.PLEX_DATA_DIR) o.dataDir = env.PLEX_DATA_DIR;
@@ -45,6 +60,15 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
       provider: (env.PLEX_LLM_PROVIDER as LlmProviderName) ?? o.llm?.provider ?? 'claude-cli',
       ...(env.PLEX_LLM_MODEL ? { model: env.PLEX_LLM_MODEL } : o.llm?.model ? { model: o.llm.model } : {}),
     };
+  }
+  const reEnv = numEnv(env.PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS);
+  const waEnv = numEnv(env.PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS);
+  if (reEnv != null) supp.rejectHalfLifeDays = reEnv;
+  if (waEnv != null) supp.waiveHalfLifeDays = waEnv;
+  // Only set when a value was actually supplied — a partial fills the rest from defaults via the
+  // `resolveConfig` deep-merge; with nothing supplied, leave it unset so defaults (30/365) apply.
+  if (supp.rejectHalfLifeDays != null || supp.waiveHalfLifeDays != null) {
+    o.suppression = { ...defaultConfig.suppression, ...supp };
   }
 
   return resolveConfig({ ...o, ...overrides });
