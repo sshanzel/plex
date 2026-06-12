@@ -210,3 +210,21 @@ end to end.
   `pattern-repo` semantic waivers (reuses `waiverMatches`). Embedding-gated; `suppress`-tier only.
 
 The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d).
+
+**Two intended consequences worth naming (so they aren't read as bugs):**
+
+- **The `(pitfall, file)` dedup gives first-principles a lower evidence ceiling than deterministic —
+  on purpose.** Each *distinct deterministic rule tag* is its own negative pitfall, so two different
+  rules firing in one file each count their own dismissal. First-principles findings instead match by
+  cosine ≥ 0.82, so two *near-but-distinct* findings in the same file collapse onto the same negative
+  pitfall and the `(pitfall, file)` guard counts them once. That's not a leak — at that cosine they
+  *are* "the same issue" by our matching definition, and the guard is the drift-stability that keeps a
+  line-rekeyed or reworded finding from double-counting (same tradeoff as `inferPitfallId`). Accruing
+  to the `suppress` bar across *different files* is unaffected.
+- **A first-principles suppression silently no-ops on a per-review embed failure (it doesn't degrade —
+  it vanishes for that review).** The synthetic `pattern-repo` waiver carries *only* an embedding, so
+  if `safeEmbed` returns nothing that round, findings go unembedded, `waiverMatches`'s semantic branch
+  is false, and the suppression simply doesn't apply — reappearing the next review once embeds
+  recover. There is no identity fallback because a first-principles suppression *is* its embedding
+  (unlike a tag-keyed waiver). Deterministic suppression is unaffected — consistent with the
+  embeddings-optional posture: off, not broken.

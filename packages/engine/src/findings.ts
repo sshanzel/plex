@@ -83,6 +83,11 @@ export async function rankReviewFindings(
   // `pattern-repo` waivers carrying the embedding — `waiverMatches` already does the cosine match, so
   // no new matching code lands in the pure package. Semantic suppressions act only at the `suppress`
   // tier (pattern-repo waivers are binary; a tagless semantic `demote` has nothing to explain it).
+  // NOTE: a semantic suppression carries ONLY an embedding (no identity fallback — it *is* its
+  // embedding). So if the per-review embed below fails (no provider / transient outage → findings
+  // unembedded), its `waiverMatches` semantic branch is false and the suppression silently no-ops for
+  // THIS review, reappearing next review once embeds recover. Deterministic suppression is unaffected
+  // (off, not broken — the embeddings-optional posture, docs/design/negative-knowledge.md).
   const semanticSuppressions = suppressions.filter((d) => d.embedding && d.tier === 'suppress');
   const semanticWaivers: Waiver[] = semanticSuppressions.map((d) => ({ scope: 'pattern-repo', embedding: d.embedding }));
   const waiversAll = [...waivers, ...semanticWaivers];
