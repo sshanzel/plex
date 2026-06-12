@@ -59,11 +59,15 @@ export interface DecayHalfLives {
 export type Dismissal = { verb: 'reject' | 'waive'; ageDays: number };
 
 /**
- * Exponential recency weight: `0.5^(ageDays / halfLifeDays)`. A non-finite half-life means "never
- * decays" (weight 1). Negative ages clamp to 0 (future-dated → full weight). Pure.
+ * Exponential recency weight: `0.5^(ageDays / halfLifeDays)`. A non-positive OR non-finite half-life
+ * means "never decays" (weight 1) — this both matches the documented intent and keeps the function
+ * TOTAL: `halfLifeDays = 0` would otherwise give `0.5^Infinity = 0` (or `0.5^NaN = NaN` at age 0),
+ * and a NEGATIVE half-life would INVERT decay (`0.5^negative > 1`, growing with age). A misconfigured
+ * `config.suppression` half-life must never silently disable or over-apply suppression — it degrades
+ * to no-decay, not to NaN. Negative ages clamp to 0 (future-dated → full weight). Pure.
  */
 export function recencyWeight(ageDays: number, halfLifeDays: number): number {
-  if (!Number.isFinite(halfLifeDays)) return 1;
+  if (!Number.isFinite(halfLifeDays) || halfLifeDays <= 0) return 1;
   return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
 }
 

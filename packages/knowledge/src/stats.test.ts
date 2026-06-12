@@ -64,6 +64,16 @@ describe('recencyWeight (exponential half-life decay)', () => {
   it('a non-finite half-life means "never decays" (durable)', () => {
     expect(recencyWeight(10_000, Infinity)).toBe(1);
   });
+  it('a non-positive half-life degrades to no-decay (never NaN, never inverts)', () => {
+    // A misconfigured `config.suppression` half-life must not silently disable or over-apply
+    // suppression. hl=0 would give 0.5^Infinity=0 (age>0) or 0.5^NaN=NaN (age 0); hl<0 would
+    // INVERT decay (0.5^negative > 1, growing with age). Both clamp to full weight 1 instead.
+    expect(recencyWeight(10, 0)).toBe(1); // would be 0.5^Infinity = 0
+    expect(recencyWeight(0, 0)).toBe(1); // would be 0.5^NaN = NaN
+    expect(recencyWeight(10, -30)).toBe(1); // would be 0.5^-0.33 ≈ 1.26 (amplifies)
+    expect(recencyWeight(60, -30)).toBe(1); // would be 0.5^-2 = 4 (grows with age)
+    expect(Number.isNaN(recencyWeight(0, 0))).toBe(false);
+  });
 });
 
 describe('decayedCounts', () => {
