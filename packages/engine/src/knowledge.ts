@@ -7,7 +7,9 @@ import {
   type ReviewerConfig,
   type CodeLocation,
   type Finding,
+  type Incident,
   type IncidentOutcome,
+  type Pitfall,
 } from '@plex/core';
 import {
   KnowledgeStore,
@@ -17,6 +19,7 @@ import {
   lexicalScores,
   recordIncident,
   consolidatePitfalls,
+  suppressionTier,
   type RetrievedPitfall,
   type ConsolidateResult,
 } from '@plex/knowledge';
@@ -132,7 +135,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string },
+  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -144,6 +147,191 @@ export async function learnIncident(
 /** Recompute pitfall confidence from incident outcomes (feedback loop — ADR-10). */
 export async function consolidateKnowledge(config: ReviewerConfig): Promise<ConsolidateResult> {
   return consolidatePitfalls(knowledgeStore(config));
+}
+
+/**
+ * The stable identity a dismissal suppresses against (docs/design/negative-knowledge.md): a
+ * deterministic rule tag (parsed from the `det:<rule>:<file>:<line>` finding id) or an explicit
+ * `pattern`. Returns undefined when there's no stable key — we never learn a repo-wide suppression
+ * from a one-off, untagged first-principles finding (its identity is just a line of code).
+ */
+export function suppressionKeyFor(input: { findingId?: string; pattern?: string }): string | undefined {
+  const m = input.findingId?.match(/^det:([^:]+):/);
+  if (m) return m[1];
+  return input.pattern || undefined;
+}
+
+// Extension → coarse language tag, so global promotion can stay language-AWARE (C2): a TS rule must
+// never apply to a Python repo. Undefined = unknown/agnostic.
+const EXT_LANG: Record<string, string> = {
+  '.ts': 'ts', '.tsx': 'ts', '.mts': 'ts', '.cts': 'ts', '.js': 'ts', '.jsx': 'ts', '.mjs': 'ts', '.cjs': 'ts',
+  '.py': 'py', '.go': 'go', '.rb': 'rb', '.rs': 'rs', '.java': 'java', '.kt': 'kt', '.cs': 'cs',
+  '.php': 'php', '.swift': 'swift', '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.hpp': 'cpp',
+};
+export function languageOf(file?: string): string | undefined {
+  if (!file) return undefined;
+  return EXT_LANG[path.extname(file).toLowerCase()];
+}
+
+/** A learned-suppression decision with the evidence that justifies it — the provenance the audit log
+ * records so "why is this rule demoted/suppressed?" is answerable. */
+export interface SuppressionDecision {
+  key: string;
+  tier: 'suppress' | 'demote';
+  dismissals: number;
+  corrections: number;
+  pitfallId: string;
+}
+
+/**
+ * Generalize a per-repo suppression to all repos of its language once the SAME rule has independently
+ * earned `suppress` in at least this many distinct repos (C2). A POLICY floor, not a statistical one
+ * (Wilson governs whether a single repo suppresses; "how many independent projects before we
+ * generalize" is a risk choice) — kept small but ≥2 so one repo can never self-promote.
+ */
+const PROMOTE_MIN_REPOS = 2;
+
+/**
+ * Read the learned suppression decisions effective for a repo (docs/design/negative-knowledge.md).
+ * Computed LIVE from the negative pitfalls' incident counts via Wilson `suppressionTier`, so it's
+ * fresh on every review WITHOUT waiting for `consolidate` (a dismissal takes effect next review).
+ *
+ * Two sources, deduped by key (stronger tier wins):
+ *  1. This repo's OWN negative pitfalls.
+ *  2. **Cross-repo, language-gated promotion (C2):** a key that earned `suppress` in ≥
+ *     `PROMOTE_MIN_REPOS` distinct repos OF THE SAME LANGUAGE generalizes. Grouping by language means
+ *     a TS rule never merges with a Python one, and — because a deterministic rule tag is itself
+ *     language-bound — a promoted `global@ts` decision can only ever match TS findings. There is NO
+ *     language-agnostic auto-promotion (that stays certified-only).
+ */
+export async function loadSuppressions(config: ReviewerConfig, repoName: string): Promise<SuppressionDecision[]> {
+  const store = knowledgeStore(config);
+  const [pitfalls, incidents] = await Promise.all([store.pitfalls(), store.incidents()]);
+  const negatives = pitfalls.filter((p) => p.polarity === 'negative' && p.suppressKey);
+  if (negatives.length === 0) return [];
+
+  const byPitfall = new Map<string, Incident[]>();
+  for (const i of incidents) {
+    if (!i.pitfallId) continue;
+    (byPitfall.get(i.pitfallId) ?? byPitfall.set(i.pitfallId, []).get(i.pitfallId)!).push(i);
+  }
+  const countsOf = (p: Pitfall): { dismissals: number; corrections: number } => {
+    const inc = byPitfall.get(p.id) ?? [];
+    return {
+      dismissals: inc.filter((i) => i.outcome === 'rejected').length,
+      corrections: inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length,
+    };
+  };
+
+  const rank = { none: 0, demote: 1, suppress: 2 } as const;
+  const best = new Map<string, SuppressionDecision>();
+  const consider = (d: SuppressionDecision): void => {
+    const prev = best.get(d.key);
+    if (!prev || rank[d.tier] > rank[prev.tier]) best.set(d.key, d);
+  };
+
+  // 1) This repo's own negatives (and any already-global one).
+  for (const p of negatives) {
+    if (p.scope === 'repo' && p.repo !== repoName) continue;
+    const { dismissals, corrections } = countsOf(p);
+    const tier = suppressionTier(dismissals, corrections);
+    if (tier !== 'none') consider({ key: p.suppressKey!, tier, dismissals, corrections, pitfallId: p.id });
+  }
+
+  // 2) Cross-repo promotion, grouped by (key, language) so languages never merge.
+  const groups = new Map<string, Pitfall[]>();
+  for (const p of negatives) {
+    if (p.scope !== 'repo') continue;
+    const g = `${p.suppressKey} ${p.language ?? ''}`;
+    (groups.get(g) ?? groups.set(g, []).get(g)!).push(p);
+  }
+  for (const group of groups.values()) {
+    const suppressingRepos = new Set<string>();
+    let dismissals = 0;
+    let corrections = 0;
+    for (const p of group) {
+      const c = countsOf(p);
+      dismissals += c.dismissals;
+      corrections += c.corrections;
+      if (suppressionTier(c.dismissals, c.corrections) === 'suppress' && p.repo) suppressingRepos.add(p.repo);
+    }
+    if (suppressingRepos.size >= PROMOTE_MIN_REPOS) {
+      const k = group[0]!.suppressKey!;
+      consider({ key: k, tier: 'suppress', dismissals, corrections, pitfallId: `global@${group[0]!.language ?? ''}:${k}` });
+    }
+  }
+
+  return [...best.values()];
+}
+
+/**
+ * Negative-knowledge producer (docs/design/negative-knowledge.md): a dismissal/correction of a
+ * finding with a stable suppression key feeds the SAME incident → consolidate loop as positive
+ * pitfalls. A `reject`/`waive` records a CONFIRMING incident on a repo-scoped negative pitfall; an
+ * `accept`/fix records a REFUTING one (the user acted on it after all). Consolidation later turns the
+ * accumulated counts into a Wilson-derived `suppressionTier` — WEIGHTED, never a one-click kill (C1).
+ * `firstOfKind` (computed from the verdict log before the new verdict is appended) dedups an
+ * agent/responder retry so the same disposition of the same finding can't double-count.
+ */
+export async function learnSuppression(
+  config: ReviewerConfig,
+  repoName: string,
+  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string },
+  firstOfKind: boolean,
+): Promise<void> {
+  if (!firstOfKind) return;
+  const dismissal = input.kind === 'reject' || input.kind === 'waive';
+  const corrective = input.kind === 'accept';
+  if (!dismissal && !corrective) return;
+  const key = suppressionKeyFor(input);
+  if (!key) return;
+
+  const store = knowledgeStore(config);
+  const id = `neg:${repoName}:${key}`;
+  const existing = (await store.pitfalls()).find((p) => p.id === id);
+  // A correction with no existing negative pitfall has nothing to refute — don't mint one on accept.
+  if (!existing && corrective) return;
+
+  // Drift-stable dedup (ADR-39): a deterministic finding's id embeds its LINE, so a persistent
+  // violation that shifts line across rounds re-keys and would double-count toward the ~4-independent
+  // Wilson `suppress` bar. Count at most ONE dismissal (and one correction) per (rule, file) — the
+  // conservative direction (fewer false suppressions). `firstOfKind` already covers same-line retries.
+  if (existing) {
+    const sameClass = (o: Incident['outcome']): boolean =>
+      dismissal ? o === 'rejected' : o === 'accepted' || o === 'fixed' || o === 'reverted';
+    const dup = (await store.incidents()).some(
+      (i) => i.pitfallId === id && i.file === input.file && sameClass(i.outcome),
+    );
+    if (dup) return;
+  }
+  if (!existing) {
+    const negative: Pitfall = {
+      id,
+      polarity: 'negative',
+      suppressKey: key,
+      title: `suppress:${key}@${repoName}`,
+      trigger: key,
+      why: `Learned suppression — the \`${key}\` rule was dismissed in ${repoName}.`,
+      category: 'suppression',
+      tier: 'codifiable',
+      confidence: 0,
+      scope: 'repo',
+      repo: repoName,
+      language: languageOf(input.file),
+      incidentIds: [],
+    };
+    await store.addPitfall(negative);
+  }
+  await learnIncident(config, {
+    repo: repoName,
+    file: input.file,
+    snippet: key,
+    pitfallId: id,
+    outcome: dismissal ? 'rejected' : 'accepted',
+    // Provenance: the verb the scoring intentionally flattens (waive == reject as a dismissal) is
+    // preserved here so the history shows what kind of dismissal, where, and (via ts) when.
+    note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}`,
+  });
 }
 
 
@@ -175,25 +363,32 @@ export async function submitVerdict(
       }
     }
   }
-  // Learning-side idempotency: a re-accept of an already-accepted finding (an agent retry, or
-  // reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a second
-  // incident — duplicated evidence inflates the pitfall's Beta posterior. Checked BEFORE the
-  // append below so the new verdict can't match itself; the verdict line itself is still
-  // recorded (the log is append-only bookkeeping).
-  const alreadyAccepted =
-    input.kind === 'accept' &&
-    input.findingId != null &&
-    (await readVerdicts(repoPath, config)).some((v) => v.kind === 'accept' && v.findingId === input.findingId);
+  // Learning-side idempotency: a re-disposition of the same finding with the same verdict (an agent
+  // retry, or reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a
+  // second incident — duplicated evidence skews the Wilson confidence. Checked BEFORE the append
+  // below so the new verdict can't match itself; the verdict line itself is still recorded (the log
+  // is append-only bookkeeping). A finding with no id can't be deduped, so it always counts.
+  const repoName = path.basename(path.resolve(repoPath));
+  const firstOfKind =
+    input.findingId == null ||
+    !(await readVerdicts(repoPath, config)).some((v) => v.kind === input.kind && v.findingId === input.findingId);
+  const alreadyAccepted = input.kind === 'accept' && !firstOfKind;
   const stored = await recordVerdict(repoPath, enriched, config);
+  // Negative-knowledge producer: a reject/waive confirms a repo-scoped suppression, an accept refutes
+  // it — the same incident→consolidate loop as positives (docs/design/negative-knowledge.md, C1).
+  await learnSuppression(config, repoName, input, firstOfKind);
   if (input.kind === 'accept' && !alreadyAccepted) {
-    const repoName = path.basename(path.resolve(repoPath));
     // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
     // similarity — so first-principles accepts (the common case) reinforce knowledge too.
     // EXCEPT for inferred (auto) accepts: a locality fix-match feeding a title-similarity
     // pitfall match would stack two inferences into the Beta posterior — a false locality
     // accept silently inflating a pitfall is worse than learning nothing. Inferred accepts
     // still record their incident (provenance), but only an explicit `pattern` links them.
-    const pitfallId = input.pattern ?? (input.inferred ? undefined : await inferPitfallId(config, input.title, repoName));
+    // An INFERRED accept never links a positive pitfall (avoids stacking two inferences into the
+    // posterior) — even when `pattern` is set, because reconcile now passes `pattern` as the rule tag
+    // purely to REFUTE a negative suppression (handled by `learnSuppression` above), not to link a
+    // positive one. An explicit accept still links by `pattern`, else infers by similarity.
+    const pitfallId = input.inferred ? undefined : (input.pattern ?? (await inferPitfallId(config, input.title, repoName)));
     await learnIncident(config, {
       repo: repoName,
       file: input.file,

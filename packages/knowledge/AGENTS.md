@@ -18,7 +18,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
 | `src/promotion.ts` | `consolidatePitfalls` — Beta-Bernoulli confidence recompute from incident outcomes |
-| `src/stats.ts` | Pure primitives: `betaPosteriorMean`, `wilsonLowerBound` |
+| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
 ## The algorithms
@@ -47,24 +47,25 @@ split, lowercase, ≥3-char tokens, stopworded; IDF over the pitfall corpus) on 
 why + category`. Weaker ranking than embeddings, far better than nothing — a key-less install
 still gets its accumulated pitfalls back. Same `topK`/`minScore` semantics.
 
-**Consolidation (`promotion.ts` — the feedback loop's teeth, ADR-10).** Beta-Bernoulli posterior
-mean with constants `PRIOR_ALPHA = 1`, `PRIOR_BETA = 1`, `REJECT_COST = 1.5`. For each pitfall,
-over its linked incidents (`incident.pitfallId === pitfall.id`): `s` = **outcome-weighted**
-positive evidence `Σ outcomeWeight(outcome)` (`@plex/core`, ADR-11: accepted/fixed = 1,
-reverted = **1.5** — the warned-against change shipped and was later reverted, the strongest
-confirmation), `f` = `rejected` count, and
+**Consolidation (`promotion.ts` — the feedback loop's teeth, ADR-10).** `confidence =
+wilsonLowerBound(confirms, confirms + refutes)` — the **Wilson score lower bound** of the confirm
+rate (Wilson 1927; `stats.ts`). **One estimator, no hand-tuned constants** — this replaced the old
+Beta posterior mean + `PRIOR_ALPHA/BETA` + `REJECT_COST = 1.5` + `outcomeWeight` 1.5s (all magic).
+The claim flips with **polarity** (`confirmsAndRefutes`):
+- **positive** pitfall ("real issue") — confirm = accept/fix/revert, refute = reject.
+- **negative** pitfall ("suppress this", docs/design/negative-knowledge.md) — confirm = a dismissal
+  (`reject`/`waive`, logged `rejected`), refute = the user acting on it (accept/fix/revert).
 
-```
-confidence = betaPosteriorMean(1 + s, 1 + 1.5·f)  =  (1 + s) / (2 + s + 1.5·f)
-```
-
-A pitfall with **zero linked incidents keeps its prior confidence**. The formula is a
-pure function of the counts → **idempotent** (re-running never drifts, unlike the old additive
-`+0.1/−0.15` rule). Consolidation also overwrites `incidentIds` with the linked incidents' ids
-(provenance backfill). Note: analysis's coarse `outcomeFor` never *produces* `fixed`/`reverted`
+The lower bound is conservative by construction: a thin record stays low and tightens toward the raw
+rate only as evidence accrues — an *honest floor*, not an over-confident point estimate, and a pure
+function of the counts → **idempotent**. A pitfall with **zero linked incidents keeps its prior
+confidence**; consolidation overwrites `incidentIds` (provenance backfill). `reverted` is now just a
+confirm (its 1.5 bonus was magic). The **suppress/demote decision** is `suppressionTier(dismissals,
+corrections)` — `wilsonLowerBound` at the 95% and 1σ levels vs the 0.5 majority pivot (≈4 consistent
+dismissals → suppress; 1–3 → demote), so a lone "not now" can never bury a finding (C1). Note:
+analysis's coarse `outcomeFor` never *produces* `fixed`/`reverted`
 (see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)) — those arrive from
-review-driven incidents. Known gap: `wilsonLowerBound` (`stats.ts`, `z = 1.96`) is exported "for
-small-sample ranking" (tuning.md §1) but currently has **no consumer** outside its own tests.
+review-driven incidents. A negative pitfall's stored `confidence` is **informational only** — `engine`'s `loadSuppressions` recomputes the tier live from raw counts and never reads it (so a dismissal takes effect without a `consolidate` run).
 
 The whole **promotion** surface (graph → `plex.md` lines *and* graph → ast-grep rule stubs) was
 retired in ADR-37: the markdown half died with `plex.md`, and the rule half emitted

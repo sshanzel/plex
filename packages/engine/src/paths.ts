@@ -20,6 +20,9 @@ export interface RepoPaths {
   headShaFile: string;
   /** Plain-text file recording the absolute repoPath — lets `doctor` detect orphaned data dirs. */
   repoPathFile: string;
+  /** Content-addressed embedding cache (stable, recurring texts e.g. finding titles) — so an
+   * N-round PR embeds each title once, not N times. Doubles as local proof embeddings fired. */
+  embedCacheFile: string;
 }
 
 /** A stable, filesystem-safe id for a repo's centralized data dir (basename + path hash). */
@@ -58,6 +61,7 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),
     headShaFile: path.join(reviewerDir, 'head.sha'),
     repoPathFile: path.join(reviewerDir, 'repo-path'),
+    embedCacheFile: path.join(reviewerDir, 'embed-cache.json'),
   };
 }
 

@@ -47,7 +47,11 @@ target (`reviewTargetFor(repoPath, src)`) agrees across context → findings →
   visible: it compares the mtime of the running file captured at load (`LOADED_BUILD_MS`) with the
   file's mtime *now* — `stale: true` (with a 1ms jitter guard, `src/doctor.ts`) means "reconnect
   Plex to pick up the newer build". It also reports version, node, pid, and the *effective* config
-  (embedding provider, data/knowledge dirs).
+  (embedding provider, data/knowledge dirs). **`embeddingsActive`** (injected via `embeddingReady`
+  so `doctor.ts` stays Kùzu-free) distinguishes "provider *configured*" from "provider *will fire*":
+  a `voyage` set with no resolvable key reports `embeddings: 'voyage'` but `embeddingsActive: false`
+  with an `embeddingsAdvice` that names the missing env var — the "my dashboard shows no usage" tell
+  (it's silently degrading to lexical).
 - **Version is single-sourced** from the `package.json` shipped beside the bundle
   (`dist/ → ../package.json`) — never hand-bumped in code.
 - **`instructions`** in the server constructor are surfaced to the client so tool-search can find

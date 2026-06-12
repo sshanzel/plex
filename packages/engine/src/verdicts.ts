@@ -66,12 +66,28 @@ export async function readVerdicts(
  * a deterministic finding the author rejected — e.g. an intentional await-in-loop — re-ran and
  * re-surfaced every round, since codified checks recompute from scratch.)
  */
-export async function loadWaivers(repoPath: string, config: ReviewerConfig): Promise<Waiver[]> {
+export async function loadWaivers(
+  repoPath: string,
+  config: ReviewerConfig,
+  /**
+   * Which verdict kinds become hard suppression rules. Defaults to all three for back-compat
+   * (submit-time ranking). The review CONTEXT passes `['waive', 'acknowledge']` to EXCLUDE `reject`:
+   * a single dismissal must not permanently bury a finding (a "not now / fix it next PR" is not a
+   * "this is wrong"). `reject` is moving to the weighted negative-knowledge path — see
+   * `docs/design/negative-knowledge.md` (C1). Until that lands, reject still hard-suppresses at
+   * submit time (unchanged); only the up-front priming is softened here.
+   */
+  kinds: ReadonlySet<Verdict['kind']> = new Set(['waive', 'acknowledge', 'reject']),
+): Promise<Waiver[]> {
   const stored = await readVerdicts(repoPath, config);
   return stored
-    .filter((v) => v.kind === 'waive' || v.kind === 'acknowledge' || v.kind === 'reject')
+    .filter((v) => kinds.has(v.kind))
     .map((v) => ({
-      scope: v.scope ?? 'file',
+      // A `reject` ("not now") defaults to INSTANCE (`line`) scope, never `file`: one reject must
+      // silence only the exact finding it dismissed, not bury every unrelated finding in that file
+      // (C1, ADR-39). `waive`/`acknowledge` keep the broader `file` default. A reject's repo-wide
+      // effect comes only through the weighted negative-knowledge path, never a hard file waiver.
+      scope: v.scope ?? (v.kind === 'reject' ? 'line' : 'file'),
       file: v.file,
       line: v.line,
       title: v.title,

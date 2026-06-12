@@ -45,6 +45,13 @@ export interface FindingsSubmittedEvent extends AuditBase {
     line: number;
     triage: string;
   }[];
+  /**
+   * Learned-suppression decisions ACTIVE for this review and their evidence basis — the provenance
+   * trail for "why did this rule end up demoted/suppressed?" (docs/design/negative-knowledge.md).
+   * Each entry is a rule key with its dismissal/correction counts and the Wilson-derived tier; the
+   * per-dismissal verbs/timestamps live on the linked knowledge Incidents (`note`).
+   */
+  suppressions?: { key: string; tier: string; dismissals: number; corrections: number }[];
 }
 
 export interface OutcomeRecordedEvent extends AuditBase {

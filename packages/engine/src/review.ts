@@ -29,7 +29,7 @@ import {
 } from '@plex/code-graph';
 import { computeNeighborhood, associationStrength } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
-import { classifyChanges, reviewPlan, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
+import { classifyChanges, reviewPlan, isWaived, type RegionVec, type SignalVec, type ReviewPlan } from '@plex/findings';
 import { getHeadSha, getPrHeadSha, getChangedFileTexts } from '@plex/ingest';
 import { fetchCommentsForPr } from '@plex/distill';
 import type { RetrievedPitfall } from '@plex/knowledge';
@@ -41,6 +41,8 @@ import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady } from './knowledge';
+import { loadWaivers } from './verdicts';
+import { cachedEmbed } from './embed-cache';
 import { recordFixAccepts, type AcceptedFix } from './reconcile';
 
 /**
@@ -360,26 +362,42 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
             ...state.signals,
             ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
           ].filter((s) => s.text.trim());
-          const regionTexts = changed.map((c) => c.text);
-          const findingTexts = state.priorFindings.map((f) => f.title);
-          // safeEmbed caps + chunks this (comment-heavy, unbounded) batch so it can't exceed a
-          // provider's array/token limit (B-G1), and returns null on a transient failure (m5) —
-          // null degrades exactly like "no embedder": locality-only fix inference, no semantic
-          // attribution, and the review never hard-fails on an embedding hiccup.
-          const vecs = await safeEmbed(embedder, [...regionTexts, ...signals.map((s) => s.text), ...findingTexts]);
-          if (vecs) {
-            regionEmb = changed.map((_, i) => vecs[i] ?? []);
 
-            if (signals.length > 0) {
+          // Changes with NO signal to explain them are "unexplained" — the round-aware
+          // changed-without-feedback signal (M6). This needs NO embeddings, so mark it up front,
+          // independent of whether we embed below. (With signals present, classifyChanges decides.)
+          if (signals.length === 0) {
+            unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+          }
+
+          // Embeddings only buy two things: classifying changes AGAINST signals, and semantic
+          // fix-match against PRIOR FINDINGS. With neither, the locality fix-match below covers
+          // everything an embed could — so the batch can't change the outcome. Skip it (the common
+          // quiet re-review: no comments, prior findings already resolved → `priorFindings` empty).
+          // This is the bulk of the wasted Voyage spend on an actively-pushed PR.
+          if (signals.length > 0 || state.priorFindings.length > 0) {
+            const regionTexts = changed.map((c) => c.text);
+            // Region + signal texts are per-round CONTENT — embed fresh. safeEmbed caps + chunks the
+            // (comment-heavy, unbounded) batch so it can't exceed a provider's array/token limit
+            // (B-G1), and returns null on a transient failure (m5) → locality-only, never a hard fail.
+            const vecs = await safeEmbed(embedder, [...regionTexts, ...signals.map((s) => s.text)]);
+            // Finding TITLES recur round over round — serve them from the content-addressed cache so
+            // an N-round PR embeds each title ONCE, not once per round. null only if a cache miss had
+            // to be embedded and that embed failed; degrade exactly like `vecs` null.
+            const findingVecs = await cachedEmbed(
+              embedder,
+              repoPaths(opts.repoPath, config.dataDir).embedCacheFile,
+              state.priorFindings.map((f) => f.title),
+            );
+            if (vecs && signals.length > 0) {
+              regionEmb = changed.map((_, i) => vecs[i] ?? []);
               const regionVecs: RegionVec[] = changed.map((c, i) => ({ file: c.file, start: c.start, end: c.end, embedding: regionEmb[i]! }));
               const signalVecs: SignalVec[] = signals.map((s, i) => ({ embedding: vecs[regionTexts.length + i] ?? [], label: s.label }));
               unexplainedChanges = classifyChanges(regionVecs, signalVecs).filter((a) => a.attribution === 'unexplained');
-            } else {
-              unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
+            } else if (vecs) {
+              regionEmb = changed.map((_, i) => vecs[i] ?? []); // for semantic fix-match only
             }
-
-            const fBase = regionTexts.length + signals.length;
-            findingEmb = state.priorFindings.map((_, i) => vecs[fBase + i] ?? []);
+            if (findingVecs) findingEmb = state.priorFindings.map((_, i) => findingVecs[i] ?? []);
           }
         }
         // Always run fix inference — locality reconciles restructuring fixes with no provider (ADR-30).
@@ -578,7 +596,18 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   );
   const plan = reviewPlan(changedPaths, coupling, { surface, ...opts.config.reviewPlan });
 
-  const deterministic = await runDeterministic(p.repoPath, diff, { repoName: repo });
+  // Codified findings, minus any the user has already waived — a `pattern-repo` waiver on a rule
+  // tag (e.g. `no-console`) suppresses that rule repo-wide, a file/line waiver the instance. This
+  // is the SAME `loadWaivers`/`isWaived` suppression `rankFindings` applies at submit time, pulled
+  // one step earlier so a waived rule never even primes the agent (it was previously surfaced here
+  // as "incorporate these" and only dropped from the final stream). Identity-only (no embeddings):
+  // the up-front context stays free of embedding cost; submit-time still adds the semantic pass.
+  const detRaw = await runDeterministic(p.repoPath, diff, { repoName: repo });
+  // Only EXPLICIT suppressions (`waive` = false positive, `acknowledge` = intentional) keep a rule
+  // from priming the agent. A `reject` ("not now") must NOT — that's the weighted negative-knowledge
+  // path, not a permanent kill (docs/design/negative-knowledge.md, C1).
+  const detWaivers = await loadWaivers(p.repoPath, opts.config, new Set(['waive', 'acknowledge']));
+  const deterministic = detWaivers.length ? detRaw.filter((f) => !isWaived(f, detWaivers)) : detRaw;
 
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
   const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);

@@ -154,7 +154,7 @@ export interface RankedFinding extends Finding {
   /** Sources that independently agreed on this finding (cross-source confidence boost). */
   agreedSources: FindingSource[];
   /** How it should surface. `awareness` = a flag worth confirming (ADR-31), its own bucket. */
-  triage: 'surface' | 'systemic-migration' | 'convention' | 'awareness' | 'suppressed';
+  triage: 'surface' | 'systemic-migration' | 'convention' | 'awareness' | 'demoted' | 'suppressed';
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +240,24 @@ export interface Pitfall {
   scope?: 'global' | 'repo';
   /** Origin repo — set for repo-scoped / analyzed pitfalls; used to filter retrieval. */
   repo?: string;
+  /**
+   * `positive` = surface this ("watch for X"); `negative` = SUPPRESS this (a learned dismissal,
+   * docs/design/negative-knowledge.md). Undefined = positive (back-compat). A negative pitfall's
+   * `confidence` is how strongly the user has dismissed `suppressKey` — read by ranking as a
+   * weighted demote→suppress, never a one-click permanent kill (C1).
+   */
+  polarity?: 'positive' | 'negative';
+  /**
+   * The stable identity a NEGATIVE pitfall suppresses against — a deterministic rule tag
+   * (`no-console`) or a pattern. A finding is suppression-matched when one of its tags equals this.
+   */
+  suppressKey?: string;
+  /**
+   * Language this pitfall is scoped to (`ts`, `py`, …). Undefined = language-agnostic. Global
+   * promotion is language-AWARE (C2): a TS-only rule may reach `global@ts` but never language-blind
+   * global, so a multi-language user never gets a TS rule applied to a Python repo.
+   */
+  language?: string;
   /** Provenance: ids of the incidents this pitfall was distilled from. */
   incidentIds: string[];
   /** Retrieval vector (set when the pitfall is written). */
@@ -303,5 +321,12 @@ export interface Incident {
   file?: string;
   snippet?: string;
   outcome?: IncidentOutcome;
+  /**
+   * Provenance note — free text recording WHY this incident exists. For a learned-suppression
+   * dismissal it carries the originating verb + round (`reject @round3`), which `outcome:'rejected'`
+   * alone loses, so the history can answer "this rule got suppressed because it was waived once and
+   * rejected three times across rounds 2–5."
+   */
+  note?: string;
   ts: string;
 }
