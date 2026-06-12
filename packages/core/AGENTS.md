@@ -14,7 +14,9 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
 - `src/config.ts` — `ReviewerConfig` + `defaultConfig` + `resolveConfig(overrides)` (deep-merges
   each section). Notable defaults: `dataDir: ''` (centralized), `embedding.provider: 'none'`,
   `llm.provider: 'claude-cli'`, `analyze.clusterThreshold: 0.8`, `autoComment: false`,
-  `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`.
+  `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`,
+  `suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 }` (ADR-41),
+  `decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 }` (positive-pitfall decay, ADR-42).
 - `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) and `CompletionProvider`
   (offline analysis only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
   null-on-failure so callers degrade instead of failing), `cosineSimilarity`,
