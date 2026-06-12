@@ -110,12 +110,15 @@ export async function consolidatePitfalls(
     // for provenance/visibility; don't mistake it for the active suppression strength.
     const confidence = wilsonLowerBound(confirms, confirms + refutes);
     const lastMs = lastIncidentMs(inc);
-    // Prune: low decayed confidence AND gone quiet AND not repo-scoped (repo lessons are cheap to keep
-    // and may be dormant between touches of that repo). Only the derived pitfall is dropped — incidents
-    // stay (provenance survives; re-analysis can regenerate it). ADR-05: a real recurring bug stays
-    // high-confidence (confirm rate doesn't decay below the floor while it keeps recurring) → survives.
+    // Prune only a lesson that has actually been CONTRADICTED (`refutes > 0`) AND decayed below the
+    // floor AND gone quiet AND is non-repo-scoped. The `refutes > 0` gate is load-bearing: the decayed
+    // Wilson lower bound penalizes sample *thinness* regardless of confirm rate, so without it a
+    // real-but-rare, NEVER-refuted lesson (1 confirm, last seen >1y ago → Wilson ≈ 0.06) would be
+    // deleted despite a 100% confirm rate. A never-refuted dormant lesson isn't garbage — it's just
+    // quiet, and the retrieval recency-tilt already ranks it low; only a lesson the user has rejected
+    // is a prune candidate. Only the derived pitfall is dropped — incidents stay (provenance survives).
     const quietDays = lastMs > 0 ? (nowMs - lastMs) / MS_PER_DAY : 0;
-    if (confidence < decay.pruneFloor && quietDays > decay.pruneMinAgeDays && p.scope !== 'repo') {
+    if (refutes > 0 && confidence < decay.pruneFloor && quietDays > decay.pruneMinAgeDays && p.scope !== 'repo') {
       pruned++;
       continue;
     }

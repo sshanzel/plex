@@ -167,6 +167,22 @@ describe('consolidatePitfalls — recency decay + pruning (ADR-42)', () => {
     expect((await store.incidents()).some((i) => i.id === 'r')).toBe(true); // provenance survives — re-derivable
   });
 
+  it('does NOT prune a thin, NEVER-refuted lesson — even decayed below the floor and long quiet', async () => {
+    // The Wilson lower bound penalizes sample thinness, so a real-but-rare lesson (1 confirm, ~700d
+    // old, never rejected) decays below the floor — but it was never WRONG, so it must survive (the
+    // retrieval tilt ranks it low instead). Only a contradicted lesson (refutes > 0) is a prune target.
+    dir = mkdtempSync(join(tmpdir(), 'kp-rare-'));
+    const store = new KnowledgeStore(dir);
+    const now = Date.parse('2026-06-01T00:00:00.000Z');
+    await store.addPitfall(pf({ id: 'rare', confidence: 0.4 }));
+    await store.addIncident({ id: 'c', pitfallId: 'rare', source: 'review', outcome: 'accepted', ts: iso(700 * DAY, now) });
+    const res = await consolidatePitfalls(store, DECAY, new Date(now));
+    const rare = (await store.pitfalls()).find((p) => p.id === 'rare')!;
+    expect(rare).toBeDefined(); // not pruned (refutes === 0)
+    expect(res.pruned).toBe(0);
+    expect(rare.confidence).toBeLessThan(DECAY.pruneFloor); // it IS below the floor — the gate is refutes, not confidence
+  });
+
   it('does NOT prune: high confidence, recent, zero-incident prior, or repo-scoped', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp-noprune-'));
     const store = new KnowledgeStore(dir);
