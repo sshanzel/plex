@@ -198,15 +198,15 @@ raw dismissals per round; each knowledge `Incident` carries a `note` with the or
 dismissal/correction counts and Wilson tier. So "why is `no-console` suppressed here?" is answerable
 end to end.
 
-## Deliberately deferred (and why)
+## Built in ADR-41 (was deferred here)
 
-- **Decay + re-surface probe** — both need a tuning **constant** (a half-life, or a "re-surface every
-  K reviews" cadence). Introducing one would reintroduce exactly the hand-tuned magic this effort
-  removed in favor of Wilson, so they're *not* built unsilently. Note the recovery path already
-  exists WITHOUT a probe: `suppressed` **sinks to the bottom of the stream, it is not deleted** — a
-  user who disagrees can still see and `accept` it, and one accept (a correction) drops the Wilson
-  tier. A time-based probe/decay is a UX refinement to decide on explicitly (it costs a constant).
-- **Knowledge-finding (first-principles) suppression** — only deterministic rules + explicit patterns
-  have a stable suppression key today; a first-principles finding's identity is "a line of code," so
-  repo-wide suppression would need semantic matching (ADR-27 territory) with its own false-positive
-  risk. Separate feature.
+- **Decay** ✅ — `loadSuppressions` recency-decays each dismissal (`0.5^(ageDays/halfLife)`, wall-time)
+  and feeds the *decayed fractional* counts into the unchanged Wilson `suppressionTier`. Verb-specific
+  half-life (`reject` fades, `waive` persists; corrections durable). This is also the re-surface
+  mechanism — an aged suppression's effective N shrinks → the tier slides `suppress→demote→surface`.
+- **Re-surface probe** ✅ DROPPED — subsumed by decay (above); `suppressed` already sinks (not deletes).
+- **First-principles suppression** ✅ — a finding with no key is keyed by its **title embedding**:
+  match-or-mint a negative pitfall by cosine ≥ `adaptiveFloor(0.82,…)`, and rank via synthetic
+  `pattern-repo` semantic waivers (reuses `waiverMatches`). Embedding-gated; `suppress`-tier only.
+
+The one accepted tuning knob is the decay half-life (`config.suppression`, reject 30d / waive 365d).

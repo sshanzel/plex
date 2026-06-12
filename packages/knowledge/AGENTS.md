@@ -18,7 +18,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
 | `src/promotion.ts` | `consolidatePitfalls` — Beta-Bernoulli confidence recompute from incident outcomes |
-| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`) |
+| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
 ## The algorithms
@@ -65,7 +65,7 @@ corrections)` — `wilsonLowerBound` at the 95% and 1σ levels vs the 0.5 majori
 dismissals → suppress; 1–3 → demote), so a lone "not now" can never bury a finding (C1). Note:
 analysis's coarse `outcomeFor` never *produces* `fixed`/`reverted`
 (see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)) — those arrive from
-review-driven incidents. A negative pitfall's stored `confidence` is **informational only** — `engine`'s `loadSuppressions` recomputes the tier live from raw counts and never reads it (so a dismissal takes effect without a `consolidate` run).
+review-driven incidents. A negative pitfall's stored `confidence` is **informational only** — `engine`'s `loadSuppressions` recomputes the tier live from raw counts and never reads it (so a dismissal takes effect without a `consolidate` run). **Decay (ADR-41):** `loadSuppressions` weights each dismissal by `recencyWeight = 0.5^(ageDays/halfLife)` (verb-specific — reject fades, waive persists; corrections durable) and feeds the decayed *fractional* counts into `suppressionTier` (Wilson takes plain numbers) — so an aged suppression slides back `suppress→demote→surface` on its own (the re-surface mechanism). A **first-principles** negative pitfall has no `suppressKey` — its identity is the title `embedding` (match-or-mint by cosine ≥ `0.82`); ranking matches it via synthetic semantic `pattern-repo` waivers.
 
 The whole **promotion** surface (graph → `plex.md` lines *and* graph → ast-grep rule stubs) was
 retired in ADR-37: the markdown half died with `plex.md`, and the rule half emitted
