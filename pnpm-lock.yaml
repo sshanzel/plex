@@ -14,26 +14,26 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
-        version: 1.29.0(zod@3.25.76)
+        version: 1.29.0(zod@4.4.3)
       kuzu:
         specifier: ^0.11.3
         version: 0.11.3
       parse-diff:
-        specifier: ^0.11.1
-        version: 0.11.1
+        specifier: ^0.12.0
+        version: 0.12.0
       typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
+        specifier: ^6.0.3
+        version: 6.0.3
       zod:
-        specifier: ^3.23.8
-        version: 3.25.76
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.20
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3)
+        version: 8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@6.0.3)
       tsx:
         specifier: ^4.19.2
         version: 4.22.4
@@ -59,8 +59,8 @@ importers:
         specifier: ^0.11.3
         version: 0.11.3
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: ^6.0.3
+        version: 6.0.3
 
   packages/core: {}
 
@@ -70,8 +70,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: ^6.0.3
+        version: 6.0.3
 
   packages/distill:
     dependencies:
@@ -121,8 +121,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       parse-diff:
-        specifier: ^0.11.1
-        version: 0.11.1
+        specifier: ^0.12.0
+        version: 0.12.0
 
   packages/knowledge:
     dependencies:
@@ -134,7 +134,7 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
-        version: 1.29.0(zod@3.25.76)
+        version: 1.29.0(zod@4.4.3)
       '@plex/core':
         specifier: workspace:*
         version: link:../core
@@ -145,8 +145,8 @@ importers:
         specifier: workspace:*
         version: link:../ingest
       zod:
-        specifier: ^3.23.8
-        version: 3.25.76
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/neighborhood:
     dependencies:
@@ -1046,8 +1046,8 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  parse-diff@0.11.1:
-    resolution: {integrity: sha512-Oq4j8LAOPOcssanQkIjxosjATBIEJhCxMCxPhMu+Ci4wdNmAEdx0O+a7gzbR2PyKXgKPvRLIN5g224+dJAsKHA==}
+  parse-diff@0.12.0:
+    resolution: {integrity: sha512-2Xr5mW4Bqd4CqYq2zttfw/RZraK+KcRuJvNkJzbDk3ea67Ap525XeTvBdtDE5tigJMVzIx/DMUzsShAf6+5SCA==}
 
   parseurl@1.3.3:
     resolution: {integrity: sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ==}
@@ -1317,8 +1317,8 @@ packages:
     resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
     engines: {node: '>= 18'}
 
-  typescript@5.9.3:
-    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -1468,8 +1468,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -1573,7 +1573,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.23)
       ajv: 8.20.0
@@ -1590,8 +1590,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -2251,7 +2251,7 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  parse-diff@0.11.1: {}
+  parse-diff@0.12.0: {}
 
   parseurl@1.3.3: {}
 
@@ -2514,7 +2514,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  tsup@8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@5.9.3):
+  tsup@8.5.1(postcss@8.5.15)(tsx@4.22.4)(typescript@6.0.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.1)
       cac: 6.7.14
@@ -2535,7 +2535,7 @@ snapshots:
       tree-kill: 1.2.2
     optionalDependencies:
       postcss: 8.5.15
-      typescript: 5.9.3
+      typescript: 6.0.3
     transitivePeerDependencies:
       - jiti
       - supports-color
@@ -2554,7 +2554,7 @@ snapshots:
       media-typer: 1.1.0
       mime-types: 3.0.2
 
-  typescript@5.9.3: {}
+  typescript@6.0.3: {}
 
   ufo@1.6.4: {}
 
@@ -2647,8 +2647,8 @@ snapshots:
       y18n: 5.0.8
       yargs-parser: 21.1.1
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
-      zod: 3.25.76
+      zod: 4.4.3
 
-  zod@3.25.76: {}
+  zod@4.4.3: {}
