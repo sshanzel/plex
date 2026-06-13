@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { CompletionProvider } from '@plex/core';
 import { isSubstantive, categorize } from './classify';
 import { greedyCluster, centroid } from './cluster';
-import { groupThreads, parsePrList } from './github';
+import { groupThreads, parsePrList, isOutdated } from './github';
 import { llmDistill } from './distill';
+import { wilsonLowerBound } from '@plex/knowledge';
 import type { RawComment } from './types';
 
 describe('isSubstantive', () => {
@@ -73,13 +74,32 @@ describe('groupThreads', () => {
   });
 });
 
+// ADR-44: GitHub nulls `position` once a review comment is outdated (its hunk was changed by a later
+// commit) while `original_position` persists — the cheap, squash-proof "the flagged code was changed"
+// signal. Conservative: ambiguous/absent fields read as NOT outdated (abstain), never a false confirm.
+describe('isOutdated', () => {
+  it('is true only when position is null but the comment had an original position', () => {
+    expect(isOutdated({ position: null, original_position: 12 })).toBe(true);
+    expect(isOutdated({ position: 5, original_position: 12 })).toBe(false); // still anchorable → code unchanged
+  });
+  it('reads absent/ambiguous fields as not-outdated (never a false "addressed")', () => {
+    expect(isOutdated({})).toBe(false); // both undefined — no signal
+    expect(isOutdated({ position: null })).toBe(false); // a comment that never had a position
+    expect(isOutdated({ original_position: null })).toBe(false);
+  });
+});
+
 const fakeLlm = (response: string): CompletionProvider => ({
   name: 'fake-llm',
   async complete() {
     return response;
   },
 });
-const mk = (id: string, body: string): RawComment => ({ id, prNumber: 1, prMerged: true, body });
+// merged-but-not-outdated → the code shipped UNCHANGED → abstain (no observed fix).
+const mk = (id: string, body: string): RawComment => ({ id, prNumber: 1, prMerged: true, body, outdated: false });
+// merged AND outdated → the flagged hunk was changed and shipped → an observed confirm (`fixed`).
+const mkFixed = (id: string, body: string): RawComment => ({ id, prNumber: 1, prMerged: true, body, outdated: true });
+const REUSABLE = '{"title":"Always validate tenant id on queries","why":"Avoids cross-tenant leaks.","category":"security","tier":"judgmental"}';
 
 describe('llmDistill (LLM decides what to store)', () => {
   const input = {
@@ -88,14 +108,27 @@ describe('llmDistill (LLM decides what to store)', () => {
   };
 
   it('distills a cluster the LLM judges reusable', async () => {
-    const llm = fakeLlm('{"title":"Always validate tenant id on queries","why":"Avoids cross-tenant leaks.","category":"security","tier":"judgmental"}');
-    const pitfall = await llmDistill(input, llm);
+    const pitfall = await llmDistill(input, fakeLlm(REUSABLE));
     expect(pitfall).not.toBeNull();
     expect(pitfall!.title).toBe('Always validate tenant id on queries');
     expect(pitfall!.category).toBe('security');
     expect(pitfall!.incidentIds).toEqual(['inc:analyzed:1', 'inc:analyzed:2']);
     expect(pitfall!.embedding).toEqual([0.1, 0.2]);
-    expect(pitfall!.confidence).toBeGreaterThan(0.4);
+  });
+
+  // Confidence is the Wilson lower bound of the cluster's OBSERVED confirm rate (ADR-44), not the
+  // retired `0.3 + 0.1·n` polynomial. No observed fixes → 0 (honest floor); observed fixes → a
+  // conservative rate that rises with evidence (e.g. 2/2 confirms ≈ 0.44, not an over-confident 1.0).
+  it('starts a no-observed-fix cluster at 0 confidence (no positive evidence yet)', async () => {
+    const pitfall = await llmDistill(input, fakeLlm(REUSABLE));
+    expect(pitfall!.confidence).toBe(0);
+  });
+
+  it('raises confidence as observed fixes accrue (Wilson of the confirm rate)', async () => {
+    const fixed = { comments: [mkFixed('1', 'tenant id'), mkFixed('2', 'tenant id check')], centroid: [0.1, 0.2] };
+    const pitfall = await llmDistill(fixed, fakeLlm(REUSABLE));
+    expect(pitfall!.confidence).toBeCloseTo(wilsonLowerBound(2, 2), 10); // 2/2 confirms ≈ 0.34
+    expect(pitfall!.confidence).toBeGreaterThan(0); // observed evidence lifts it off the floor, conservatively
   });
 
   it('returns null when the LLM decides to skip', async () => {

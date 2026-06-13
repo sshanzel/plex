@@ -5,6 +5,7 @@
  * bound** — the textbook small-sample estimate of a Bernoulli success rate. This replaced the old
  * path-dependent `±0.1/±0.15` rule and the interim Beta posterior mean (+ `REJECT_COST`) — see ADR-39.
  */
+import type { IncidentOutcome } from '@plex/core';
 
 /**
  * Wilson score lower bound of a binomial success rate (Wilson 1927) — the principled way to RANK
@@ -20,6 +21,33 @@ export function wilsonLowerBound(successes: number, total: number, z = 1.96): nu
   const center = p + z2 / (2 * total);
   const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * total)) / total);
   return Math.max(0, (center - margin) / denom);
+}
+
+/**
+ * A POSITIVE pitfall's confidence from its linked evidence: the Wilson lower bound of the rate at
+ * which the outcomes CONFIRM the pitfall's claim. **The same estimator `consolidatePitfalls` uses**,
+ * so confidence has one definition everywhere — no hand-tuned `0.3 + 0.1·n` polynomial, no `0.6`
+ * default. A confirm is `accepted`/`fixed`/`reverted` (someone acted on the flagged issue); a refute
+ * is `rejected` (a human dismissed it). **Everything else ABSTAINS** — `undefined` and any unknown
+ * outcome is observed-but-uninformative (e.g. a comment on a merged PR whose code never changed: no
+ * evidence the suggestion was applied OR wrong), so it is dropped from the counts rather than
+ * fabricating a confirm. Zero informative evidence → `wilsonLowerBound(0, 0) = 0`: an honest floor,
+ * not a guess — retrieval floors the resulting tilt so a 0-confidence pitfall still surfaces on
+ * cosine. Pure; mirrors `confirmsAndRefutes` (promotion.ts) for the positive polarity.
+ *
+ * **POSITIVE pitfalls ONLY** — there is no `polarity` switch here (unlike `confirmsAndRefutes`, which
+ * flips confirm/refute for negatives). This is correct *by construction* for every caller: distilled
+ * and `add_pitfalls` pitfalls are always positive ("remember this issue"); negative (suppression)
+ * pitfalls are minted only by `learnSuppression` and get their tier from `suppressionTier`, never this.
+ * Do NOT feed a negative pitfall's outcomes here — it would read a dismissal as a refute and invert. */
+export function confidenceFromOutcomes(outcomes: ReadonlyArray<IncidentOutcome | undefined>): number {
+  let confirms = 0;
+  let refutes = 0;
+  for (const o of outcomes) {
+    if (o === 'accepted' || o === 'fixed' || o === 'reverted') confirms++;
+    else if (o === 'rejected') refutes++;
+  }
+  return wilsonLowerBound(confirms, confirms + refutes);
 }
 
 /** Standard-normal critical values — the two textbook confidence levels, NOT tuned knobs. */

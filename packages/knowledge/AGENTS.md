@@ -15,10 +15,10 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | --- | --- |
 | `src/store.ts` | `KnowledgeStore`: two JSONL append logs (`pitfalls.jsonl`, `incidents.jsonl`) under a dir (default `~/.plex/knowledge`, `config.knowledgeDir`) |
 | `src/embeddings.ts` | `EmbeddingProvider` impls (voyage / openai / gemini / ollama / fake) + `createEmbeddingProvider` (returns `null` when unusable) |
-| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` applies the ADR-42 **recency tilt** (`score *= max(tiltFloor, recencyWeight(lastReinforcedAt age))`, undated → 1) |
+| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` applies the ADR-42 **recency tilt** AND the ADR-44 **confidence tilt** (`score *= max(tiltFloor, recencyWeight(…)) * max(tiltFloor, confidence ?? 1)`, undated/un-scored → 1) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
-| `src/promotion.ts` | `consolidatePitfalls(store, decay, now)` — **recency-decayed** Wilson confidence recompute from incident outcomes + sets `lastReinforcedAt` + **prunes** a decayed-stale pitfall (ADR-42; provenance Incidents survive) |
-| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
+| `src/promotion.ts` | `consolidatePitfalls(store, decay, now)` — **recency-decayed** Wilson confidence recompute from incident outcomes (all-abstain → keep prior, ADR-44) + sets `lastReinforcedAt` + **prunes** a decayed-stale pitfall (ADR-42; provenance Incidents survive) |
+| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `confidenceFromOutcomes` (one Wilson confidence definition, ADR-44) + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
 ## The algorithms
@@ -34,8 +34,13 @@ log: silent total loss). `replacePitfalls` (consolidation's writer) is **atomic*
 1. Filter to pitfalls in scope (ADR-21): `(p.scope ?? 'global') !== 'repo' || p.repo === repo` —
    i.e. `undefined` scope = global (back-compat); repo-scoped pitfalls surface only for their
    origin repo.
-2. Embed the query once; `score = cosineSimilarity(q, p.embedding)` — **pure cosine; stored
-   `confidence` does not weight the score**. Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
+2. Embed the query once; `score = cosineSimilarity(q, p.embedding)`, then `rankAndSlim` applies **two
+   bounded tilts** before the `minScore` cut: the ADR-42 recency tilt AND (ADR-44) a **confidence
+   tilt** `× max(tiltFloor, confidence ?? 1)` — so among similarly-relevant pitfalls the better-evidenced
+   one ranks higher, a missing confidence is neutral (1). The two tilts are independent axes that
+   **compound** (each floored at `tiltFloor`), so a *stale-AND-weak* pitfall loses up to `tiltFloor²`
+   (0.25) — intended; the floor bounds each axis not the product, so neither tilt zeroes a hit but a
+   low-cosine stale weak pitfall CAN drop below `minScore`. Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
    are scored **lexically** in the same pass instead of being invisible; if the query embed
    throws (provider outage) the whole batch degrades to lexical rather than failing the review.
 3. Keep `score >= minScore` (0.05), sort desc, slice `topK`, and **strip `embedding` from each
@@ -59,12 +64,16 @@ The claim flips with **polarity** (`confirmsAndRefutes`):
 The lower bound is conservative by construction: a thin record stays low and tightens toward the raw
 rate only as evidence accrues — an *honest floor*, not an over-confident point estimate, and a pure
 function of the counts → **idempotent**. A pitfall with **zero linked incidents keeps its prior
-confidence**; consolidation overwrites `incidentIds` (provenance backfill). `reverted` is now just a
-confirm (its 1.5 bonus was magic). The **suppress/demote decision** is `suppressionTier(dismissals,
+confidence** — and so does one whose incidents **ALL abstain** (`confirms+refutes === 0`, ADR-44): no
+informative evidence must keep the prior, not collapse to `wilsonLowerBound(0,0) = 0` (a confident-wrong
+floor). Consolidation overwrites `incidentIds` (provenance backfill). `reverted` is now just a
+confirm (its 1.5 bonus was magic). The **same Wilson estimator** sets a pitfall's *initial* confidence
+at distill time via `confidenceFromOutcomes` (ADR-44) — one definition of confidence across
+distill → `add_pitfalls` → consolidate. The **suppress/demote decision** is `suppressionTier(dismissals,
 corrections)` — `wilsonLowerBound` at the 95% and 1σ levels vs the 0.5 majority pivot (≈4 consistent
 dismissals → suppress; 1–3 → demote), so a lone "not now" can never bury a finding (C1). Note:
-analysis's coarse `outcomeFor` never *produces* `fixed`/`reverted`
-(see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)) — those arrive from
+analysis's `outcomeFor` produces only `fixed` (observed) or abstains — never a `rejected`
+(see [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md)); refutes arrive from
 review-driven incidents. A negative pitfall's stored `confidence` is **informational only** — `engine`'s `loadSuppressions` recomputes the tier live from raw counts and never reads it (so a dismissal takes effect without a `consolidate` run). **Decay (ADR-41):** `loadSuppressions` weights each dismissal by `recencyWeight = 0.5^(ageDays/halfLife)` (verb-specific — reject fades, waive persists; corrections durable) and feeds the decayed *fractional* counts into `suppressionTier` (Wilson takes plain numbers) — so an aged suppression slides back `suppress→demote→surface` on its own (the re-surface mechanism). A **first-principles** negative pitfall has no `suppressKey` — its identity is the title `embedding` (match-or-mint by cosine ≥ `0.82`); ranking matches it via synthetic semantic `pattern-repo` waivers.
 
 The whole **promotion** surface (graph → `plex.md` lines *and* graph → ast-grep rule stubs) was

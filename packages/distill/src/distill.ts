@@ -1,4 +1,6 @@
 import { slugify, hashId, type Pitfall, type PitfallTier, type CompletionProvider } from '@plex/core';
+import { confidenceFromOutcomes } from '@plex/knowledge';
+import { outcomeFor } from './outcome';
 import type { RawComment } from './types';
 
 export interface ClusterInput {
@@ -57,8 +59,13 @@ export async function llmDistill(input: ClusterInput, llm: CompletionProvider): 
   const json = extractJson(raw);
   if (!json || json.skip === true || typeof json.title !== 'string' || !json.title) return null;
 
-  const accepted = comments.filter((c) => c.prMerged).length;
-  const confidence = Math.min(0.9, 0.3 + 0.1 * comments.length + 0.1 * (accepted / Math.max(1, comments.length)));
+  // Confidence is the Wilson lower bound of the cluster's OBSERVED confirm rate (confirm = a comment
+  // whose flagged code was provably changed-and-shipped; see outcomeFor) — the SAME estimator the
+  // consolidation/retrieval paths use, so there's one principled definition of confidence and no
+  // hand-tuned `0.3 + 0.1·n` polynomial. A cluster with no observed fixes starts at 0 (honest: no
+  // positive evidence yet) and rises as live reviews confirm it; retrieval floors the tilt so a
+  // 0-confidence pitfall still surfaces on cosine relevance.
+  const confidence = confidenceFromOutcomes(comments.map(outcomeFor));
   const tier: PitfallTier = json.tier === 'codifiable' ? 'codifiable' : 'judgmental';
   const scope: 'global' | 'repo' = json.scope === 'global' ? 'global' : 'repo';
   const title = json.title;

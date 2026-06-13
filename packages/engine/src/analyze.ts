@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
 import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult } from '@plex/distill';
+import { confidenceFromOutcomes } from '@plex/knowledge';
 import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
 
@@ -166,6 +167,10 @@ export async function addAnalyzedPitfalls(
 ): Promise<{ added: number }> {
   const store = knowledgeStore(config);
   const embed = requireEmbeddings(config);
+  // Map each provenance incident → its observed outcome, so a pitfall's default confidence is the
+  // SAME Wilson lower bound the standalone distiller computes (one definition of confidence; no `0.6`
+  // magic default). The agent may still pass an explicit confidence to override.
+  const outcomeById = new Map((await store.incidents()).map((i) => [i.id, i.outcome]));
   let added = 0;
   for (const p of pitfalls) {
     if (await store.hasPitfallTitled(p.title)) continue;
@@ -179,7 +184,7 @@ export async function addAnalyzedPitfalls(
       mitigation: p.mitigation,
       category: p.category,
       tier: p.tier ?? 'judgmental',
-      confidence: p.confidence ?? 0.6,
+      confidence: p.confidence ?? confidenceFromOutcomes((p.incidentIds ?? []).map((id) => outcomeById.get(id))),
       scope,
       repo: scope === 'repo' ? repo : undefined,
       incidentIds: p.incidentIds ?? [],

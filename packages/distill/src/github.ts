@@ -14,11 +14,26 @@ interface GhComment {
   path?: string;
   line?: number;
   original_line?: number;
+  /** Diff position in the LATEST diff — `null` once the comment is outdated (its hunk changed). */
+  position?: number | null;
+  /** Diff position in the diff AT COMMENT TIME — persists even after the comment goes outdated. */
+  original_position?: number | null;
   body?: string;
   diff_hunk?: string;
   user?: { login?: string };
   created_at?: string;
   in_reply_to_id?: number;
+}
+
+/**
+ * GitHub's server-computed "outdated" signal for a review comment: the hunk it was anchored to was
+ * changed by a later commit, so its position in the current diff (`position`) can no longer be
+ * resolved (null) while the original (`original_position`) persists. PURE. Conservative by design —
+ * if the fields are absent/ambiguous we return `false` (abstain), never a false "addressed" (the
+ * outcome layer only ever upgrades this to a confirm, never a refute, so under-reading is safe).
+ */
+export function isOutdated(c: Pick<GhComment, 'position' | 'original_position'>): boolean {
+  return c.position == null && c.original_position != null;
 }
 
 /**
@@ -105,6 +120,7 @@ export async function fetchCommentsForPr(cwd: string, pr: PrRef): Promise<RawCom
       prMerged: pr.mergedAt != null,
       path: c.path,
       line: c.line ?? c.original_line,
+      outdated: isOutdated(c),
       body: c.body ?? '',
       diffHunk: c.diff_hunk,
       author: c.user?.login,

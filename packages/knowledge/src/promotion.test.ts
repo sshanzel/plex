@@ -101,6 +101,21 @@ describe('consolidatePitfalls', () => {
     expect((await store.pitfalls())[0]!.confidence).toBe(0.83);
   });
 
+  it('a pitfall whose incidents ALL abstain keeps its prior — not crushed to Wilson(0,0)=0 (ADR-44)', async () => {
+    // An incident with no informative outcome (undefined) is observed-but-uninformative. With only
+    // abstentions there's zero evidence either way, so confidence must stay put — exactly like the
+    // no-incidents case — rather than collapse to a confident-wrong 0.
+    dir = mkdtempSync(join(tmpdir(), 'kp-abstain-'));
+    const store = new KnowledgeStore(dir);
+    await store.addPitfall(pf({ id: 'p1', confidence: 0.7 }));
+    await store.addIncident({ id: 'a1', pitfallId: 'p1', source: 'analyzed', ts: 't' }); // no outcome
+    await store.addIncident({ id: 'a2', pitfallId: 'p1', source: 'analyzed', ts: 't' });
+    const res = await consolidatePitfalls(store, DECAY);
+    expect(res.reinforced).toBe(0); // no informative evidence → not counted as reinforced
+    expect(res.pruned).toBe(0);
+    expect((await store.pitfalls())[0]!.confidence).toBe(0.7); // prior preserved
+  });
+
   it('is idempotent — re-running with the same incidents leaves confidence put', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp-idem-'));
     const store = new KnowledgeStore(dir);

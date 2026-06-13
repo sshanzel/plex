@@ -1,25 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import type { IncidentOutcome } from '@plex/core';
-import { outcomeFor, outcomeWeight } from './outcome';
+import { outcomeFor } from './outcome';
 
-// Outcome weighting drives analysis confidence (ADR-11). Tiny, pure, and was entirely
-// untested. Pin the binary merged→accepted mapping and the full weight table so a future
-// refinement (e.g. detecting `fixed`/`reverted`) is a deliberate, test-breaking change.
+// Observed-outcome labeling (ADR-44): analysis can positively CONFIRM a pattern but never refute it.
+// A confirm requires OBSERVED action — GitHub outdated the comment (its hunk changed) AND the PR
+// shipped. Everything else abstains (undefined), contributing nothing to the confidence counts
+// rather than manufacturing a confirm from a bare merge.
 describe('outcomeFor', () => {
-  it('maps a merged PR to accepted and an unmerged PR to rejected', () => {
-    expect(outcomeFor({ prMerged: true })).toBe('accepted');
-    expect(outcomeFor({ prMerged: false })).toBe('rejected');
+  it('confirms (fixed) only when the comment was outdated AND the PR merged', () => {
+    expect(outcomeFor({ outdated: true, prMerged: true })).toBe('fixed');
   });
-});
 
-describe('outcomeWeight', () => {
-  it('weights each outcome per ADR-11', () => {
-    const table: [IncidentOutcome, number][] = [
-      ['reverted', 1.5],
-      ['accepted', 1],
-      ['fixed', 1],
-      ['rejected', 0],
-    ];
-    for (const [o, w] of table) expect(outcomeWeight(o)).toBe(w);
+  it('abstains (undefined) for a merged PR whose flagged code never changed', () => {
+    // The old signal stamped this `accepted` — the manufactured confirm this change removes.
+    expect(outcomeFor({ outdated: false, prMerged: true })).toBeUndefined();
+  });
+
+  it('abstains when the code was changed but the PR did not ship (ambiguous, not a confirm)', () => {
+    expect(outcomeFor({ outdated: true, prMerged: false })).toBeUndefined();
+  });
+
+  it('abstains for an unmerged PR — never a refute (refutation is the live-review reject path)', () => {
+    expect(outcomeFor({ outdated: false, prMerged: false })).toBeUndefined();
   });
 });
