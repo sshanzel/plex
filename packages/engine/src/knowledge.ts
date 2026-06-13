@@ -140,7 +140,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive' },
+  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -488,6 +488,11 @@ export async function submitVerdict(
       snippet: input.title,
       pitfallId,
       outcome: 'accepted',
+      // Provenance (ADR-46 increment 1): record which finding + review target this confirmed, so the
+      // knowledge graph draws a real finding→incident→pitfall edge. `target` is undefined for a
+      // CLI/no-target verdict — fine, it's optional.
+      findingId: input.findingId,
+      target,
     });
   }
 

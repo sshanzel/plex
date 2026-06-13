@@ -281,6 +281,8 @@ export async function collectKnowledge(
       props: {
         source: i.source, outcome: i.outcome ?? '', repo: i.repo ?? '', file: i.file ?? '',
         verb: i.verb ?? '', ts: i.ts, snippet: (i.snippet ?? '').slice(0, 200),
+        // Tier-2 provenance (ADR-46): the review event this came from — drives a recorded lineage edge.
+        findingId: i.findingId ?? '', target: i.target ?? '',
       },
     });
   };
@@ -337,15 +339,34 @@ export function linkLineage(brain: GraphPayload, knowledge: GraphPayload): Graph
     if (list) list.push(n);
     else incidentsByFile.set(f, [n]);
   }
+  const brainFindingIds = new Set(brain.nodes.filter((n) => n.type === 'Finding').map((n) => n.id));
   const bridges: VizEdge[] = [];
+
+  // RECORDED edges (ADR-46 increment 1): an Incident that carries `findingId` links to the exact brain
+  // Finding it was confirmed from — a solid, true provenance edge. Preferred over the inferred bridge.
+  const recorded = new Set<string>();
+  for (const inc of knowledge.nodes) {
+    if (inc.type !== 'Incident') continue;
+    const fid = String(inc.props.findingId ?? '');
+    if (!fid) continue;
+    const fnode = `fi:${fid}`;
+    if (!brainFindingIds.has(fnode)) continue;
+    bridges.push({ id: `prov|${fnode}|${inc.id}`, source: fnode, target: inc.id, label: 'became', graph: 'lineage' });
+    recorded.add(fnode);
+  }
+
+  // INFERRED bridge (fallback only): an accepted/fixed finding with NO recorded link, matched to
+  // same-file incidents. Dashed; shrinks as new accepts carry `findingId`.
+  let inferred = 0;
   for (const n of brain.nodes) {
-    if (n.type !== 'Finding') continue;
+    if (n.type !== 'Finding' || recorded.has(n.id)) continue;
     const outcome = String(n.props.outcome ?? '');
-    if (outcome !== 'accepted' && outcome !== 'fixed') continue; // only dispositioned-as-real findings became knowledge
+    if (outcome !== 'accepted' && outcome !== 'fixed') continue;
     const incs = incidentsByFile.get(String(n.props.file ?? ''));
     if (!incs) continue;
     for (const inc of incs.slice(0, 8)) {
       bridges.push({ id: `bridge|${n.id}|${inc.id}`, source: n.id, target: inc.id, label: 'likely became', graph: 'lineage', inferred: true });
+      inferred += 1;
     }
   }
   const nodes = [...brain.nodes, ...knowledge.nodes];
@@ -354,9 +375,9 @@ export function linkLineage(brain: GraphPayload, knowledge: GraphPayload): Graph
   for (const n of nodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
   const note = brain.nodes.length === 0
     ? 'No PR brain for this repo (reviews may have run from worktrees) — durable lessons are under Knowledge.'
-    : bridges.length
-      ? `${bridges.length} inferred finding→incident link(s) shown dashed (same-file). Exact links arrive with the Tier-2 lineage journal.`
-      : 'Brain chain shown; no accepted finding correlated to a stored incident by file yet.';
+    : `${recorded.size} recorded finding→incident link(s)` +
+      (inferred ? ` + ${inferred} inferred (dashed, same-file — exact links arrive as more accepts carry provenance)` : '') +
+      (recorded.size === 0 && inferred === 0 ? ' — no accepted finding linked to a stored incident yet' : '') + '.';
   return { graph: 'lineage', nodes, edges, truncated: brain.truncated || knowledge.truncated, counts, note };
 }
 

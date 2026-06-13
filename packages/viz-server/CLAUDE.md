@@ -43,9 +43,11 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 The **Lineage** tab unifies a repo's brain and its origin-scoped knowledge into one
 comment → finding → verdict → incident → pitfall chain. The brain-internal edges
 (comment→finding by locality, finding→round, verdict→finding) and the knowledge provenance
-(incident→pitfall) are **real**; the **finding→incident** hop is an **inferred same-file bridge**
-(`linkLineage`, flagged `inferred` → drawn dashed) because an `Incident` carries no recorded
-back-reference to its `Finding` yet. **Tier 2** (a durable, global, append-only *lineage journal*
+(incident→pitfall) are **real**. The **finding→incident** hop is **recorded** when an `Incident`
+carries `findingId` (ADR-46 increment 1 — captured at accept-time in `submitVerdict`; drawn solid,
+label `became`); for findings without one yet it falls back to an **inferred same-file bridge**
+(`linkLineage`, flagged `inferred` → dashed). The dashed set shrinks as new accepts carry provenance.
+**Tier 2** (the rest — a durable, global, append-only *lineage layer*
 written eagerly at review time — `docs/adr/` follow-up) replaces those dashed bridges with exact,
 recorded edges AND fixes the real durability hole: a worktree's brain dies with the worktree (ADR-40)
 and the sweeper (its only loop-closer) reads the *transient* brain, so autonomous/local-only reviews

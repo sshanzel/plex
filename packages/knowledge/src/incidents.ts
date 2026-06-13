@@ -7,7 +7,7 @@ import type { KnowledgeStore } from './store';
  */
 export async function recordIncident(
   store: KnowledgeStore,
-  input: { source?: IncidentSource; repo?: string; file?: string; snippet?: string; outcome?: Incident['outcome']; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; ts: string },
+  input: { source?: IncidentSource; repo?: string; file?: string; snippet?: string; outcome?: Incident['outcome']; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string; ts: string },
 ): Promise<string> {
   // file (readable) + a content hash of the snippet (so distinct snippets never collide,
   // and a non-ASCII/empty snippet doesn't degrade to an empty, colliding segment).
@@ -22,6 +22,9 @@ export async function recordIncident(
     outcome: input.outcome,
     ...(input.note ? { note: input.note } : {}),
     ...(input.verb ? { verb: input.verb } : {}),
+    // Provenance back to the review event (ADR-46) — only when present (analyzed incidents have none).
+    ...(input.findingId ? { findingId: input.findingId } : {}),
+    ...(input.target ? { target: input.target } : {}),
     ts: input.ts,
   };
   await store.addIncident(incident);
