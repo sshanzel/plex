@@ -77,6 +77,13 @@ review over it.
 - Best-effort vs throwing is deliberate per function: diff getters throw (a review
   without a diff is meaningless); metadata/sha/subject helpers swallow errors and return
   empty (a review without a title is fine). Keep new helpers on the right side.
+- **`runGit` retries a transient SPAWN failure** (`isTransientSpawnError` — `EAGAIN`/`ENOMEM`/
+  `EMFILE`/… where the child never forked, e.g. under CI fork-storm) but NOT a non-zero exit
+  (`code` is a number — a real failure like a bad ref). This is a **correctness** fix, not flake
+  suppression: without it a transient `getHeadSha` → `''` records a review round with an empty
+  `headSha`, which silently kills round-over-round drift attribution AND reconcile (both key off
+  `lastHeadSha`). A swallowed-to-empty getter still degrades on a *real* failure — only the
+  never-ran spawn case is retried.
 - The 4000-char `addedTextByFile` cap bounds embedding cost; raise it only with the
   brain's token budget in mind.
 - Diff paths are repo-relative POSIX as git emits them — they must match

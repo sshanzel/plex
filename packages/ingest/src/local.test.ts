@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DiffFile } from '@plex/core';
-import { getLocalDiff } from './local';
+import { getLocalDiff, isTransientSpawnError } from './local';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'pipe' });
@@ -57,5 +57,25 @@ describe('getLocalDiff (real git)', () => {
 
     // new.ts adds its two lines
     expect(byPath['src/new.ts']!.hunks.flatMap((h) => h.newRanges)).toEqual([{ start: 1, end: 2 }]);
+  });
+});
+
+// runGit retries a transient SPAWN failure (the child never ran) but NOT a non-zero exit — so an empty
+// headSha can't silently kill round attribution + reconcile under CI fork-storm, while a real command
+// failure (bad ref) still surfaces. This pins the retry-vs-rethrow decision.
+describe('isTransientSpawnError — retry a fork failure, never a non-zero exit', () => {
+  it('is true for resource/spawn errnos (the child could not be forked)', () => {
+    for (const code of ['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE']) {
+      expect(isTransientSpawnError(Object.assign(new Error('spawn git'), { code }))).toBe(true);
+    }
+  });
+  it('is false for a non-zero exit (code is a NUMBER — a real command failure like a bad ref)', () => {
+    expect(isTransientSpawnError(Object.assign(new Error('bad ref'), { code: 128 }))).toBe(false);
+    expect(isTransientSpawnError(Object.assign(new Error('exit 1'), { code: 1 }))).toBe(false);
+  });
+  it('is false for a non-error / no code', () => {
+    expect(isTransientSpawnError(null)).toBe(false);
+    expect(isTransientSpawnError(new Error('boom'))).toBe(false);
+    expect(isTransientSpawnError('nope')).toBe(false);
   });
 });

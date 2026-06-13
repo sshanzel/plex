@@ -6,9 +6,38 @@ import { normalizeUnifiedDiff, addedTextByFile, type ChangedFileText } from './n
 const pexec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+/**
+ * Resource errnos that mean the child **never spawned** (the OS couldn't fork/exec under load) — as
+ * opposed to a git command that RAN and exited non-zero. Only the former is safe to retry: the command
+ * never executed, so re-running it can't change a deterministic result; a non-zero exit (`code` is a
+ * NUMBER — a bad ref, etc.) is a real failure and must surface. Under CI fork-storm (the kuzu E2Es), a
+ * transient spawn failure here would otherwise silently make `getHeadSha` return '' → a review round
+ * recorded with an empty `headSha` → round-over-round drift attribution AND reconcile (both keyed on
+ * `lastHeadSha`) go dead. So the retry is a correctness fix, not just flake suppression.
+ */
+const TRANSIENT_SPAWN_ERRNOS = new Set(['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY', 'ESRCH']);
+
+/** True when an `execFile` rejection is a transient SPAWN failure (retryable), not a non-zero exit. */
+export function isTransientSpawnError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && TRANSIENT_SPAWN_ERRNOS.has(code);
+}
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 async function runGit(args: string[], cwd: string): Promise<string> {
-  const { stdout } = await pexec('git', args, { cwd, maxBuffer: MAX_BUFFER });
-  return stdout;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const { stdout } = await pexec('git', args, { cwd, maxBuffer: MAX_BUFFER });
+      return stdout;
+    } catch (e) {
+      if (attempt < 4 && isTransientSpawnError(e)) {
+        await delay(25 * (attempt + 1)); // brief backoff — the fork-capacity dip is momentary
+        continue;
+      }
+      throw e; // non-zero exit (real failure) or retries exhausted
+    }
+  }
 }
 
 /** Commit subjects in `baseRef..HEAD` (the change's narrative, for branch reviews). */
