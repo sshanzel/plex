@@ -33,6 +33,7 @@ import {
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
 import { parse, finiteFlag } from './parse';
+import { runServe } from './serve';
 
 type LocalDiffMode = 'working' | 'staged' | 'branch';
 
@@ -60,6 +61,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
+  plex serve [--port <n>] [--stop] [--status]            # local web UI to explore the code graph, PR brain & knowledge (http://127.0.0.1:2108)
   plex sweep [repoPath]                                  # background maintenance: close loops + refresh main's graph + consolidate decay + analyze (ADR-43)
   plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
 
@@ -394,6 +396,16 @@ async function main(): Promise<number> {
         `Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes${c.pruned ? `, pruned ${c.pruned} stale` : ''}.\n`,
       );
       return 0;
+    }
+    case 'serve': {
+      // The optional local visualization daemon (ADR-45). Reads the same per-repo stores the
+      // review flow writes; opens Kùzu per-request and closes, so it never blocks a review.
+      return runServe(config, {
+        foreground: Boolean(flags.foreground),
+        stop: Boolean(flags.stop),
+        status: Boolean(flags.status),
+        port: typeof flags.port === 'string' ? finiteFlag(flags.port, 'port') : undefined,
+      });
     }
     case 'sweep': {
       // The background maintenance worker (ADR-43) — also the entry the detached spawner runs.

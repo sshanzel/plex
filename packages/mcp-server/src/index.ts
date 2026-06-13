@@ -41,6 +41,7 @@ import {
   type SubmittedFinding,
   type AgentPitfall,
 } from '@plex/engine';
+import { ensureDaemon } from '@plex/viz-server';
 import { buildDoctorReport } from './doctor';
 
 // Single-sourced from the package.json that ships beside the bundle (dist/ → ../package.json),
@@ -404,3 +405,13 @@ process.stdin.resume();
 process.stderr.write(
   `[plex] MCP server v${VERSION} (build ${LOADED_BUILD_MS ? new Date(LOADED_BUILD_MS).toISOString() : 'unknown'}) running on stdio\n`,
 );
+
+// Universal UI auto-start (ADR-45/M13): ensure the visualization daemon is up, the SAME way for
+// every client — Claude plugin, Codex plugin, or a bare MCP registration — without a CLI install or
+// a client-specific hook. The daemon ships in this very package (`plex.js`, our sibling in dist/),
+// so we spawn it detached via that built CLI. Best-effort + STDOUT-SAFE (ensureDaemon writes nothing
+// to stdout and swallows errors), so it can never corrupt the stdio protocol or break startup. Opt
+// out with `PLEX_NO_UI=1`. No-ops in dev/tsx (no sibling `plex.js`).
+if (process.env.PLEX_NO_UI !== '1' && SELF) {
+  void ensureDaemon({ execPath: process.execPath, scriptPath: path.join(path.dirname(SELF), 'plex.js') });
+}

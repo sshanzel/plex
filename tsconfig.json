@@ -12,7 +12,8 @@
       "@plex/knowledge": ["packages/knowledge/src/index.ts"],
       "@plex/deterministic": ["packages/deterministic/src/index.ts"],
       "@plex/findings": ["packages/findings/src/index.ts"],
-      "@plex/distill": ["packages/distill/src/index.ts"]
+      "@plex/distill": ["packages/distill/src/index.ts"],
+      "@plex/viz-server": ["packages/viz-server/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"]

@@ -1,0 +1,91 @@
+import os from 'node:os';
+import path from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import type { ReviewerConfig } from '@plex/core';
+
+/**
+ * One machine-global daemon serves every indexed repo, so it discovers them by enumerating the
+ * **repos root** — the dir under which `repoPaths` (engine) places each repo's `<id>/` data dir.
+ * This mirrors that resolution WITHOUT importing the engine (viz-server depends only on
+ * core/code-graph/knowledge): empty `dataDir` → `~/.plex/repos`; absolute → that path is the root.
+ * A **relative** `dataDir` (the in-repo `PLEX_DATA_DIR=.plex` opt-in) has no central registry — it
+ * lives inside each repo — so it returns null and the picker is empty (documented limitation, ADR-45).
+ */
+export function reposRoot(config: ReviewerConfig): string | null {
+  const d = config.dataDir;
+  if (!d) return path.join(os.homedir(), '.plex', 'repos');
+  if (path.isAbsolute(d)) return d;
+  return null; // in-repo opt-in: no central root to enumerate
+}
+
+export interface RepoEntry {
+  /** The data-dir name (`<basename>-<sha1[:8]>`) — the id used in API requests. */
+  id: string;
+  /** Friendly name for the picker (the repo's basename). */
+  name: string;
+  /** Absolute source repo path, if recorded (`repo-path` sidecar). */
+  repoPath?: string;
+  reviewerDir: string;
+  graphDir: string;
+  brainDir: string;
+  hasGraph: boolean;
+  hasBrain: boolean;
+}
+
+/** Only ever accept ids of this shape — `repoId` mints exactly this, and it forbids `.`/`/` traversal. */
+const SAFE_ID = /^[A-Za-z0-9._-]+$/;
+
+function entryFor(root: string, id: string): RepoEntry | null {
+  if (!SAFE_ID.test(id) || id === '.' || id === '..') return null;
+  const reviewerDir = path.join(root, id);
+  // Defence in depth: the resolved dir must remain a direct child of the root (no `..` escape even
+  // if SAFE_ID is ever loosened). path.resolve collapses any traversal before the prefix check.
+  if (path.dirname(path.resolve(reviewerDir)) !== path.resolve(root)) return null;
+  let isDir = false;
+  try {
+    isDir = statSync(reviewerDir).isDirectory();
+  } catch {
+    return null;
+  }
+  if (!isDir) return null;
+  const graphDir = path.join(reviewerDir, 'graph.kuzu');
+  const brainDir = path.join(reviewerDir, 'brain.kuzu');
+  const hasGraph = existsSync(graphDir);
+  const hasBrain = existsSync(brainDir);
+  if (!hasGraph && !hasBrain) return null; // a dir with neither store isn't a usable repo
+  let repoPath: string | undefined;
+  try {
+    repoPath = readFileSync(path.join(reviewerDir, 'repo-path'), 'utf8').trim() || undefined;
+  } catch {
+    /* sidecar absent (older index) — fall back to the id-derived name */
+  }
+  const name = repoPath ? path.basename(repoPath) : id.replace(/-[0-9a-f]{8}$/, '');
+  return { id, name, repoPath, reviewerDir, graphDir, brainDir, hasGraph, hasBrain };
+}
+
+/** Every indexed repo on this machine, newest data dir first. */
+export function listRepos(config: ReviewerConfig): RepoEntry[] {
+  const root = reposRoot(config);
+  if (!root || !existsSync(root)) return [];
+  let ids: string[];
+  try {
+    ids = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const out: RepoEntry[] = [];
+  for (const id of ids) {
+    const e = entryFor(root, id);
+    if (e) out.push(e);
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Resolve a requested repo id to its entry, or null if unknown — the path-traversal gate (ADR-45). */
+export function resolveRepo(config: ReviewerConfig, id: string): RepoEntry | null {
+  const root = reposRoot(config);
+  if (!root) return null;
+  const e = entryFor(root, id);
+  // entryFor already validates shape + containment; existence is implied by it returning non-null.
+  return e;
+}
