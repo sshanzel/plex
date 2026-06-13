@@ -5,8 +5,8 @@ import { isTransientSpawnError, retryTransientSpawn } from './spawn-retry';
 // retry a SPAWN failure (the child never forked — string errno) but never a non-zero EXIT (numeric code
 // = a real command failure). Audit #1: code-graph's headSha was an un-retried twin; it now routes here.
 describe('isTransientSpawnError', () => {
-  it('is true for resource/spawn errnos (the child could not be forked)', () => {
-    for (const code of ['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY', 'ESRCH']) {
+  it('is true for fork/exec resource errnos (the child could not be forked)', () => {
+    for (const code of ['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY']) {
       expect(isTransientSpawnError(Object.assign(new Error('spawn git'), { code }))).toBe(true);
     }
   });
@@ -18,6 +18,7 @@ describe('isTransientSpawnError', () => {
     expect(isTransientSpawnError(null)).toBe(false);
     expect(isTransientSpawnError(new Error('boom'))).toBe(false);
     expect(isTransientSpawnError(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe(false); // missing bin ≠ retry
+    expect(isTransientSpawnError(Object.assign(new Error('x'), { code: 'ESRCH' }))).toBe(false); // signal to dead pid ≠ failed fork
   });
 });
 

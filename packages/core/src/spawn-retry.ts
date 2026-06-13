@@ -12,8 +12,13 @@
  * This lives in `@plex/core` (dependency-free) so BOTH `@plex/ingest` (`runGit`) and
  * `@plex/code-graph` (`headSha`) route their git spawns through the SAME tested policy — the audit
  * found `code-graph`'s `headSha` was an un-retried twin of the one `ingest` had already hardened.
+ *
+ * The set is exactly the errnos a fork/exec raises when the child never came to exist: EAGAIN/ENOMEM
+ * (no process slot / memory to fork), ENFILE/EMFILE (fd table exhausted), ETXTBSY (the binary is being
+ * written). NOT included: ENOENT (binary genuinely missing — retrying never helps) or ESRCH (signal to
+ * a dead pid — a post-spawn signalling failure, not a failed fork).
  */
-const TRANSIENT_SPAWN_ERRNOS = new Set(['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY', 'ESRCH']);
+const TRANSIENT_SPAWN_ERRNOS = new Set(['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY']);
 
 /** True when a child-process rejection is a transient SPAWN failure (retryable), not a non-zero exit. */
 export function isTransientSpawnError(err: unknown): boolean {

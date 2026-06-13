@@ -28,12 +28,20 @@ interface GhComment {
  * the parse so the failure names its source. PURE — unit-tested.
  */
 export function parsePrList(stdout: string): PrRef[] {
+  let parsed: unknown;
   try {
-    return JSON.parse(stdout) as PrRef[];
+    parsed = JSON.parse(stdout);
   } catch {
-    const preview = stdout.trim().slice(0, 200);
-    throw new Error(`gh pr list did not return JSON (got: ${preview || '<empty>'}); is gh installed + authenticated?`);
+    parsed = undefined;
   }
+  // Validate the SHAPE, not just that JSON parsed: a valid-JSON non-array (a `{}` error object, a gh
+  // banner that happens to be JSON) would otherwise cast straight through and throw far downstream at
+  // `.map`/`.slice` — the same unlabeled failure one step removed (PR #10 review).
+  if (!Array.isArray(parsed)) {
+    const preview = stdout.trim().slice(0, 200);
+    throw new Error(`gh pr list did not return a JSON array (got: ${preview || '<empty>'}); is gh installed + authenticated?`);
+  }
+  return parsed as PrRef[];
 }
 
 /** List PRs (most recent first) via `gh`, run inside the target repo. */

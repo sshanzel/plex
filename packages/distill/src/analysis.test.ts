@@ -46,7 +46,12 @@ describe('parsePrList', () => {
     ]);
   });
   it('throws a labeled error (naming gh) on non-JSON output', () => {
-    expect(() => parsePrList('gh: To get started with GitHub CLI, please run: gh auth login')).toThrow(/gh pr list did not return JSON/);
+    expect(() => parsePrList('gh: To get started with GitHub CLI, please run: gh auth login')).toThrow(/gh pr list did not return a JSON array/);
+  });
+  it('throws on valid JSON that is not an array (a {} error object would cast straight through)', () => {
+    expect(() => parsePrList('{"message":"Not Found"}')).toThrow(/gh pr list did not return a JSON array/);
+    expect(() => parsePrList('42')).toThrow(/JSON array/);
+    expect(() => parsePrList('null')).toThrow(/JSON array/);
   });
   it('reports <empty> for a blank response', () => {
     expect(() => parsePrList('   ')).toThrow(/<empty>/);
