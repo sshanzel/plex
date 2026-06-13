@@ -32,7 +32,7 @@ import {
   type ReviewContext,
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
-import { parse } from './parse';
+import { parse, finiteFlag } from './parse';
 
 type LocalDiffMode = 'working' | 'staged' | 'branch';
 
@@ -332,7 +332,7 @@ async function main(): Promise<number> {
           scope: typeof flags.scope === 'string' ? (flags.scope as WaiverScope) : undefined,
           note: typeof flags.note === 'string' ? flags.note : undefined,
           file: typeof flags.file === 'string' ? flags.file : undefined,
-          line: typeof flags.line === 'string' ? Number(flags.line) : undefined,
+          line: typeof flags.line === 'string' ? finiteFlag(flags.line, 'line') : undefined,
           title: typeof flags.title === 'string' ? flags.title : undefined,
           pattern: typeof flags.pattern === 'string' ? flags.pattern : undefined,
           category: typeof flags.category === 'string' ? flags.category : undefined,
@@ -354,13 +354,13 @@ async function main(): Promise<number> {
       // `--oldest` needs the full PR list to find the chronological start, not just the
       // recent `maxPrs` window — raise the fetch ceiling so the oldest PRs are in view.
       if (oldest) config.analyze.maxPrs = Math.max(config.analyze.maxPrs, 1000);
-      if (typeof flags.threshold === 'string') config.analyze.clusterThreshold = Number(flags.threshold);
-      if (typeof flags['min-cluster'] === 'string') config.analyze.minClusterSize = Number(flags['min-cluster']);
+      if (typeof flags.threshold === 'string') config.analyze.clusterThreshold = finiteFlag(flags.threshold, 'threshold');
+      if (typeof flags['min-cluster'] === 'string') config.analyze.minClusterSize = finiteFlag(flags['min-cluster'], 'min-cluster');
       const res = await analyzeRepo(repoPath, config, {
         reset: Boolean(flags.reset),
         state: flags.all ? 'all' : 'merged',
         order: oldest ? 'oldest' : undefined,
-        limit: typeof flags.limit === 'string' ? Number(flags.limit) : undefined,
+        limit: typeof flags.limit === 'string' ? finiteFlag(flags.limit, 'limit') : undefined,
       });
       process.stdout.write(
         `Analyzed ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +

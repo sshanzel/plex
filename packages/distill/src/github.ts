@@ -21,6 +21,21 @@ interface GhComment {
   in_reply_to_id?: number;
 }
 
+/**
+ * Parse `gh pr list --json` output into PR refs. A bare `JSON.parse` here would throw an opaque
+ * `Unexpected token …` with no hint that it was `gh` output (an auth prompt, a `gh` error banner, an
+ * empty body) — unlike its sibling `fetchCommentsForPr`, which guards (#8 silent-failure audit). Wrap
+ * the parse so the failure names its source. PURE — unit-tested.
+ */
+export function parsePrList(stdout: string): PrRef[] {
+  try {
+    return JSON.parse(stdout) as PrRef[];
+  } catch {
+    const preview = stdout.trim().slice(0, 200);
+    throw new Error(`gh pr list did not return JSON (got: ${preview || '<empty>'}); is gh installed + authenticated?`);
+  }
+}
+
 /** List PRs (most recent first) via `gh`, run inside the target repo. */
 export async function listPrs(opts: {
   cwd?: string;
@@ -34,7 +49,7 @@ export async function listPrs(opts: {
     ['pr', 'list', '--state', state, '--limit', String(opts.maxPrs || 100), '--json', 'number,mergedAt'],
     { cwd, maxBuffer: MAX_BUFFER },
   );
-  return JSON.parse(stdout) as PrRef[];
+  return parsePrList(stdout);
 }
 
 /**
