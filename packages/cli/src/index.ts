@@ -138,6 +138,25 @@ function ask(question: string): Promise<string> {
 }
 
 /**
+ * Like `ask`, but does not echo the typed answer — for secrets (an API key shouldn't land in the
+ * terminal scrollback). The prompt is written synchronously by `rl.question`; we mute keystroke
+ * echo only after that. On a non-TTY (piped) there's no screen echo to suppress, so fall back.
+ */
+function askSecret(question: string): Promise<string> {
+  const out = process.stdout;
+  if (!process.stdin.isTTY) return ask(question);
+  const rl = createInterface({ input: process.stdin, output: out, terminal: true });
+  let muted = false;
+  const rlAny = rl as unknown as { _writeToOutput: (s: string) => void };
+  const orig = rlAny._writeToOutput.bind(rl);
+  rlAny._writeToOutput = (s: string) => { if (!muted) orig(s); };
+  return new Promise((res) => {
+    rl.question(question, (a) => { rl.close(); out.write('\n'); res(a.trim()); });
+    muted = true; // prompt already written; suppress the echo of the secret itself
+  });
+}
+
+/**
  * Run a slow step with a live spinner + elapsed time so the terminal never looks frozen
  * (indexing a large repo walks git history — it CAN take a minute). On a non-TTY (CI / piped)
  * it degrades to a single line, no escape codes. Pure-stdout, no dependency.
@@ -176,7 +195,7 @@ async function runInit(repoPath: string): Promise<number> {
   out.write('An embedding key powers knowledge retrieval and the semantic review signals (optional).\n');
   const provider = (await ask('Embedding provider [voyage/openai/gemini/ollama/none] (voyage): ')) || 'voyage';
   if (provider !== 'none') {
-    const apiKey = provider === 'ollama' ? undefined : await ask(`API key for ${provider} (Enter to skip): `);
+    const apiKey = provider === 'ollama' ? undefined : await askSecret(`API key for ${provider} (Enter to skip): `);
     writeHomeConfig({ embedding: { provider: provider as never, ...(apiKey ? { apiKey } : {}) } });
     out.write(`Saved config to ${homeConfigPath()}\n`);
   }

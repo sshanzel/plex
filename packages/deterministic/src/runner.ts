@@ -116,6 +116,12 @@ export async function runDeterministic(
     // Generated artifacts are dropped at diff normalization, but this runner is also called
     // with hand-built diffs — keep the belt-and-suspenders skip (a .min.js IS "supported").
     if (f.status === 'deleted' || !isSupportedSource(f.path) || isGeneratedArtifact(f.path)) continue;
+    // Containment: a hostile diff (e.g. a malicious PR) can carry a path that escapes the repo
+    // (`../../etc/x.ts`); never read outside the repo root. This is the only disk read of a
+    // diff-supplied path — other consumers treat it as an inert graph key.
+    const root = path.resolve(repoPath);
+    const abs = path.resolve(repoPath, f.path);
+    if (abs !== root && !abs.startsWith(root + path.sep)) continue;
     let text: string;
     try {
       text = await fs.readFile(path.join(repoPath, f.path), 'utf8');

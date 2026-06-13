@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@plex/code-graph": "workspace:*",
-    "@plex/core": "workspace:*",
-    "falkordb": "^6.6.2"
+    "@plex/core": "workspace:*"
   }
 }

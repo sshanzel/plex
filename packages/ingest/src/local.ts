@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { isTransientSpawnError, retryTransientSpawn, type NormalizedDiff } from '@plex/core';
+import { isTransientSpawnError, retryTransientSpawn, isSafeGitRef, type NormalizedDiff } from '@plex/core';
 import { normalizeUnifiedDiff, addedTextByFile, type ChangedFileText } from './normalize';
 
 const pexec = promisify(execFile);
@@ -18,6 +18,7 @@ async function runGit(args: string[], cwd: string): Promise<string> {
 
 /** Commit subjects in `baseRef..HEAD` (the change's narrative, for branch reviews). */
 export async function getCommitSubjects(cwd: string, baseRef: string, limit = 20): Promise<string[]> {
+  if (!isSafeGitRef(baseRef)) return []; // best-effort narrative; never interpolate a non-ref
   try {
     const out = await runGit(['log', `${baseRef}..HEAD`, '--no-merges', '--format=%s', '-n', String(limit)], cwd);
     return out.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -69,6 +70,8 @@ export async function getLocalDiff(opts: LocalDiffOptions = {}): Promise<Normali
     baseRef = 'HEAD (staged)';
   } else if (mode === 'branch') {
     baseRef = opts.baseRef ?? 'main';
+    // Refuse a ref that could be read as a git option before it reaches the argv (option-injection).
+    if (!isSafeGitRef(baseRef)) throw new Error(`unsafe baseRef: ${JSON.stringify(baseRef)}`);
     args = ['diff', `${baseRef}...HEAD`];
   } else {
     args = ['diff', 'HEAD'];

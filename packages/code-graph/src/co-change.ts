@@ -193,7 +193,8 @@ export function parseNameStatus(stdout: string): ChangedFiles {
 export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
   let stdout: string;
   try {
-    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
+    // `--` terminates options/revisions so a stored sha can never be read as a flag or a pathspec.
+    ({ stdout } = await pexec('git', ['diff', '--name-status', '-M', sha, 'HEAD', '--'], { cwd, maxBuffer: GIT_MAX_BUFFER }));
   } catch {
     return null;
   }

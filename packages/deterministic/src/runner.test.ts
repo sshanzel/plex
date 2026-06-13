@@ -58,6 +58,22 @@ describe('runDeterministic', () => {
     expect(await runDeterministic(repo, diff(file({ path: 'src/ghost.ts' })))).toEqual([]);
   });
 
+  it('never reads a path that escapes the repo root (hostile-diff containment)', async () => {
+    // A malicious PR diff can carry a traversal path. Plant a real, parseable source file just
+    // outside the repo; the runner must NOT read it even though it exists and is a supported ext.
+    const outside = mkdtempSync(join(tmpdir(), 'plex-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.ts'), SRC); // would yield a no-console finding if read
+      // repo and outside share the same tmpdir parent, so this traversal resolves INTO outside.
+      const traversal = `../${outside.split('/').pop()}/secret.ts`;
+      expect(await runDeterministic(repo, diff(file({ path: traversal, hunks: [] })))).toEqual([]);
+      // a classic deep escape is contained too.
+      expect(await runDeterministic(repo, diff(file({ path: '../../../../etc/passwd.ts', hunks: [] })))).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it('uses repoName override, else the repo basename', async () => {
     const named = await runDeterministic(repo, diff(file()), { repoName: 'myrepo' });
     expect(named[0]!.location.repo).toBe('myrepo');

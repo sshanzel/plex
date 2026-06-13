@@ -89,7 +89,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     const body = {
       requests: texts.map((t) => ({ model: `models/${this.model}`, content: { parts: [{ text: t }] } })),
     };
-    const data = await postJson(`${this.baseUrl}/v1beta/models/${this.model}:batchEmbedContents?key=${this.apiKey}`, body, {});
+    // Key in the `x-goog-api-key` header, not the URL query — keeps it out of proxy/CDN access
+    // logs and referrers (Gemini accepts both; the other providers all use headers).
+    const data = await postJson(`${this.baseUrl}/v1beta/models/${this.model}:batchEmbedContents`, body, {
+      'x-goog-api-key': this.apiKey,
+    });
     return data.embeddings.map((e: { values: number[] }) => e.values);
   }
 }

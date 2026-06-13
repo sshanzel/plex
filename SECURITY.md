@@ -32,7 +32,8 @@ checks. The defenses below are chosen against these **mechanisms**, not against 
   scripts — *and its `node-gyp`/`binding.gyp` native build* — are not run. This blocks both the
   classic `postinstall` worm vector **and** the Phantom-Gyp bypass for any non-allowlisted dep.
 - **Exact, hash-verified deps** via the committed `pnpm-lock.yaml` (SRI integrity, 325 entries);
-  vulnerable transitive deps force-patched via pnpm `overrides`; **Dependabot** enabled.
+  vulnerable transitive deps force-patched via pnpm `overrides`; **Dependabot** enabled via the
+  committed [`.github/dependabot.yml`](.github/dependabot.yml) (npm + SHA-pinned GitHub Actions, weekly).
 - **Publishing protected by npm 2FA with a passkey.**
 - **Release-age cooldown**: pnpm `minimumReleaseAge: 4320` (**3 days**) in `pnpm-workspace.yaml` —
   no dependency version (incl. transitive) is installed until 3 days after publication, skipping the
@@ -44,6 +45,21 @@ deps, but not (a) a compromised version of an **allowlisted** dep (`esbuild` / `
 run install logic on your machine — nor (b) malice in any dependency's **runtime** code, which runs
 when our bundle imports it. The release-age cooldown (above) is the main mitigation for both; keep the
 allowlist minimal and treat updates to `esbuild`/`kuzu` with extra care.
+
+## Known limitations
+
+- **Review-history analysis trusts the comments it distills.** `analyze` / `analyze_scan`
+  (`packages/distill/src/distill.ts`) feed untrusted PR-comment bodies to the distilling LLM with
+  no data-delimiter, and let the model self-elect a pitfall's `scope` (`global` vs `repo`). A
+  crafted comment in a PR you point analysis at could, in principle, be distilled into a pitfall
+  (worst case a `global` one) that surfaces in later reviews — **prompt-injection → knowledge
+  poisoning**. This is **accepted as low-risk for the local-first, single-operator model**: the
+  knowledge base is your own, on your machine, and only you consume the result, so you bear (and
+  can see/prune) any poisoned pitfall. The interactive *review* path is not affected — it frames PR
+  title/body as "stated intent, not ground truth" (ADR-02), never as instructions. A future
+  **team-shared knowledge base** would change this calculus (one user's poisoned pitfall would
+  reach teammates) and must revisit it: delimit/sandbox the untrusted comment text and gate
+  `global` scope behind corroboration rather than LLM self-election.
 
 ## Hardening roadmap (deferred — single-maintainer today)
 
