@@ -17,6 +17,8 @@ export interface HomeConfig {
    * (30d reject / 365d waive) in `resolveConfig`. Documented as the one tuning knob — so it must be
    * reachable here, not just in `ReviewerConfig`. */
   suppression?: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number };
+  /** Positive-pitfall recency-decay knobs (ADR-42). Partial blocks merge with defaults in `resolveConfig`. */
+  decay?: { halfLifeDays?: number; retrievalTiltFloor?: number; pruneFloor?: number; pruneMinAgeDays?: number };
 }
 
 export const homeConfigPath = (): string => path.join(os.homedir(), '.plex', 'config.json');
@@ -39,6 +41,7 @@ export function writeHomeConfig(patch: HomeConfig): HomeConfig {
     embedding: { ...current.embedding, ...patch.embedding },
     llm: { ...current.llm, ...patch.llm },
     suppression: { ...current.suppression, ...patch.suppression },
+    decay: { ...current.decay, ...patch.decay },
   };
   const f = homeConfigPath();
   mkdirSync(path.dirname(f), { recursive: true });

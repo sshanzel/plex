@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { reviewTarget, reviewTargetFor } from './target';
+import { reviewTarget, reviewTargetFor, diffSourceFromTarget } from './target';
 
 // reviewTarget is the correlation key for the PR brain, audit log, and round tracking
 // (ADR-22/23). Re-reviewing the SAME logical target must produce the SAME id — pin the
@@ -68,5 +68,34 @@ describe('reviewTargetFor (path-derived — the single source of truth)', () => 
   it('is identical regardless of trailing slash / un-normalized path (resolve normalizes)', () => {
     expect(reviewTargetFor('/repos/playright/', { source: 'pr', pr: 79 }))
       .toBe(reviewTargetFor('/repos/playright', { source: 'pr', pr: 79 }));
+  });
+});
+
+// diffSourceFromTarget is the inverse the maintenance sweep uses to reconcile a brain target without
+// a caller-supplied DiffSource (ADR-43). baseRef comes from the brain Round, never re-parsed (lossy).
+describe('diffSourceFromTarget (sweep reconstructs a DiffSource from a brain target)', () => {
+  it('round-trips a PR target', () => {
+    expect(diffSourceFromTarget('plex__pr_42')).toEqual({ source: 'pr', pr: 42 });
+  });
+
+  it('round-trips working / staged', () => {
+    expect(diffSourceFromTarget('plex__working')).toEqual({ source: 'local', mode: 'working' });
+    expect(diffSourceFromTarget('plex__staged')).toEqual({ source: 'local', mode: 'staged' });
+  });
+
+  it('uses the brain Round baseRef for branch mode (the slug is lossy, so it is NOT re-parsed)', () => {
+    expect(diffSourceFromTarget('plex__branch_origin_main', 'origin/main')).toEqual({ source: 'local', mode: 'branch', baseRef: 'origin/main' });
+    expect(diffSourceFromTarget('plex__branch')).toEqual({ source: 'local', mode: 'branch' }); // no baseRef passed
+  });
+
+  it('returns undefined for a missing separator or an unrecognized suffix (sweep skips it)', () => {
+    expect(diffSourceFromTarget('plex')).toBeUndefined();
+    expect(diffSourceFromTarget('plex__nonsense')).toBeUndefined();
+    expect(diffSourceFromTarget('plex__pr_notanumber')).toBeUndefined();
+  });
+
+  it('is consistent with reviewTarget for the common cases', () => {
+    expect(diffSourceFromTarget(reviewTarget('plex', { source: 'pr', pr: 7 }))).toEqual({ source: 'pr', pr: 7 });
+    expect(diffSourceFromTarget(reviewTarget('plex', { source: 'local', mode: 'staged' }))).toEqual({ source: 'local', mode: 'staged' });
   });
 });

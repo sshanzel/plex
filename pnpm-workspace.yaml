@@ -10,3 +10,12 @@ packages:
 # `minimumReleaseAgeExclude` or bump it deliberately. Workspace (`@plex/*`) deps are unaffected
 # (they resolve via the workspace, not the registry).
 minimumReleaseAge: 4320
+
+# Narrow, deliberate exception (ADR-35): take the esbuild 0.28.1 SECURITY patch
+# (GHSA-gv7w-rqvm-qjhr) before the cooldown elapses. esbuild is a devDep (build/test tooling, not
+# shipped), already in `onlyBuiltDependencies`, single-author + enormously-vetted — about the
+# lowest-risk package to grant a cooldown exception. Paired with the `esbuild@<0.28.1` override in
+# package.json. Remove once the floor naturally clears the patched range.
+minimumReleaseAgeExclude:
+  - esbuild
+  - '@esbuild/*'

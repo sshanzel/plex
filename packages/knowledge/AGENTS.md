@@ -15,9 +15,9 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | --- | --- |
 | `src/store.ts` | `KnowledgeStore`: two JSONL append logs (`pitfalls.jsonl`, `incidents.jsonl`) under a dir (default `~/.plex/knowledge`, `config.knowledgeDir`) |
 | `src/embeddings.ts` | `EmbeddingProvider` impls (voyage / openai / gemini / ollama / fake) + `createEmbeddingProvider` (returns `null` when unusable) |
-| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) |
+| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` applies the ADR-42 **recency tilt** (`score *= max(tiltFloor, recencyWeight(lastReinforcedAt age))`, undated → 1) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
-| `src/promotion.ts` | `consolidatePitfalls` — Beta-Bernoulli confidence recompute from incident outcomes |
+| `src/promotion.ts` | `consolidatePitfalls(store, decay, now)` — **recency-decayed** Wilson confidence recompute from incident outcomes + sets `lastReinforcedAt` + **prunes** a decayed-stale pitfall (ADR-42; provenance Incidents survive) |
 | `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 

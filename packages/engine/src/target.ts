@@ -28,3 +28,23 @@ export function reviewTarget(repo: string, src: DiffSource): string {
 export function reviewTargetFor(repoPath: string, src: DiffSource): string {
   return reviewTarget(path.basename(path.resolve(repoPath)), src);
 }
+
+/**
+ * Inverse of `reviewTarget`'s suffix → the `DiffSource` to reconcile a brain target with (ADR-43,
+ * the maintenance worker). The repo prefix is dropped — the sweep already knows `repoPath`; only the
+ * `__`-suffix carries source/mode/pr. `baseRef` is taken from the brain's `Round` (NOT re-parsed: the
+ * `reviewTarget` slug is lossy — `feature/x` → `feature_x`). Returns `undefined` for an unrecognized
+ * suffix (the sweep skips it). Pure — unit-tested with literal targets.
+ */
+export function diffSourceFromTarget(target: string, baseRef?: string): DiffSource | undefined {
+  const sep = target.indexOf('__');
+  if (sep < 0) return undefined;
+  const suffix = target.slice(sep + 2);
+  const pr = /^pr_(\d+)$/.exec(suffix);
+  if (pr) return { source: 'pr', pr: Number(pr[1]) };
+  if (suffix === 'working' || suffix === 'staged') return { source: 'local', mode: suffix };
+  if (suffix === 'branch' || suffix.startsWith('branch_')) {
+    return { source: 'local', mode: 'branch', ...(baseRef ? { baseRef } : {}) };
+  }
+  return undefined;
+}

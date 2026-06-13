@@ -97,3 +97,22 @@ export async function getPrHeadSha(opts: PrDiffOptions): Promise<string> {
     return '';
   }
 }
+
+/**
+ * The PR's lifecycle state (`OPEN` | `CLOSED` | `MERGED`), or `''` on ANY gh failure — so a caller can
+ * distinguish a *genuinely* closed/merged PR from a transient gh error (network/rate-limit/auth, or gh
+ * missing on PATH). `getPrHeadSha` returning '' is ambiguous between the two; this disambiguates it (the
+ * maintenance worker checks it before condemning a target as dead, ADR-43). Best-effort, like the others.
+ */
+export async function getPrState(opts: PrDiffOptions): Promise<string> {
+  const cwd = opts.cwd ?? process.cwd();
+  try {
+    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'state'], {
+      cwd,
+      maxBuffer: MAX_BUFFER,
+    });
+    return (JSON.parse(stdout) as { state?: string }).state ?? '';
+  } catch {
+    return '';
+  }
+}

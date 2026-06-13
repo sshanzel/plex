@@ -260,6 +260,10 @@ export interface Pitfall {
   language?: string;
   /** Provenance: ids of the incidents this pitfall was distilled from. */
   incidentIds: string[];
+  /** Wall-clock ts (ISO) of the most recent incident folded in by consolidation — the single field
+   * retrieval recency-tilt reads, so it never joins incidents at read time (ADR-42). Undefined =
+   * never reinforced (prior-only) → retrieval treats it as full weight (no decay). */
+  lastReinforcedAt?: string;
   /** Retrieval vector (set when the pitfall is written). */
   embedding?: number[];
 }

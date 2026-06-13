@@ -100,6 +100,10 @@ describe('repoPaths', () => {
     expect(p.analyzeStateFile).toBe(path.join(r, 'analyze-state.json'));
     expect(p.logFile).toBe(path.join(r, 'log', 'events.jsonl'));
     expect(p.headShaFile).toBe(path.join(r, 'head.sha'));
+    expect(p.sweepStateFile).toBe(path.join(r, 'sweep-state.json'));
+    expect(p.sweepMarkerFile).toBe(path.join(r, 'sweep-last.txt'));
+    expect(p.sweepLockFile).toBe(path.join(r, 'sweep.lock'));
+    expect(p.baseShaFile).toBe(path.join(r, 'base.sha'));
     expect(p.repoPath).toBe(abs);
   });
 

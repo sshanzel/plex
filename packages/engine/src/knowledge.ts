@@ -71,12 +71,14 @@ export async function getRelevantKnowledge(
   queryText: string,
   topK = 5,
   repo?: string,
+  now: Date = new Date(),
 ): Promise<RetrievedPitfall[]> {
   if (!queryText.trim()) return [];
   const store = knowledgeStore(config);
+  const { halfLifeDays, retrievalTiltFloor } = config.decay;
   const provider = createEmbeddingProvider(config.embedding);
-  if (!provider) return retrieveRelevantLexical(store, queryText, topK, 0.05, repo);
-  return retrieveRelevant(store, provider, queryText, topK, 0.05, repo);
+  if (!provider) return retrieveRelevantLexical(store, queryText, topK, 0.05, repo, now, halfLifeDays, retrievalTiltFloor);
+  return retrieveRelevant(store, provider, queryText, topK, 0.05, repo, now, halfLifeDays, retrievalTiltFloor);
 }
 
 // Floors for retroactively linking an accepted finding to a pitfall. Conservative on purpose:
@@ -147,9 +149,10 @@ export async function learnIncident(
   });
 }
 
-/** Recompute pitfall confidence from incident outcomes (feedback loop — ADR-10). */
-export async function consolidateKnowledge(config: ReviewerConfig): Promise<ConsolidateResult> {
-  return consolidatePitfalls(knowledgeStore(config));
+/** Recompute pitfall confidence from incident outcomes (feedback loop — ADR-10), recency-decayed +
+ * pruned per `config.decay` (ADR-42). `now` injected for deterministic tests. */
+export async function consolidateKnowledge(config: ReviewerConfig, now: Date = new Date()): Promise<ConsolidateResult> {
+  return consolidatePitfalls(knowledgeStore(config), config.decay, now);
 }
 
 /**

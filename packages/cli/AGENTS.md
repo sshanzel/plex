@@ -35,7 +35,8 @@ storage (`~/.plex/repos/<id>`, the brain, the knowledge base) are shared. Built 
 - `analyze [--reset] [--all] [--oldest] [--limit N] [--threshold X] [--min-cluster N]` — `analyzeRepo`,
   standalone LLM distillation (errors without an LLM, ADR-20); `--oldest` raises the PR fetch
   ceiling to find the chronological start.
-- `consolidate` — `consolidateKnowledge`: recompute pitfall confidence from recorded incident outcomes.
+- `consolidate` — `consolidateKnowledge`: recompute pitfall confidence from recorded incident outcomes (recency-decayed + pruned, ADR-42).
+- `sweep` — `sweepRepo`: the background maintenance worker (ADR-43). Resolves `main` and runs the 4 jobs (reconcile loop-closure, graph freshness, consolidate decay, analyze). Normally auto-spawned detached by a review; this is the manual entry + what the detached spawner runs.
 
 Diff-source flags map to the same `DiffSource` the MCP tools take: `--pr` → `source: 'pr'`,
 `--staged`/`--branch <base>` → local modes; default is local/`working`.

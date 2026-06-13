@@ -10,7 +10,7 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 **Config & paths**
 - `src/config-load.ts` — `loadConfig()`: defaults < `~/.plex/config.json` < `PLEX_*` env < explicit overrides (precedence verified in that order in code).
 - `src/home-config.ts` — read/merge-write `~/.plex/config.json` (chmod 600; holds the embedding API key).
-- `src/paths.ts` — `repoPaths()`: where a repo's data lives (`~/.plex/repos/<id>` by default: `graph.kuzu`, `brain.kuzu`, `verdicts.jsonl`, `analyze-state.json`, `log/events.jsonl`, `head.sha`, `embed-cache.json`); `ensureDataDir()` makes an in-repo data dir self-ignoring.
+- `src/paths.ts` — `repoPaths()`: where a repo's data lives (`~/.plex/repos/<id>` by default: `graph.kuzu`, `brain.kuzu`, `verdicts.jsonl`, `analyze-state.json`, `log/events.jsonl`, `head.sha`, `embed-cache.json`, and the ADR-43 sweep sidecars `sweep-state.json`/`sweep-last.txt`/`sweep.lock` + `base.sha`); `ensureDataDir()` makes an in-repo data dir self-ignoring.
 - `src/embed-cache.ts` — `cachedEmbed`/`loadEmbedCache`: a content-addressed embedding cache (`embed-cache.json`) for STABLE, recurring texts (prior-finding titles), so an N-round PR embeds each title once, not once per round. Best-effort; doubles as local proof embeddings actually fired (a key-less "voyage" never writes here).
 
 **Diff & identity**
@@ -23,8 +23,9 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 - `src/viz.ts` — `reviewContextToHtml`: self-contained Cytoscape HTML of the neighborhood (`plex review --html`).
 
 **PR brain & reconcile**
-- `src/brain.ts` — the embedded Kùzu brain (ADR-30): schema, round state, finding/verdict writes, `healSplitTarget`, `rankingSamples`.
+- `src/brain.ts` — the embedded Kùzu brain (ADR-30): schema, round state, finding/verdict writes, `healSplitTarget`, `rankingSamples`, `openTargets` (the sweep's work list — open non-`awareness` findings + latest round head/baseRef).
 - `src/reconcile.ts` — `reconcileOutcomes` (standalone "did the author fix these?") + `recordFixAccepts` (shared with the in-review fix inference, ADR-28).
+- `src/sweep.ts` — **the background maintenance worker (ADR-43)**: `runMaintenance`/`sweepRepo` targets `main` (`resolveMainRepoPath`) and runs 4 idempotent jobs — Reconcile (loop closure → global KB), GraphFreshness (re-index main in an isolated child), Consolidate (ADR-42 decay/prune — makes it live), Analyze (LLM-gated). Spawned detached + debounced by `maybeSpawnSweep` (review.ts) at the end of `assembleReviewContext` + MCP `reconcile_outcomes`. Pure gates `headAdvanced`/`isDebounced`/`jobDue` keep it idempotent; sidecars `sweep-state.json`/`sweep-last.txt`/`sweep.lock`/`base.sha` (paths.ts). See [docs/design/maintenance-worker.md](../../docs/design/maintenance-worker.md).
 
 **Findings & verdicts**
 - `src/findings.ts` — `getDeterministicFindings`; `rankReviewFindings`: merge agent + deterministic findings, blast enrichment from the sidecar, semantic waivers (ADR-27), rank, persist to brain, optional PR auto-comment.
@@ -93,4 +94,4 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 
 - **Units (vitest, `pnpm test:unit`)**: pure modules only — `audit`, `config-load`, `paths`, `pr-comment`, `target`, `verdicts`, `viz` `.test.ts` files. Never open Kùzu in a `.test.ts` (crashes vitest teardown).
 - **Integration (`pnpm test:integration`)**: `integration.mts`, run one scenario per tsx process (ADR-17 open limit; keep each scenario ≤2 Kùzu opens) — orchestrated by **`scripts/run-integration.mjs`**, which spawns each scenario in its own `tsx` process and **retries a transient Kùzu native crash** (exit 139 / `SIGSEGV`) the same way the node check scripts do (a real failure — any other non-zero exit — fails fast, never masked). Add a new scenario to the `SCENARIOS` list there. Scenarios cover build/incremental/co-change, neighborhood, ranking, knowledge, semantic waivers, reconcile, review-plan, brain, brain-heal, worktree-seed.
-- **Node-only E2Es** (the shipped runtime, need `pnpm build`): `pnpm test:brain` (`scripts/brain-check.mjs` — auto-index on first review, round-aware changed-without-feedback) and `pnpm test:worktree` (`scripts/worktree-seed-check.mjs` — the isolated-child base refresh that tsx structurally *cannot* exercise, since `indexIsolated` no-ops without a built CLI).
+- **Node-only E2Es** (the shipped runtime, need `pnpm build`): `pnpm test:brain` (`scripts/brain-check.mjs` — auto-index on first review, round-aware changed-without-feedback), `pnpm test:worktree` (`scripts/worktree-seed-check.mjs` — the isolated-child base refresh that tsx structurally *cannot* exercise), and `pnpm test:sweep` (`scripts/sweep-check.mjs` — the ADR-43 maintenance worker: refreshes main's graph, manages its sidecars + lock, idempotent; node-only because the worker opens Kùzu several times per run, over the tsx limit). The sweep's loop-closure path rides `reconcileOutcomes` (the `reconcile` integration scenario); its pure gates are unit-tested in `sweep.test.ts`.

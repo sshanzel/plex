@@ -6,7 +6,7 @@ export type { HomeConfig } from './home-config';
 export { resolveDiff } from './diff';
 export type { DiffSource } from './diff';
 export { resolveChangeContext } from './change-context';
-export { reviewTarget, reviewTargetFor } from './target';
+export { reviewTarget, reviewTargetFor, diffSourceFromTarget } from './target';
 export { Brain } from './brain';
 export type { RoundState, RoundSummary, BrainSignal, BrainFinding } from './brain';
 export { logAudit, readAudit, auditFinding } from './audit';
@@ -15,8 +15,12 @@ export {
   indexRepo,
   assembleReviewContext,
   blastRadius,
+  maybeSpawnSweep,
+  resolveMainRepoPath,
 } from './review';
 export type { ReviewContext, AssembleOptions, GraphStaleness } from './review';
+export { sweepRepo, headAdvanced, isDebounced, jobDue } from './sweep';
+export type { SweepResult, SweepState, JobResult } from './sweep';
 export { getDeterministicFindings, rankReviewFindings } from './findings';
 export type { SubmittedFinding, RankReviewOptions } from './findings';
 export { buildReviewPayload, postFindingsToPr } from './pr-comment';

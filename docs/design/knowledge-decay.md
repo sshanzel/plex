@@ -1,6 +1,17 @@
 # Design note — knowledge decay (aging unreinforced pitfalls)
 
-**Status:** **partially built (ADR-41).** Recency decay shipped for the **suppression** (negative-knowledge) path — `loadSuppressions` weights each dismissal by `0.5^(ageDays/halfLife)` (wall-time, verb-specific half-life; `@plex/knowledge` `recencyWeight`/`decayedCounts`). What remains proposed below is decay for the **positive pitfall / retrieval** path (`consolidatePitfalls` + retrieval recency-tilt + pruning). The suppression decay validated the approach; extend it here when the positive KB grows large enough to matter.
+**Status: BUILT.** Recency decay shipped first for the **suppression** (negative-knowledge) path
+(ADR-41), then for the **positive pitfall / retrieval** path (**ADR-42**): `consolidatePitfalls`
+recency-weights each incident's confirm/refute (Approach 1), `rankAndSlim` applies a recency-tilt
+floored at `retrievalTiltFloor` (Approach 2), and consolidation prunes a decayed-below-floor,
+gone-quiet, non-repo-scoped pitfall while keeping its provenance Incidents (Approach 3).
+`Pitfall.lastReinforcedAt` is the one field retrieval reads. Knobs: `config.decay` (`halfLifeDays` 365 /
+`retrievalTiltFloor` 0.5 / `pruneFloor` 0.1 / `pruneMinAgeDays` 365). The decay only fires when
+`consolidate` runs, so the **ADR-43 background maintenance worker** runs it (else it would be dormant).
+The proposal text below is kept for rationale; the open questions resolved as: **wall-time clock**;
+`lastReinforcedAt` **was** added (cheap per-pitfall recency for retrieval, set in the same fold-in as
+`incidentIds`); and the ADR-05 (confidence ≠ prevalence; ranking enforces it) / ADR-11 (zero-incident
+priors exempt) guards are enforced.
 
 ## Problem
 

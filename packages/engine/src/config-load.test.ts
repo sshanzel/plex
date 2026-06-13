@@ -9,7 +9,7 @@ import { writeHomeConfig } from './home-config';
 // REAL home config via os.homedir(), so every test sandboxes $HOME to a temp dir (verified:
 // os.homedir() honors $HOME here) and clears PLEX_* env — otherwise results leak from the
 // dev machine. No Kùzu → vitest-safe.
-const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS'];
+const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS', 'PLEX_DECAY_HALFLIFE_DAYS', 'PLEX_DECAY_RETRIEVAL_TILT_FLOOR', 'PLEX_DECAY_PRUNE_FLOOR', 'PLEX_DECAY_PRUNE_MIN_AGE_DAYS'];
 let home: string;
 let saved: Record<string, string | undefined>;
 
@@ -88,5 +88,17 @@ describe('loadConfig precedence', () => {
     process.env.PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS = '14';
     process.env.PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS = 'abc'; // non-numeric → ignored, home retained
     expect(loadConfig().suppression).toEqual({ rejectHalfLifeDays: 14, waiveHalfLifeDays: 500 });
+  });
+
+  it('decay knobs (ADR-42) default and are reachable from home + env, partial-merging', () => {
+    expect(loadConfig().decay).toEqual({ halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 });
+    writeHomeConfig({ decay: { halfLifeDays: 90 } }); // partial home block
+    expect(loadConfig().decay.halfLifeDays).toBe(90);
+    expect(loadConfig().decay.pruneFloor).toBe(0.1); // sibling default preserved
+    process.env.PLEX_DECAY_PRUNE_FLOOR = '0.25'; // env overrides
+    process.env.PLEX_DECAY_HALFLIFE_DAYS = 'nope'; // non-numeric → ignored, home (90) retained
+    const c = loadConfig();
+    expect(c.decay.pruneFloor).toBe(0.25);
+    expect(c.decay.halfLifeDays).toBe(90);
   });
 });

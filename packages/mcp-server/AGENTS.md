@@ -11,7 +11,7 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 - `src/index.ts` — the server: version/build-mtime capture, `McpServer` + `instructions`, the per-call `guard`, and all 15 tool registrations.
 - `src/doctor.ts` — `buildDoctorReport()`: pure staleness/health report (unit-tested in `doctor.test.ts`).
 
-## The 13 tools
+## The 14 tools
 
 | Tool | Engine call | Diff-source params |
 |---|---|---|
@@ -27,6 +27,7 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 | `analyze_scan` | `scanForAnalysis` | — (`reset`, `state`, `order`, `limit`) |
 | `add_pitfalls` | `addAnalyzedPitfalls` | — (`pitfalls[]`) |
 | `analyze_history` | `analyzeRepo` | — (`reset`, `state`, `order`, `limit`) |
+| `sweep_outcomes` | `sweepRepo` (ADR-43 maintenance worker — internal bookkeeping; normally auto-spawned) | — (`repoPath`) |
 | `doctor` | `buildDoctorReport` | — |
 
 **Diff-source params** (`diffSourceShape`, all optional): `source: 'local' | 'pr'`,

@@ -185,6 +185,32 @@ export class Brain {
   }
 
   /**
+   * Targets in THIS brain that still have ≥1 OPEN (un-outcomed, non-`awareness`) finding AND a
+   * recorded round — the maintenance sweep's work list (ADR-43). `awareness` is excluded: it's never
+   * auto-accepted (ADR-31), so a target whose only open findings are flags has nothing to reconcile.
+   * Each entry carries the latest round's `headSha`/`baseRef` so the sweep can reconstruct a
+   * `DiffSource` (`diffSourceFromTarget`) and detect head-advance without a caller. Read-only.
+   */
+  async openTargets(): Promise<Array<{ target: string; lastHeadSha?: string; baseRef?: string }>> {
+    const openRows = await this.db.run(
+      "MATCH (fi:Finding) WHERE (fi.outcome IS NULL OR fi.outcome = '') AND fi.severity <> 'awareness' RETURN DISTINCT fi.target AS target",
+    );
+    const out: Array<{ target: string; lastHeadSha?: string; baseRef?: string }> = [];
+    for (const row of openRows) {
+      const target = str(row.target);
+      if (!target) continue;
+      const roundRows = await this.db.run(
+        'MATCH (rd:Round {target:$t}) RETURN rd.headSha AS headSha, rd.baseRef AS baseRef ORDER BY rd.n DESC LIMIT 1',
+        { t: target },
+      );
+      const last = roundRows[0];
+      if (!last) continue; // no round → no head cursor → can't diff; skip
+      out.push({ target, lastHeadSha: str(last.headSha) || undefined, baseRef: str(last.baseRef) || undefined });
+    }
+    return out;
+  }
+
+  /**
    * Every finding's ranking `signal` paired with its resolved outcome — the raw material for the
    * offline ranking-quality eval (tuning.md §5). Outcome is the explicit Verdict kind if one exists,
    * else the inferred `Finding.outcome` (`fixed`). Read-only; uses only data the review flow already
