@@ -19,14 +19,14 @@ describe('daemon helpers', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('DEFAULT_PORT is 2108 (ADR-45)', () => {
-    expect(DEFAULT_PORT).toBe(2108);
+  it('DEFAULT_PORT is 2288 (ADR-45)', () => {
+    expect(DEFAULT_PORT).toBe(2288);
   });
 
   it('write → read → clear round-trips the pidfile', () => {
     expect(readDaemon()).toBeNull();
-    writeDaemon({ pid: 4242, port: 2108, version: '1.2.3', startedAt: 'now' });
-    expect(readDaemon()).toEqual({ pid: 4242, port: 2108, version: '1.2.3', startedAt: 'now' });
+    writeDaemon({ pid: 4242, port: 2288, version: '1.2.3', startedAt: 'now' });
+    expect(readDaemon()).toEqual({ pid: 4242, port: 2288, version: '1.2.3', startedAt: 'now' });
     clearDaemon();
     expect(readDaemon()).toBeNull();
   });

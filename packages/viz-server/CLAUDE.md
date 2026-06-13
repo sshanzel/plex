@@ -1,7 +1,7 @@
 # @plex/viz-server
 
 The **optional local visualization daemon** (ADR-45, M13) — a node `http` server that serves an
-interactive Cytoscape UI at `http://127.0.0.1:2108` over a read-only JSON API into the three stores
+interactive Cytoscape UI at `http://127.0.0.1:2288` over a read-only JSON API into the three stores
 Plex already owns: the Kùzu **code graph**, the Kùzu **PR brain**, and the JSON **knowledge base**.
 It's the FalkorDB-Browser need met without reintroducing a database engine, Docker, or any
 external/native service — "no Docker / no external services" still holds; this is one optional local
@@ -19,7 +19,7 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 | `src/registry.ts` | Enumerate the machine's indexed repos (dirs under the repos root) + **validate a requested id** (`resolveRepo`) — the path-traversal gate. |
 | `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu graph), `collectBrain` (Kùzu brain), `collectKnowledge` (JSON). |
 | `src/server.ts` | `startServer` — routes `/`, `/healthz`, `/api/repos`, `/api/graph/{code,brain,knowledge}`, `/api/expand`; binds 127.0.0.1; maps `RepoBusyError` → 503. |
-| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the universal auto-start). `DEFAULT_PORT = 2108`. |
+| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the universal auto-start). `DEFAULT_PORT = 2288`. |
 | `src/ui.ts` | `renderAppHtml` — the whole single-page Cytoscape app (CDN + SRI-pinned 3.30.2, same hash as the M5 static viz). |
 
 ## The two load-bearing invariants
@@ -52,7 +52,7 @@ else spawn a **detached** `node <plex.js> serve --foreground --port N` (`unref`'
 shell), poll `liveDaemon()` until it answers, print the URL, open the browser. `--foreground` IS the
 daemon (binds, writes the pidfile, returns a never-resolving promise so the CLI's
 `main().then(process.exit)` doesn't tear it down; SIGINT/SIGTERM → clear pidfile + close). `--stop` /
-`--status` manage it. Port: `--port` > `PLEX_UI_PORT` > 2108, with EADDRINUSE fallback to the next
+`--status` manage it. Port: `--port` > `PLEX_UI_PORT` > 2288, with EADDRINUSE fallback to the next
 ports (the pidfile records the actual one, which is why the parent polls `liveDaemon` not a fixed port).
 
 **Auto-start is universal** (ADR-45): `ensureDaemon({execPath, scriptPath, port})` probes first (cheap

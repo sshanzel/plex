@@ -61,7 +61,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
-  plex serve [--port <n>] [--stop] [--status]            # local web UI to explore the code graph, PR brain & knowledge (http://127.0.0.1:2108)
+  plex serve [--port <n>] [--stop] [--status]            # local web UI to explore the code graph, PR brain & knowledge (http://127.0.0.1:2288)
   plex sweep [repoPath]                                  # background maintenance: close loops + refresh main's graph + consolidate decay + analyze (ADR-43)
   plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
 

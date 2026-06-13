@@ -21,7 +21,7 @@ export interface ServeFlags {
   port?: number;
 }
 
-/** Resolve the UI port: explicit flag > `PLEX_UI_PORT` env > the 2108 default (ADR-45). */
+/** Resolve the UI port: explicit flag > `PLEX_UI_PORT` env > the 2288 default (ADR-45). */
 export function resolvePort(flagPort?: number): number {
   if (flagPort && Number.isFinite(flagPort)) return flagPort;
   const env = Number(process.env.PLEX_UI_PORT);

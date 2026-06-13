@@ -5,7 +5,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 
 /** The default UI port (ADR-45). Configurable via `PLEX_UI_PORT`; the daemon falls back if it's taken. */
-export const DEFAULT_PORT = 2108;
+export const DEFAULT_PORT = 2288;
 export const HOST = '127.0.0.1';
 
 export interface DaemonInfo {
