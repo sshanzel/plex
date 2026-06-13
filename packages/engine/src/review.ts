@@ -38,6 +38,7 @@ import { isDebounced } from './sweep-helpers';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
+import { shouldRecordRound } from './guards';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
@@ -543,7 +544,17 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
       }
     }
 
-    await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef }, comments);
+    // Never persist a round with an empty headSha (a git/PR-head lookup that failed even after the
+    // spawn-retry): it would set the NEXT round's `lastHeadSha` to undefined and silently kill both
+    // fix-inference and reconcile (both gate on it). Skip + log instead of poisoning round identity
+    // (#2/#9 silent-failure audit). The common case (a real review of a committed repo) always has a
+    // sha; this trips only on a genuine failure or a commit-less repo (which can't be reviewed anyway).
+    if (shouldRecordRound(headSha)) {
+      await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha, baseRef }, comments);
+    } else {
+      const where = opts.source === 'pr' && opts.pr != null ? `PR #${opts.pr}` : 'HEAD';
+      process.stderr.write(`[plex] could not resolve ${where} sha for ${target}; skipping round record (no anchor for fix-inference/reconcile)\n`);
+    }
 
     return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredAccepts };
   } finally {
