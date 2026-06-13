@@ -188,4 +188,26 @@ describe('retrieval confidence tilt (ADR-44 — evidence weights, never buries)'
     const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
     expect(res[0]!.pitfall.id).toBe('legacy'); // tilt 1 (neutral) beats max(.5,.2)=.5
   });
+
+  it('the recency and confidence tilts COMPOUND to tiltFloor² — a stale+weak pitfall can fall below minScore', async () => {
+    // Honesty check for the corrected "never buries" claim: the floor bounds each axis, not the
+    // product, so a stale AND weakly-evidenced pitfall is discounted by up to 0.5·0.5 = 0.25 and CAN
+    // drop out — while a fresh, well-evidenced one of identical cosine survives. (Both prior tilt
+    // tests use minScore 0, so this is the cut none of them exercised.)
+    dir = mkdtempSync(join(tmpdir(), 'kn-conf3-'));
+    const store = new KnowledgeStore(dir);
+    const now = new Date('2026-06-01T00:00:00.000Z');
+    const DAY = 86_400_000;
+    const [qv] = await provider.embed(['tenant id validation']); // cosine = 1 for both
+    await store.addPitfall(pf({ id: 'strong', title: 'A', embedding: qv, confidence: 0.9 })); // fresh (undated→1) × 0.9
+    await store.addPitfall(pf({ id: 'weak', title: 'B', embedding: qv, confidence: 0.2, lastReinforcedAt: new Date(now.getTime() - 3650 * DAY).toISOString() }));
+    // With minScore 0 both survive and the weak score is the compounded 0.25 (= max(.5,recency)·max(.5,.2)).
+    const all = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0, undefined, now, 365, 0.5);
+    const weak = all.find((r) => r.pitfall.id === 'weak')!;
+    const strong = all.find((r) => r.pitfall.id === 'strong')!;
+    expect(weak.score).toBeCloseTo(strong.score * (0.25 / 0.9), 6); // strong tilt 0.9, weak tilt 0.5·0.5
+    // A cut between the two drops only the stale+weak one — the compound discount is real, not bounded at tiltFloor.
+    const cut = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0.5, undefined, now, 365, 0.5);
+    expect(cut.map((r) => r.pitfall.id)).toEqual(['strong']);
+  });
 });

@@ -33,7 +33,13 @@ export function wilsonLowerBound(successes: number, total: number, z = 1.96): nu
  * evidence the suggestion was applied OR wrong), so it is dropped from the counts rather than
  * fabricating a confirm. Zero informative evidence → `wilsonLowerBound(0, 0) = 0`: an honest floor,
  * not a guess — retrieval floors the resulting tilt so a 0-confidence pitfall still surfaces on
- * cosine. Pure; mirrors `confirmsAndRefutes` (promotion.ts) for the positive polarity. */
+ * cosine. Pure; mirrors `confirmsAndRefutes` (promotion.ts) for the positive polarity.
+ *
+ * **POSITIVE pitfalls ONLY** — there is no `polarity` switch here (unlike `confirmsAndRefutes`, which
+ * flips confirm/refute for negatives). This is correct *by construction* for every caller: distilled
+ * and `add_pitfalls` pitfalls are always positive ("remember this issue"); negative (suppression)
+ * pitfalls are minted only by `learnSuppression` and get their tier from `suppressionTier`, never this.
+ * Do NOT feed a negative pitfall's outcomes here — it would read a dismissal as a refute and invert. */
 export function confidenceFromOutcomes(outcomes: ReadonlyArray<IncidentOutcome | undefined>): number {
   let confirms = 0;
   let refutes = 0;

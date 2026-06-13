@@ -37,8 +37,10 @@ log: silent total loss). `replacePitfalls` (consolidation's writer) is **atomic*
 2. Embed the query once; `score = cosineSimilarity(q, p.embedding)`, then `rankAndSlim` applies **two
    bounded tilts** before the `minScore` cut: the ADR-42 recency tilt AND (ADR-44) a **confidence
    tilt** `× max(tiltFloor, confidence ?? 1)` — so among similarly-relevant pitfalls the better-evidenced
-   one ranks higher, a missing confidence is neutral (1), and the floor (0.5) means a weak pitfall is
-   *nudged, never buried* (relevance/cosine still dominates). Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
+   one ranks higher, a missing confidence is neutral (1). The two tilts are independent axes that
+   **compound** (each floored at `tiltFloor`), so a *stale-AND-weak* pitfall loses up to `tiltFloor²`
+   (0.25) — intended; the floor bounds each axis not the product, so neither tilt zeroes a hit but a
+   low-cosine stale weak pitfall CAN drop below `minScore`. Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
    are scored **lexically** in the same pass instead of being invisible; if the query embed
    throws (provider outage) the whole batch degrades to lexical rather than failing the review.
 3. Keep `score >= minScore` (0.05), sort desc, slice `topK`, and **strip `embedding` from each
