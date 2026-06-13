@@ -10,6 +10,6 @@
   },
   "dependencies": {
     "@plex/core": "workspace:*",
-    "parse-diff": "^0.11.1"
+    "parse-diff": "^0.12.0"
   }
 }
