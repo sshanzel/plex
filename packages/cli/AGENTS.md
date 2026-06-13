@@ -38,10 +38,11 @@ storage (`~/.plex/repos/<id>`, the brain, the knowledge base) are shared. Built 
 - `consolidate` — `consolidateKnowledge`: recompute pitfall confidence from recorded incident outcomes (recency-decayed + pruned, ADR-42).
 - `sweep` — `sweepRepo`: the background maintenance worker (ADR-43). Resolves `main` and runs the 4 jobs (reconcile loop-closure, graph freshness, consolidate decay, analyze). Normally auto-spawned detached by a review; this is the manual entry + what the detached spawner runs.
 - `serve [--port N] [--stop] [--status] [--foreground]` — the optional local visualization daemon
-  (ADR-45, `@plex/viz-server`). Default mode is idempotent: open the running UI or spawn a detached
-  one (`http://127.0.0.1:2288`). `--foreground` IS the daemon (what the detached child + the plugin's
-  SessionStart auto-start hook run). Orchestration lives in `src/serve.ts`; the server never holds a
-  Kùzu handle, so it can't block a review.
+  (ADR-45, `@plex/viz-server`). **On-demand by default** (it's a viewer, not a capturer): the default
+  mode is idempotent — open the running UI or spawn a detached one (`http://127.0.0.1:2288`).
+  `--foreground` IS the daemon (what the detached child runs; also what the MCP spawns when the user
+  opts into always-on via `ui.autoStart`/`PLEX_UI_AUTOSTART`). Orchestration lives in `src/serve.ts`;
+  the server never holds a Kùzu handle, so it can't block a review.
 
 Diff-source flags map to the same `DiffSource` the MCP tools take: `--pr` → `source: 'pr'`,
 `--staged`/`--branch <base>` → local modes; default is local/`working`.

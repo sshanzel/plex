@@ -19,7 +19,7 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 | `src/registry.ts` | Enumerate the machine's indexed repos (dirs under the repos root) + **validate a requested id** (`resolveRepo`) — the path-traversal gate. |
 | `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu graph), `collectBrain` (Kùzu brain), `collectKnowledge` (JSON, optional repo-origin scope), `collectLineage` + pure `linkLineage` (brain ⨝ knowledge). |
 | `src/server.ts` | `startServer` — routes `/`, `/healthz`, `/api/repos`, `/api/graph/{code,brain,knowledge}`, `/api/expand`; binds 127.0.0.1; maps `RepoBusyError` → 503. |
-| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the universal auto-start). `DEFAULT_PORT = 2288`. |
+| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the opt-in always-on spawn). `DEFAULT_PORT = 2288`. |
 | `src/ui.ts` | `renderAppHtml` — the whole single-page Cytoscape app (CDN + SRI-pinned 3.30.2, same hash as the M5 static viz). |
 
 ## The two load-bearing invariants
@@ -69,12 +69,14 @@ daemon (binds, writes the pidfile, returns a never-resolving promise so the CLI'
 `--status` manage it. Port: `--port` > `PLEX_UI_PORT` > 2288, with EADDRINUSE fallback to the next
 ports (the pidfile records the actual one, which is why the parent polls `liveDaemon` not a fixed port).
 
-**Auto-start is universal** (ADR-45): `ensureDaemon({execPath, scriptPath, port})` probes first (cheap
-no-op when up) and otherwise detached-spawns `node plex.js serve --foreground`. It's called by the
-**MCP server on startup** (`plex-mcp`, the entry every client runs — Claude plugin, Codex plugin, or a
-bare MCP registration), so the UI comes up with no CLI install and no client-specific hook.
+**Lifecycle: on-demand by default, opt-in always-on** (ADR-45). The daemon is a *viewer*, not a
+capturer — nothing is missed by it being off — so it does **not** run unless asked. You launch it with
+`plex serve` (`serve.ts`), which spawns it detached and opens the browser. Setting **`ui.autoStart`**
+(or `PLEX_UI_AUTOSTART=1`) restores always-on: the **MCP server on startup** calls `ensureDaemon({execPath,
+scriptPath, port})` (probe-first → detached-spawn `node plex.js serve --foreground` when down), so it
+comes up for any client (Claude/Codex/bare MCP) with no CLI install and no client-specific hook.
 `ensureDaemon` is **stdout-safe** (writes nothing to stdout — the MCP's stdio protocol channel — and
-swallows every error) and no-ops when `scriptPath` doesn't exist (dev/tsx). Opt out: `PLEX_NO_UI=1`.
+swallows every error) and no-ops when `scriptPath` doesn't exist (dev/tsx).
 
 ## Limitations (v1, accepted — ADR-45)
 

@@ -140,6 +140,18 @@ export interface ReviewerConfig {
     /** Don't prune until the last incident is at least this old (days). */
     pruneMinAgeDays: number;
   };
+  /**
+   * The optional local visualization daemon (ADR-45, `plex serve`). It's a **viewer**, not a
+   * capturer — it only displays data the review flow already persists, so nothing is missed by it
+   * being off. Hence **on-demand by default**: `autoStart: false` means the MCP server never spawns
+   * it; you launch it with `plex serve` (or `npx … plex serve`) when you want to look. Set
+   * `autoStart: true` (or `PLEX_UI_AUTOSTART=1`) to restore always-on (the MCP spawns it on startup).
+   */
+  ui: {
+    autoStart: boolean;
+    /** Default port for `plex serve`; also overridable per-launch by `--port` / `PLEX_UI_PORT`. */
+    port: number;
+  };
 }
 
 import os from 'node:os';
@@ -186,6 +198,9 @@ export const defaultConfig: ReviewerConfig = {
   // Positive pitfalls age slower than dismissals — 365d half-life (co-change's long-clock precedent);
   // tilt floor keeps an old lesson visible; prune only a thin (≈1/1 Wilson) pitfall gone quiet a year.
   decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 },
+  // The viz daemon is a viewer, not a capturer — default OFF (on-demand via `plex serve`). Opt into
+  // always-on with `ui.autoStart` / PLEX_UI_AUTOSTART. Port 2288 (also `--port` / PLEX_UI_PORT).
+  ui: { autoStart: false, port: 2288 },
 };
 
 export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
@@ -200,5 +215,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
     suppression: { ...defaultConfig.suppression, ...overrides.suppression },
     decay: { ...defaultConfig.decay, ...overrides.decay },
+    ui: { ...defaultConfig.ui, ...overrides.ui },
   };
 }
