@@ -19,3 +19,13 @@ export function isSafeGitRef(ref: string): boolean {
   if (ref === '..') return false; // a bare range operator is never a base ref
   return /^[A-Za-z0-9._/~^@{}:-]+$/.test(ref);
 }
+
+/**
+ * Is `pr` a safe PR number to pass as a single argv token to `gh`? A PR number is a positive
+ * integer; anything else (notably a leading `-`, e.g. `--paginate`) could be read by `gh` as an
+ * option. Same option-injection concern as {@link isSafeGitRef}, narrower domain.
+ */
+export function isSafePrNumber(pr: string | number): boolean {
+  if (typeof pr === 'number') return Number.isInteger(pr) && pr > 0;
+  return /^\d+$/.test(pr);
+}
