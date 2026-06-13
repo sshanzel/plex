@@ -8,7 +8,6 @@ export function normalizeTitle(title: string): string {
     .trim();
 }
 
-/** Two findings are "the same" if they sit at the same file+line and mean the same thing. */
 export function dedupeKey(f: Finding): string {
   return `${f.location.file}:${f.location.startLine}:${normalizeTitle(f.title)}`;
 }

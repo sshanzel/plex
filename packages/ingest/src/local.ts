@@ -58,7 +58,6 @@ export interface LocalDiffOptions {
   baseRef?: string;
 }
 
-/** Produce a normalized diff from the local working tree / index / branch. */
 export async function getLocalDiff(opts: LocalDiffOptions = {}): Promise<NormalizedDiff> {
   const cwd = opts.cwd ?? process.cwd();
   const mode = opts.mode ?? 'working';

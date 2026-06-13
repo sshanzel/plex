@@ -54,7 +54,7 @@ describe('firedSemanticSuppressions — audit attribution (ADR-41)', () => {
 
   it('returns only the semantic suppressions that matched a finding (the ones that shaped output)', () => {
     const fired = decision('neg:r:fp:abc', [1, 0, 0]); // matches the finding below
-    const dormant = decision('neg:r:fp:xyz', [0, 0, 1]); // orthogonal — never matched
+    const dormant = decision('neg:r:fp:xyz', [0, 0, 1]);
     const f = finding({ embedding: [0.96, 0.05, 0] });
     const applied = firedSemanticSuppressions([fired, dormant], [f], 0.82);
     expect(applied.map((d) => d.key)).toEqual(['neg:r:fp:abc']);

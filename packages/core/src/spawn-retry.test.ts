@@ -47,7 +47,7 @@ describe('retryTransientSpawn', () => {
     await expect(
       retryTransientSpawn(async () => { calls++; throw Object.assign(new Error('bad ref'), { code: 128 }); }, { baseMs: 0 }),
     ).rejects.toThrow('bad ref');
-    expect(calls).toBe(1); // not retried
+    expect(calls).toBe(1);
   });
 
   it('gives up after `attempts` transient failures and rethrows the last error', async () => {

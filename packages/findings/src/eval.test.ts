@@ -67,7 +67,6 @@ describe('rankingReadiness (the re-weight go/no-go)', () => {
   });
 
   it('NOT YET when labels are one-sided (no contrast to learn from)', () => {
-    // Plenty of positives + rounds, but the minority (negatives) is too small a share.
     const r = rankingReadiness({ labeledFindings: 1000, positives: 990, negatives: 10, evaluableRounds: 40, meanNdcg: 0.6, blastNonZeroShare: 0.5 });
     expect(r.verdict).toBe('not-yet');
     expect(r.note).toMatch(/one-sided/);

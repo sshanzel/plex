@@ -305,7 +305,6 @@ server.tool(
   () => guard(() => consolidateKnowledge(config), 'consolidate_knowledge'),
 );
 
-// --- Review-history analysis: agent-driven (rides your subscription). analyze_scan → you distill → add_pitfalls.
 server.tool(
   'analyze_scan',
   'Analyze a repo\'s PR review history (incremental — skips already-scanned PRs): denoise, record incidents, and return clusters of similar review comments for YOU to distill into pitfalls. Then call add_pitfalls. `order: "oldest"` scans chronologically (PR #1 up); `limit` bounds fresh PRs this run (the cursor advances; the next call continues).',

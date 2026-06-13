@@ -154,7 +154,6 @@ export function adaptiveFloor(fixed: number, bg: { mu: number; sigma: number }, 
   return Math.max(fixed, bg.mu + k * bg.sigma);
 }
 
-/** Cosine similarity helper for retrieval over embedding vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;

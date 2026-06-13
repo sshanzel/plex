@@ -12,10 +12,6 @@ export interface RetrievedPitfall {
   score: number;
 }
 
-// ---------------------------------------------------------------------------
-// Lexical scoring — the no-embeddings retrieval path.
-// ---------------------------------------------------------------------------
-
 // Words that match every query without carrying meaning for review knowledge.
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'not', 'with', 'this', 'that', 'from', 'into', 'when', 'then',
@@ -61,10 +57,6 @@ export function lexicalScores(queryText: string, pitfalls: Pitfall[]): number[] 
     return dot / (qNorm * norm(d));
   });
 }
-
-// ---------------------------------------------------------------------------
-// Retrieval
-// ---------------------------------------------------------------------------
 
 /** Scope filter (ADR-21): global pitfalls always apply; repo-scoped only in their origin repo. */
 const inScope = (p: Pitfall, repo?: string): boolean =>

@@ -41,7 +41,6 @@ export class CodeGraphDB {
     throw e;
   }
 
-  /** Run a single statement; with params it is prepared+executed, else queried directly. */
   async run(stmt: string, params?: Params): Promise<Row[]> {
     try {
       if (params) {
@@ -56,7 +55,6 @@ export class CodeGraphDB {
     }
   }
 
-  /** Execute one prepared statement across many parameter rows (bulk insert). */
   async insertMany(stmt: string, rows: Params[]): Promise<void> {
     if (rows.length === 0) return;
     try {

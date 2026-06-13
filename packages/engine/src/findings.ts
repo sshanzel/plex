@@ -33,7 +33,6 @@ export interface SubmittedFinding {
   blastRadius?: number;
 }
 
-/** Deterministic (codified) findings for a diff. */
 export async function getDeterministicFindings(
   repoPath: string,
   config: ReviewerConfig,

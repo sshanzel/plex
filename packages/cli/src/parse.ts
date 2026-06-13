@@ -22,10 +22,10 @@ export function parse(argv: string[]): Parsed {
       }
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('--')) {
-        flags[body] = next; // --flag value
+        flags[body] = next;
         i++;
       } else {
-        flags[body] = true; // bare --flag
+        flags[body] = true;
       }
     } else {
       positionals.push(a);

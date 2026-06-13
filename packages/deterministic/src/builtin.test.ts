@@ -30,7 +30,6 @@ describe('analyzeSource', () => {
 
   it('exempts `=== null` from loose-equality and assigns expected severities', () => {
     const found = analyzeSource('h.ts', SRC);
-    // only the `a == b` is loose; `x === null` is strict and exempt
     expect(found.filter((r) => r.rule === 'no-loose-equality')).toHaveLength(1);
     expect(found.find((r) => r.rule === 'no-debugger')!.severity).toBe('bug');
     expect(found.find((r) => r.rule === 'no-empty-catch')!.severity).toBe('improvement');

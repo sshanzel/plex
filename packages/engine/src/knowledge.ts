@@ -35,7 +35,6 @@ export function knowledgeStore(config: ReviewerConfig): KnowledgeStore {
   return new KnowledgeStore(config.knowledgeDir);
 }
 
-/** Build the retrieval query from what the diff touches + the deterministic findings. */
 export function buildKnowledgeQuery(
   changed: CodeLocation[],
   deterministic: Finding[],

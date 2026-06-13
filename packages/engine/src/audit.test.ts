@@ -72,7 +72,7 @@ describe('logAudit / readAudit', () => {
     await logAudit(repo, config, evt({ round: 1 }));
     const logFile = repoPaths(repo, config.dataDir).logFile;
     mkdirSync(dirname(logFile), { recursive: true });
-    appendFileSync(logFile, '{"type":"findings_submitted","round":2,\n'); // truncated line
+    appendFileSync(logFile, '{"type":"findings_submitted","round":2,\n');
     await logAudit(repo, config, evt({ round: 3 }));
     expect((await readAudit(repo, config)).map((e) => e.round)).toEqual([1, 3]);
   });

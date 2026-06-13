@@ -34,7 +34,6 @@ const fakeFetch = {
         ],
 };
 
-// Fake LLM distiller — marks this cluster project-specific (scope: repo), still stored.
 const fakeLlm: CompletionProvider = {
   name: 'fake-llm',
   async complete() {

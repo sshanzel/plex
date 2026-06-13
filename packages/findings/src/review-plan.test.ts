@@ -40,7 +40,7 @@ describe('reviewPlan (the guardrail)', () => {
   });
 
   it('SINGLE when everything is one coupled cluster (don\'t sever cross-file reasoning)', () => {
-    const chain = f(8).slice(0, -1).map((x, i) => [x, f(8)[i + 1]!] as [string, string]); // f1-f2-...-f8
+    const chain = f(8).slice(0, -1).map((x, i) => [x, f(8)[i + 1]!] as [string, string]);
     const p = reviewPlan(f(8), chain, { surface: bigSurface });
     expect(p.strategy).toBe('single');
     expect(p.reason).toMatch(/one coupled cluster/);
@@ -64,22 +64,22 @@ describe('reviewPlan (the guardrail)', () => {
     const edges: [string, string][] = [
       ['f1.ts', 'f2.ts'], ['f3.ts', 'f4.ts'], ['f5.ts', 'f6.ts'],
       ['f7.ts', 'f8.ts'], ['f9.ts', 'f10.ts'], ['f11.ts', 'f12.ts'],
-    ]; // 6 clusters of 2
+    ];
     const p = reviewPlan(files, edges, { surface: bigSurface, maxAgents: 3 });
     expect(p.strategy).toBe('parallel');
-    expect(p.units).toHaveLength(3); // 6 clusters merged down to 3
+    expect(p.units).toHaveLength(3);
     expect(p.units.flatMap((u) => u.files).sort()).toEqual(files.sort());
   });
 
   it('folds a tiny (1-file) cluster into a significant one rather than giving it an agent', () => {
-    const files = f(7); // f1-3 cluster, f4-6 cluster, f7 singleton
+    const files = f(7);
     const edges: [string, string][] = [
       ['f1.ts', 'f2.ts'], ['f2.ts', 'f3.ts'],
       ['f4.ts', 'f5.ts'], ['f5.ts', 'f6.ts'],
     ];
     const p = reviewPlan(files, edges, { surface: 200 });
     expect(p.strategy).toBe('parallel');
-    expect(p.units).toHaveLength(2); // f7 folded in, not its own unit
+    expect(p.units).toHaveLength(2);
     expect(p.units.flatMap((u) => u.files).sort()).toEqual(files.sort());
   });
 });

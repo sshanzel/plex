@@ -56,7 +56,6 @@ export async function scanHistory(
   // Order by PR number — oldest-first for chronological analysis, else newest-first (default).
   const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
   const unscanned = ordered.filter((p) => !skip.has(p.number));
-  // `limit` caps how many fresh PRs this run scans; the cursor advances, so the next run continues.
   const fresh = opts.limit != null ? unscanned.slice(0, opts.limit) : unscanned;
 
   const raw: RawComment[] = [];
@@ -68,7 +67,6 @@ export async function scanHistory(
     return { clusters: [], scannedPrs, prsScanned: fresh.length, comments: raw.length, substantive: 0, incidents: 0 };
   }
 
-  // Provenance incidents (dedup by id so re-runs don't duplicate).
   const existing = new Set((await store.incidents()).map((i) => i.id));
   let incidents = 0;
   for (const c of substantive) {

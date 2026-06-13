@@ -36,7 +36,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   const env = process.env;
   const o: Partial<ReviewerConfig> = {};
 
-  // --- home config (~/.plex/config.json) ---
   if (home.embedding?.provider) {
     o.embedding = {
       provider: home.embedding.provider,
@@ -57,7 +56,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   if (typeof home.decay?.pruneFloor === 'number') dec.pruneFloor = home.decay.pruneFloor;
   if (typeof home.decay?.pruneMinAgeDays === 'number') dec.pruneMinAgeDays = home.decay.pruneMinAgeDays;
 
-  // --- environment (overrides home) ---
   if (env.PLEX_DATA_DIR) o.dataDir = env.PLEX_DATA_DIR;
   if (env.PLEX_KNOWLEDGE_DIR) o.knowledgeDir = env.PLEX_KNOWLEDGE_DIR;
   if (env.PLEX_AUTO_COMMENT) o.autoComment = /^(1|true|yes)$/i.test(env.PLEX_AUTO_COMMENT);

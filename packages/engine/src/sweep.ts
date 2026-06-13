@@ -61,8 +61,6 @@ export interface SweepResult {
   locked: boolean;
 }
 
-// --- state + lock IO (best-effort) ----------------------------------------------------------------
-
 function loadSweepState(file: string, repo: string): SweepState {
   try {
     const s = JSON.parse(readFileSync(file, 'utf8')) as Partial<SweepState>;
@@ -152,8 +150,6 @@ const releaseLock = (lockFile: string): void => {
 };
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-// --- the four jobs --------------------------------------------------------------------------------
 
 interface JobCtx {
   mainRepoPath: string;
@@ -262,8 +258,6 @@ async function analyzeJob(ctx: JobCtx): Promise<JobResult> {
     return { name: 'analyze', ran: false, detail: `skipped: ${errMsg(e)}` }; // no LLM / rate limit → degrade
   }
 }
-
-// --- the runner -----------------------------------------------------------------------------------
 
 /**
  * Run the maintenance jobs against `main` (resolved from `repoPath`). Single-flight + best-effort:

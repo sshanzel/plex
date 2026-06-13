@@ -51,7 +51,7 @@ export async function retryTransientSpawn<T>(fn: () => Promise<T>, opts: RetrySp
         await delay(baseMs * (attempt + 1)); // the fork-capacity dip is momentary
         continue;
       }
-      throw e; // non-zero exit (real failure) or retries exhausted
+      throw e;
     }
   }
 }

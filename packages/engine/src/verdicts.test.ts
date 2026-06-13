@@ -56,7 +56,7 @@ describe('recordVerdict', () => {
     await recordVerdict(repo, { findingId: 'good2', kind: 'reject', file: 'b.ts', line: 2, title: 'second' }, config);
 
     const ids = (await readVerdicts(repo, config)).map((v) => v.findingId).sort();
-    expect(ids).toEqual(['good1', 'good2']); // not [] — the corrupt line is dropped, the rest survive
+    expect(ids).toEqual(['good1', 'good2']);
   });
 
   it('loadWaivers survives a corrupt verdict line (suppressions are not silently wiped)', async () => {

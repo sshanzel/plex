@@ -99,8 +99,6 @@ describe('safeEmbed', () => {
   });
 });
 
-// slugify + hashId build collision-free ids for pitfalls/incidents. The hash is what
-// rescues distinct-but-same-slug (or empty-slug) titles from colliding.
 describe('isGeneratedArtifact', () => {
   it('matches lockfiles by basename, case-insensitively, anywhere in the tree', () => {
     for (const f of ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'Gemfile.lock', 'go.sum', 'apps/web/pnpm-lock.yaml']) {

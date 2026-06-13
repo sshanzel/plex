@@ -6,7 +6,6 @@
  */
 
 export interface ReviewUnit {
-  /** Changed files reviewed together (a weakly-coupled cluster). */
   files: string[];
 }
 

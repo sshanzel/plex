@@ -61,7 +61,7 @@ describe('consolidatePitfalls', () => {
     await consolidatePitfalls(store, DECAY);
     const byId = Object.fromEntries((await store.pitfalls()).map((p) => [p.id, p]));
     expect(byId['pa']!.confidence).toBeCloseTo(wilsonLowerBound(1, 1), 10);
-    expect(byId['pr']!.confidence).toBeCloseTo(byId['pa']!.confidence, 10); // reverted == accepted now
+    expect(byId['pr']!.confidence).toBeCloseTo(byId['pa']!.confidence, 10);
   });
 
   it('a NEGATIVE pitfall flips the evidence — a dismissal confirms suppression, an accept refutes it', async () => {
@@ -139,7 +139,6 @@ describe('consolidatePitfalls — recency decay + pruning (ADR-42)', () => {
     expect(byId['fresh']!.confidence).toBeCloseTo(wilsonLowerBound(1, 1), 6);
     expect(byId['old']!.confidence).toBeCloseTo(wilsonLowerBound(wOld, wOld), 6); // thinner (decayed) record
     expect(byId['old']!.confidence).toBeLessThan(byId['fresh']!.confidence);
-    // lastReinforcedAt is the most-recent incident ts.
     expect(byId['fresh']!.lastReinforcedAt).toBe(iso(0, now));
   });
 
@@ -202,7 +201,7 @@ describe('consolidatePitfalls — recency decay + pruning (ADR-42)', () => {
     expect(res.pruned).toBe(0);
     const ids = new Set((await store.pitfalls()).map((p) => p.id));
     expect(ids).toEqual(new Set(['real', 'repo', 'recent', 'prior']));
-    expect((await store.pitfalls()).find((p) => p.id === 'prior')!.confidence).toBe(0.2); // prior untouched
+    expect((await store.pitfalls()).find((p) => p.id === 'prior')!.confidence).toBe(0.2);
   });
 
   it('is idempotent under decay at a fixed `now` (no duplication, no drift)', async () => {

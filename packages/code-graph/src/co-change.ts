@@ -28,7 +28,6 @@ export interface CoChangePair {
 export interface AggregateOptions {
   /** Commits touching more files than this contribute ~0 (lint/format sweeps). */
   maxCommitFiles: number;
-  /** Recency half-life in days. */
   halfLifeDays: number;
   /** Drop pairs co-occurring fewer than this many times. */
   minPairCount: number;

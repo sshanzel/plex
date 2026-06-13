@@ -59,7 +59,6 @@ describe('findingAddressedAt (ADR-28 refined — semantic OR locality)', () => {
   });
 });
 
-// Literal vectors — exercising the pure decision without any embedding provider.
 const signals: SignalVec[] = [
   { embedding: [1, 0, 0], label: 'comment: this fires twice' },
   { embedding: [0, 1, 0], label: 'finding: missing null check' },

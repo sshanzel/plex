@@ -55,8 +55,8 @@ describe('seed + retrieve', () => {
     const query = 'validate tenant id query and use the internal RpcClient wrapper';
     const forA = (await retrieveRelevant(store, provider, query, 5, 0, 'svc-a')).map((x) => x.pitfall.id).sort();
     const forB = (await retrieveRelevant(store, provider, query, 5, 0, 'svc-b')).map((x) => x.pitfall.id).sort();
-    expect(forA).toEqual(['g', 'r']); // repo-scoped visible in its own repo
-    expect(forB).toEqual(['g']); // and hidden elsewhere; global always visible
+    expect(forA).toEqual(['g', 'r']);
+    expect(forB).toEqual(['g']);
   });
 });
 
@@ -135,7 +135,7 @@ describe('retrieval recency tilt (ADR-42)', () => {
     await store.addPitfall(pf({ id: 'fresh', title: 'A', embedding: qv, lastReinforcedAt: now.toISOString() }));
     await store.addPitfall(pf({ id: 'stale', title: 'B', embedding: qv, lastReinforcedAt: new Date(now.getTime() - 3650 * DAY).toISOString() }));
     const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0, undefined, now, 365, 0.5);
-    expect(res[0]!.pitfall.id).toBe('fresh'); // fresh ranks first
+    expect(res[0]!.pitfall.id).toBe('fresh');
     const stale = res.find((r) => r.pitfall.id === 'stale')!;
     const fresh = res.find((r) => r.pitfall.id === 'fresh')!;
     expect(stale).toBeDefined(); // floor (0.5) keeps the old lesson above minScore — not erased

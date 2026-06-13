@@ -37,7 +37,7 @@ describe('KnowledgeStore', () => {
     // Simulates a truncated final record from an interrupted append.
     writeFileSync(join(dir, 'pitfalls.jsonl'), '{"id":"p1","title":"a"}\n{"id":"p2","title":"b"}\n{"id":"p3","tit\n');
     const got = await new KnowledgeStore(dir).pitfalls();
-    expect(got.map((p) => p.id)).toEqual(['p1', 'p2']); // p3 dropped, p1/p2 survive
+    expect(got.map((p) => p.id)).toEqual(['p1', 'p2']);
   });
 
   it('tolerates blank/whitespace lines in the middle of the log', async () => {
@@ -64,7 +64,7 @@ describe('KnowledgeStore', () => {
     const s = new KnowledgeStore(dir);
     await s.addPitfall(mkPitfall('p1', 'a'));
     await s.addPitfall(mkPitfall('p2', 'b'));
-    await s.replacePitfalls([mkPitfall('p2', 'b')]); // shrink the whole log
+    await s.replacePitfalls([mkPitfall('p2', 'b')]);
     expect((await s.pitfalls()).map((p) => p.id)).toEqual(['p2']);
     // the temp sibling used for the atomic write+rename must not linger
     expect(readdirSync(dir).some((f) => f.includes('.tmp'))).toBe(false);

@@ -3,7 +3,6 @@ import { rangesOverlap, symbolsTouchedByRanges, associationStrength, personalize
 import type { SymbolRow } from '@plex/code-graph';
 
 describe('personalizedPageRank (the propagation, pure)', () => {
-  // A plain adjacency stands in for the db; `expand` returns the out-edges of the frontier.
   const graphExpand = (graph: Record<string, [string, number][]>) => async (frontier: string[]): Promise<WeightedEdge[]> =>
     frontier.flatMap((u) => (graph[u] ?? []).map(([dst, w]) => ({ src: u, dst, w, via: 'import' as const })));
   const opts = { restart: 0.15, maxHops: 4, maxNeighbors: 40, minScore: 0 };

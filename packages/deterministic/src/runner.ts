@@ -103,7 +103,6 @@ function toFinding(raw: RawFinding, repo: string, file: string): Finding {
   };
 }
 
-/** Run deterministic checks across a diff's changed files, scoped to changed lines. */
 export async function runDeterministic(
   repoPath: string,
   diff: NormalizedDiff,

@@ -44,7 +44,6 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
   return res.json();
 }
 
-/** OpenAI `text-embedding-3-*`. */
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly name = 'openai';
   readonly dimensions = 1536;
@@ -121,7 +120,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider
     case 'ollama':
       return new OllamaEmbeddingProvider(cfg.model ?? 'nomic-embed-text', cfg.baseUrl);
     case 'fake':
-      return new FakeEmbeddingProvider(); // test-only
+      return new FakeEmbeddingProvider();
     case 'none':
     default:
       return null;

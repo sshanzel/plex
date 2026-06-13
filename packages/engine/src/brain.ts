@@ -93,7 +93,6 @@ export interface RoundState {
 type Row = Record<string, unknown>;
 const str = (v: unknown): string | undefined => (v == null ? undefined : String(v));
 
-/** A per-repo brain connection (Kùzu). Open once per review; reuse for all its brain I/O. */
 export class Brain {
   private readonly db: CodeGraphDB;
   constructor(brainDir: string) {
@@ -246,7 +245,6 @@ export class Brain {
     });
   }
 
-  /** Record this round + its ingested PR comments. */
   async recordRound(target: string, round: ReviewRound, comments: PrComment[]): Promise<void> {
     const rid = `${target}#${round.n}`;
     await this.db.run(
@@ -285,7 +283,6 @@ export class Brain {
     );
   }
 
-  /** Persist a verdict (accept/reject/waive). */
   async writeVerdict(
     target: string,
     verdict: { findingId: string; kind: VerdictKind; scope?: WaiverScope; title?: string; file?: string; line?: number; ts: string },

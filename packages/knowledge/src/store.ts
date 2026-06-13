@@ -53,7 +53,6 @@ export class KnowledgeStore {
   addPitfall(p: Pitfall): Promise<void> {
     return this.append(this.pitfallsFile, p);
   }
-  /** Rewrite the whole pitfalls log (used by consolidation). */
   async replacePitfalls(pitfalls: Pitfall[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
     const body = pitfalls.length ? pitfalls.map((p) => JSON.stringify(p)).join('\n') + '\n' : '';

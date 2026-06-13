@@ -28,7 +28,6 @@ describe('getLocalDiff (real git)', () => {
     git(repo, 'add', '-A');
     git(repo, 'commit', '-q', '-m', 'init');
 
-    // modify + add + delete
     writeFileSync(
       join(repo, 'src/user.ts'),
       'export class UserService {\n  save(u) {\n    if (!u.id) throw new Error("missing id");\n    this.repo.insert(u);\n  }\n}\n',
@@ -55,7 +54,6 @@ describe('getLocalDiff (real git)', () => {
     const userRanges = byPath['src/user.ts']!.hunks.flatMap((h) => h.newRanges);
     expect(userRanges.some((r) => r.start <= 3 && r.end >= 3)).toBe(true);
 
-    // new.ts adds its two lines
     expect(byPath['src/new.ts']!.hunks.flatMap((h) => h.newRanges)).toEqual([{ start: 1, end: 2 }]);
   });
 });

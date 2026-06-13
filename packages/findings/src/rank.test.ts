@@ -27,8 +27,8 @@ describe('dedupeFindings', () => {
     ]);
     expect(merged).toHaveLength(1);
     expect(merged[0]!.agreedSources.sort()).toEqual(['deterministic', 'first-principles']);
-    expect(merged[0]!.severity).toBe('bug'); // takes the higher severity
-    expect(merged[0]!.confidence).toBeCloseTo(1 - 0.4 * 0.3, 5); // noisy-OR
+    expect(merged[0]!.severity).toBe('bug');
+    expect(merged[0]!.confidence).toBeCloseTo(1 - 0.4 * 0.3, 5);
   });
 });
 
@@ -41,7 +41,7 @@ describe('computeSignal', () => {
   it('does not let prevalence demote a bug, but does demote a nit', () => {
     const commonBug = computeSignal(mk({ severity: 'bug', prevalence: 0.9 }), 1);
     const rareBug = computeSignal(mk({ severity: 'bug', prevalence: 0 }), 1);
-    expect(commonBug).toBeCloseTo(rareBug, 5); // prevalence-independent for bugs
+    expect(commonBug).toBeCloseTo(rareBug, 5);
     const commonNit = computeSignal(mk({ severity: 'nit', prevalence: 0.9 }), 1);
     const rareNit = computeSignal(mk({ severity: 'nit', prevalence: 0 }), 1);
     expect(commonNit).toBeLessThan(rareNit);
@@ -100,7 +100,7 @@ describe('rankFindings triage', () => {
       { waivers },
     );
     expect(ranked.find((f) => f.id === 'waived')!.triage).toBe('suppressed');
-    expect(ranked[ranked.length - 1]!.id).toBe('waived'); // suppressed sinks to the bottom
+    expect(ranked[ranked.length - 1]!.id).toBe('waived');
     expect(ranked[0]!.id).toBe('keep');
   });
 

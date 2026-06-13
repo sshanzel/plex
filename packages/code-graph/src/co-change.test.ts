@@ -7,7 +7,6 @@ describe('aggregateCoChange — generated artifacts', () => {
       { tsSec: 1_000_000, files: ['src/a.ts', 'src/b.ts', 'pnpm-lock.yaml'] },
     ];
     const pairs = aggregateCoChange(commits, opts);
-    // n = 2 after the filter → the a-b pair gets full 1/(2-1) weight, and no lockfile pairs exist.
     expect(pairs).toHaveLength(1);
     expect(pairs[0]).toMatchObject({ a: 'src/a.ts', b: 'src/b.ts', weight: 1 });
   });
@@ -64,8 +63,8 @@ describe('parseNameStatus', () => {
 describe('aggregateCoChange', () => {
   it('weights small commits more than large ones (sizeFactor)', () => {
     const commits: CommitRecord[] = [
-      { tsSec: opts.nowSec, files: ['a', 'b'] }, // 2-file: pair (a,b) gets 1/(2-1)=1
-      { tsSec: opts.nowSec, files: ['c', 'd', 'e'] }, // 3-file: each pair gets 1/(3-1)=0.5
+      { tsSec: opts.nowSec, files: ['a', 'b'] },
+      { tsSec: opts.nowSec, files: ['c', 'd', 'e'] },
     ];
     const pairs = aggregateCoChange(commits, opts);
     const ab = pairs.find((p) => p.a === 'a' && p.b === 'b')!;

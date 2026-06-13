@@ -65,7 +65,7 @@ describe('loadConfig precedence', () => {
   it('env scalars apply (PLEX_DATA_DIR), and explicit overrides beat env', () => {
     process.env.PLEX_DATA_DIR = 'Y';
     expect(loadConfig().dataDir).toBe('Y');
-    expect(loadConfig({ dataDir: 'X' }).dataDir).toBe('X'); // override wins
+    expect(loadConfig({ dataDir: 'X' }).dataDir).toBe('X');
   });
 
   it('suppression half-lives default to 30/365 with empty home and no env', () => {
@@ -92,10 +92,10 @@ describe('loadConfig precedence', () => {
 
   it('decay knobs (ADR-42) default and are reachable from home + env, partial-merging', () => {
     expect(loadConfig().decay).toEqual({ halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 });
-    writeHomeConfig({ decay: { halfLifeDays: 90 } }); // partial home block
+    writeHomeConfig({ decay: { halfLifeDays: 90 } });
     expect(loadConfig().decay.halfLifeDays).toBe(90);
     expect(loadConfig().decay.pruneFloor).toBe(0.1); // sibling default preserved
-    process.env.PLEX_DECAY_PRUNE_FLOOR = '0.25'; // env overrides
+    process.env.PLEX_DECAY_PRUNE_FLOOR = '0.25';
     process.env.PLEX_DECAY_HALFLIFE_DAYS = 'nope'; // non-numeric → ignored, home (90) retained
     const c = loadConfig();
     expect(c.decay.pruneFloor).toBe(0.25);

@@ -5,7 +5,7 @@ import { distilledPitfallId } from './distill';
 describe('adaptiveCosineThreshold (per-batch cosine calibration)', () => {
   const DIM = 12;
   const e = (i: number): number[] => Array.from({ length: DIM }, (_, d) => (d === i ? 1 : 0));
-  const same = (n: number): number[][] => Array.from({ length: n }, () => e(0)); // all identical
+  const same = (n: number): number[][] => Array.from({ length: n }, () => e(0));
   const basis = (n: number): number[][] => Array.from({ length: n }, (_, i) => e(i)); // mutually orthogonal
 
   it('falls back to the configured value for a small batch (n < 8)', () => {
@@ -49,9 +49,6 @@ describe('distilledPitfallId', () => {
   });
 });
 
-// Greedy embedding clustering groups review comments into pitfall candidates. Pure, only
-// lightly covered before. Pin the degenerate inputs, the inclusive threshold boundary, the
-// multi-member running-mean centroid, and document the threshold<=0 hazard.
 describe('greedyCluster', () => {
   it('returns [] for no vectors and a single singleton cluster for one', () => {
     expect(greedyCluster([], 0.8)).toEqual([]);

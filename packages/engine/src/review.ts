@@ -366,7 +366,6 @@ export interface ReviewContext {
   changeContext?: ChangeContext;
   /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
   graphStale?: GraphStaleness;
-  // --- PR brain (M6/M11, ADR-30 — embedded Kùzu) ---
   /** Stable brain target id for this review (reviewTargetFor). */
   target?: string;
   /** This review's round number (1-based). */
@@ -640,7 +639,6 @@ function mergeDeletedNeighborsSidecar(reviewerDir: string, captured: Map<string,
   }
 }
 
-/** Assemble the review context: diff → neighborhood → deterministic findings → knowledge → brain round. */
 export async function assembleReviewContext(opts: AssembleOptions): Promise<ReviewContext> {
   const p = repoPaths(opts.repoPath, opts.config.dataDir);
   const [diff, changeContext] = await Promise.all([
@@ -842,7 +840,6 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   };
 }
 
-/** Blast radius for a set of files (no diff) — powers the get_blast_radius tool. */
 export async function blastRadius(
   repoPath: string,
   files: string[],

@@ -45,7 +45,7 @@ describe('computeSignal edge cases', () => {
     const fullBlast = computeSignal(mk({ severity: 'bug', confidence: 1, blastRadius: 1 }), 1);
     expect(noBlast).toBeCloseTo(0.5, 10); // 1 * 1 * 0.5 * 1 * 1
     expect(fullBlast).toBeCloseTo(1, 10);
-    expect(noBlast).toBeGreaterThan(0); // never zero
+    expect(noBlast).toBeGreaterThan(0);
   });
 
   it('treats a missing blastRadius as no-blast (0.5 floor)', () => {

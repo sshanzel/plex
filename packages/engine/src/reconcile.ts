@@ -118,7 +118,6 @@ export async function reconcileOutcomes(
     const head =
       src.source === 'pr' && src.pr != null ? await getPrHeadSha({ pr: src.pr, cwd }) : await getHeadSha(cwd);
 
-    // Each early exit names WHY (so `accepted: 0` is diagnosable without log spelunking).
     if (checked === 0) return { target, checked, accepted: 0, reason: 'no open findings for this target — nothing to reconcile' };
     if (!state.lastHeadSha) {
       return {

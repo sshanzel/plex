@@ -98,7 +98,6 @@ const recallAtK = async (
 
 describe('retrieval quality floor (fixed labeled corpus)', () => {
   it(`lexical path on PARAPHRASED queries (key-less installs): recall@${K} ≥ ${LEXICAL_RECALL_FLOOR}`, async () => {
-    // strip embeddings so this measures the pure lexical path
     const lexDir = mkdtempSync(join(tmpdir(), 'kq-lex-'));
     try {
       const lexStore = new KnowledgeStore(lexDir);

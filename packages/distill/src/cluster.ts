@@ -66,7 +66,6 @@ export function adaptiveCosineThreshold(
   return Math.min(0.97, Math.max(0.5, mu + k * sigma));
 }
 
-/** Mean vector of the given rows. */
 export function centroid(vectors: number[][]): number[] {
   if (vectors.length === 0) return [];
   const dim = vectors[0]!.length;

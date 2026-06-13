@@ -12,8 +12,8 @@ describe('resolveConfig', () => {
 
   it('merges a partial nested override WITHOUT dropping that group\'s other defaults', () => {
     const cfg = resolveConfig({ coChange: { maxCommitFiles: 99 } as never });
-    expect(cfg.coChange.maxCommitFiles).toBe(99); // overridden
-    expect(cfg.coChange.halfLifeDays).toBe(defaultConfig.coChange.halfLifeDays); // preserved
+    expect(cfg.coChange.maxCommitFiles).toBe(99);
+    expect(cfg.coChange.halfLifeDays).toBe(defaultConfig.coChange.halfLifeDays);
     expect(cfg.coChange.minPairCount).toBe(defaultConfig.coChange.minPairCount);
   });
 
@@ -57,8 +57,8 @@ describe('resolveConfig', () => {
   it('defaults the positive-decay block (ADR-42) and merges partial overrides', () => {
     expect(resolveConfig().decay).toEqual({ halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 });
     const cfg = resolveConfig({ decay: { halfLifeDays: 90 } as never });
-    expect(cfg.decay.halfLifeDays).toBe(90); // overridden
-    expect(cfg.decay.pruneFloor).toBe(defaultConfig.decay.pruneFloor); // sibling preserved
+    expect(cfg.decay.halfLifeDays).toBe(90);
+    expect(cfg.decay.pruneFloor).toBe(defaultConfig.decay.pruneFloor);
     expect(cfg.decay.retrievalTiltFloor).toBe(0.5);
   });
 });
