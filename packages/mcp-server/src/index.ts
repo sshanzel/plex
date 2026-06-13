@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { isSafeGitRef } from '@plex/core';
 import {
   loadConfig,
   indexRepo,
@@ -119,8 +120,15 @@ const diffSourceShape = {
     .enum(['working', 'staged', 'branch'])
     .optional()
     .describe('Local diffs only: working (default) | staged | branch (diff vs baseRef). Ignored when source is "pr".'),
-  baseRef: z.string().optional().describe('Base ref for mode "branch" (default "main").'),
-  pr: z.union([z.string(), z.number()]).optional().describe('GitHub PR number — required with source "pr".'),
+  baseRef: z
+    .string()
+    .refine(isSafeGitRef, 'baseRef must be a valid git ref (no leading "-")')
+    .optional()
+    .describe('Base ref for mode "branch" (default "main").'),
+  pr: z
+    .union([z.string().regex(/^\d+$/, 'pr must be a positive integer'), z.number().int().positive()])
+    .optional()
+    .describe('GitHub PR number — required with source "pr".'),
 };
 
 server.tool(

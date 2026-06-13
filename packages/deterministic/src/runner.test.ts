@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NormalizedDiff, DiffFile } from '@plex/core';
@@ -56,6 +56,35 @@ describe('runDeterministic', () => {
     writeFileSync(join(repo, 'src/a.txt'), SRC);
     expect(await runDeterministic(repo, diff(file({ path: 'src/a.txt' })))).toEqual([]);
     expect(await runDeterministic(repo, diff(file({ path: 'src/ghost.ts' })))).toEqual([]);
+  });
+
+  it('never reads a path that escapes the repo root (hostile-diff containment)', async () => {
+    // A malicious PR diff can carry a traversal path. Plant a real, parseable source file just
+    // outside the repo; the runner must NOT read it even though it exists and is a supported ext.
+    const outside = mkdtempSync(join(tmpdir(), 'plex-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.ts'), SRC); // would yield a no-console finding if read
+      // repo and outside share the same tmpdir parent, so this traversal resolves INTO outside.
+      const traversal = `../${outside.split('/').pop()}/secret.ts`;
+      expect(await runDeterministic(repo, diff(file({ path: traversal, hunks: [] })))).toEqual([]);
+      // a classic deep escape is contained too.
+      expect(await runDeterministic(repo, diff(file({ path: '../../../../etc/passwd.ts', hunks: [] })))).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('never reads through an in-tree symlink that points outside the repo (realpath containment)', async () => {
+    // Lexical resolution alone wouldn't catch this: `link/secret.ts` resolves lexically INSIDE the
+    // repo, but `link` is a symlink to an outside dir, so a plain readFile would follow it out.
+    const outside = mkdtempSync(join(tmpdir(), 'plex-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.ts'), SRC);
+      symlinkSync(outside, join(repo, 'link')); // a symlink planted in the reviewed tree
+      expect(await runDeterministic(repo, diff(file({ path: 'link/secret.ts', hunks: [] })))).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('uses repoName override, else the repo basename', async () => {

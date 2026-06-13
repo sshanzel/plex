@@ -39,7 +39,7 @@ export function reviewContextToHtml(ctx: ReviewContext): string {
 <head>
 <meta charset="utf-8" />
 <title>reviewer — ${repo} (${baseRef})</title>
-<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js" integrity="sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4" crossorigin="anonymous"></script>
 <style>
   html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
   #cy{width:100%;height:88vh}

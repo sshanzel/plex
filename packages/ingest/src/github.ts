@@ -3,11 +3,21 @@ import { promisify } from 'node:util';
 import { writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NormalizedDiff } from '@plex/core';
+import { isSafePrNumber, type NormalizedDiff } from '@plex/core';
 import { normalizeUnifiedDiff } from './normalize';
 
 const pexec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Validate a PR number before it reaches a `gh` argv (or the `gh api` path). Every entry point
+ * (MCP, CLI `--pr`, the sweep) converges here, so guarding at this chokepoint covers them all —
+ * the same belt-and-suspenders `getLocalDiff` gives `baseRef`. Refuses option-injection (`-x`).
+ */
+function prArg(pr: number | string): string {
+  if (!isSafePrNumber(pr)) throw new Error(`unsafe pr number: ${JSON.stringify(pr)}`);
+  return String(pr);
+}
 
 /** One inline review comment, anchored to a changed line (new side). */
 export interface PrReviewComment {
@@ -36,7 +46,7 @@ export async function postPrReview(
   const file = join(dir, 'review.json');
   try {
     writeFileSync(file, payload, 'utf8');
-    await pexec('gh', ['api', '--method', 'POST', `repos/{owner}/{repo}/pulls/${pr}/reviews`, '--input', file], {
+    await pexec('gh', ['api', '--method', 'POST', `repos/{owner}/{repo}/pulls/${prArg(pr)}/reviews`, '--input', file], {
       cwd,
       maxBuffer: MAX_BUFFER,
     });
@@ -56,11 +66,12 @@ export interface PrDiffOptions {
  */
 export async function getPrDiff(opts: PrDiffOptions): Promise<NormalizedDiff> {
   const cwd = opts.cwd ?? process.cwd();
-  const { stdout } = await pexec('gh', ['pr', 'diff', String(opts.pr)], {
+  const pr = prArg(opts.pr);
+  const { stdout } = await pexec('gh', ['pr', 'diff', pr], {
     cwd,
     maxBuffer: MAX_BUFFER,
   });
-  return normalizeUnifiedDiff(stdout, `pr/${opts.pr}`);
+  return normalizeUnifiedDiff(stdout, `pr/${pr}`);
 }
 
 export interface PrMeta {
@@ -73,7 +84,7 @@ export interface PrMeta {
 export async function getPrMeta(opts: PrDiffOptions): Promise<PrMeta> {
   const cwd = opts.cwd ?? process.cwd();
   try {
-    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'title,body,url'], {
+    const { stdout } = await pexec('gh', ['pr', 'view', prArg(opts.pr), '--json', 'title,body,url'], {
       cwd,
       maxBuffer: MAX_BUFFER,
     });
@@ -88,7 +99,7 @@ export async function getPrMeta(opts: PrDiffOptions): Promise<PrMeta> {
 export async function getPrHeadSha(opts: PrDiffOptions): Promise<string> {
   const cwd = opts.cwd ?? process.cwd();
   try {
-    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'headRefOid'], {
+    const { stdout } = await pexec('gh', ['pr', 'view', prArg(opts.pr), '--json', 'headRefOid'], {
       cwd,
       maxBuffer: MAX_BUFFER,
     });
@@ -107,7 +118,7 @@ export async function getPrHeadSha(opts: PrDiffOptions): Promise<string> {
 export async function getPrState(opts: PrDiffOptions): Promise<string> {
   const cwd = opts.cwd ?? process.cwd();
   try {
-    const { stdout } = await pexec('gh', ['pr', 'view', String(opts.pr), '--json', 'state'], {
+    const { stdout } = await pexec('gh', ['pr', 'view', prArg(opts.pr), '--json', 'state'], {
       cwd,
       maxBuffer: MAX_BUFFER,
     });

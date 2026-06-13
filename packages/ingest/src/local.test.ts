@@ -56,6 +56,12 @@ describe('getLocalDiff (real git)', () => {
 
     expect(byPath['src/new.ts']!.hunks.flatMap((h) => h.newRanges)).toEqual([{ start: 1, end: 2 }]);
   });
+
+  it('refuses an option-injection baseRef in branch mode (never interpolates it into git args)', async () => {
+    await expect(getLocalDiff({ cwd: repo, mode: 'branch', baseRef: '--upload-pack=touch /tmp/pwned' })).rejects.toThrow(/unsafe baseRef/);
+    // a normal ref still resolves (no diff between HEAD...HEAD, but it must not throw).
+    await expect(getLocalDiff({ cwd: repo, mode: 'branch', baseRef: 'HEAD' })).resolves.toBeDefined();
+  });
 });
 
 // runGit retries a transient SPAWN failure (the child never ran) but NOT a non-zero exit — so an empty

@@ -45,7 +45,10 @@ jobs:
           node-version-file: .nvmrc # single source of truth w/ ci.yml — Node 22.22+ (Kùzu native SIGSEGVs on Node 20 Linux; the `pnpm test` gate below opens Kùzu)
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      - run: npm install -g npm@latest # ensure provenance + trusted-publishing support
+      # Pinned (not @latest): this runs in the privileged publish job (id-token: write), so the one
+      # tool that isn't SHA-pinned shouldn't float. npm >= 11.5.1 is the floor for OIDC Trusted
+      # Publishing + provenance; bump this deliberately, don't track latest.
+      - run: npm install -g npm@11.5.1 # provenance + trusted-publishing support
       - run: pnpm install --frozen-lockfile
       - run: pnpm test # gate: don't ship a failing build
       - run: npm publish --provenance --access public # prepack builds dist/; OIDC auth, no token

@@ -111,16 +111,24 @@ export async function runDeterministic(
   const repo = opts.repoName ?? path.basename(path.resolve(repoPath));
   const onlyChanged = opts.onlyChangedRanges !== false;
   const out: Finding[] = [];
+  // Resolve the repo root once (canonicalized, so symlinks in repoPath itself don't false-positive).
+  const realRoot = await fs.realpath(repoPath).catch(() => path.resolve(repoPath));
 
   for (const f of diff.files) {
     // Generated artifacts are dropped at diff normalization, but this runner is also called
     // with hand-built diffs — keep the belt-and-suspenders skip (a .min.js IS "supported").
     if (f.status === 'deleted' || !isSupportedSource(f.path) || isGeneratedArtifact(f.path)) continue;
+    // Containment: a hostile diff (e.g. a malicious PR) can carry a path that escapes the repo —
+    // either lexically (`../../etc/x.ts`) OR through a symlink IN the tree pointing outside. realpath
+    // resolves both before we read; never read outside the repo root. This is the only disk read of a
+    // diff-supplied path — other consumers treat it as an inert graph key.
     let text: string;
     try {
-      text = await fs.readFile(path.join(repoPath, f.path), 'utf8');
+      const abs = await fs.realpath(path.join(repoPath, f.path));
+      if (abs !== realRoot && !abs.startsWith(realRoot + path.sep)) continue;
+      text = await fs.readFile(abs, 'utf8');
     } catch {
-      continue;
+      continue; // missing file or unresolvable path — skip (matches the prior missing-file behavior)
     }
     const ranges = f.hunks.flatMap((h) => h.newRanges);
     for (const raw of analyzeSource(f.path, text)) {

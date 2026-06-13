@@ -1,0 +1,22 @@
+# Dependabot — keeps deps and pinned GitHub Actions patched. Committed so the control SECURITY.md
+# claims is real and travels with the repo (a UI-only enable leaves no trace and is lost on fork).
+version: 2
+updates:
+  # npm workspace (single lockfile at the root drives the whole pnpm monorepo).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Batch low-risk dev/type updates into one PR to cut review noise.
+      dev-dependencies:
+        dependency-type: development
+
+  # GitHub Actions are themselves supply-chain deps; we SHA-pin them (ADR-35), and Dependabot
+  # bumps the pin + the version comment together so pinning never means going stale.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
