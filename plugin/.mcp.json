@@ -2,7 +2,7 @@
   "mcpServers": {
     "plex": {
       "command": "npx",
-      "args": ["-y", "-p", "@sshanzel/plex@0.7.0", "plex-mcp"]
+      "args": ["-y", "-p", "@sshanzel/plex@0.8.0", "plex-mcp"]
     }
   }
 }
