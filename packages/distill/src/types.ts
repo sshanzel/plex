@@ -7,6 +7,16 @@ export interface RawComment {
   path?: string;
   line?: number;
   body: string;
+  /**
+   * GitHub marked this review comment **outdated** — the diff hunk it was anchored to was MODIFIED
+   * by a later commit (`position` went null while `original_position` persists). It's the strongest
+   * signal we can read CHEAPLY (already in the comments payload, one API call, squash-merge-proof
+   * since GitHub computes it server-side) that the flagged code was actually changed in response —
+   * the basis for an *observed* `fixed` outcome instead of assuming "merged ⇒ accepted" (see
+   * `outcomeFor`). Heuristic: an unrelated edit in the same hunk also outdates it, so it's a
+   * confirm only when paired with `prMerged`, and we ABSTAIN (never refute) when it's absent.
+   */
+  outdated?: boolean;
   /** The diff hunk the comment was attached to — the "code-before" half of the triple. */
   diffHunk?: string;
   author?: string;

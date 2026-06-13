@@ -102,8 +102,17 @@ export async function consolidatePitfalls(
       next.push(p); // no outcomes yet → keep the prior confidence; never pruned (ADR-11)
       continue;
     }
-    reinforced++;
     const { confirms, refutes } = confirmsAndRefutes(p, inc, nowMs, decay.halfLifeDays);
+    if (confirms + refutes === 0) {
+      // The incidents exist but are ALL abstentions (observed-but-uninformative outcomes — see
+      // confidenceFromOutcomes) or have fully decayed to ~0 weight: no evidence either way. Treat
+      // exactly like "no outcomes yet" — keep the prior confidence and never prune. Without this,
+      // wilsonLowerBound(0, 0) = 0 would crush a pitfall to zero confidence purely for being
+      // unverifiable, which is the opposite of "honest floor" (it's a confident *wrong* floor).
+      next.push(p);
+      continue;
+    }
+    reinforced++;
     // For a NEGATIVE pitfall this `confidence` is INFORMATIONAL ONLY — the live ranking path
     // (`engine` `loadSuppressions`) recomputes the suppress/demote tier from raw incident counts so a
     // dismissal takes effect without a `consolidate` run, and never reads this stored value. It's kept

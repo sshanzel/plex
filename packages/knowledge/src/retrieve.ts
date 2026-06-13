@@ -67,10 +67,16 @@ const inScope = (p: Pitfall, repo?: string): boolean =>
 // `voyage-code-3` vector is 1024 floats ≈ 16KB serialized PER pitfall — returning topK of
 // them ships ~80KB / tens of thousands of tokens into every review context that the model
 // can't use. The stored pitfall keeps its vector; only the retrieved copy is slimmed.
-// Recency-tilt (ADR-42): multiply each score by `max(tiltFloor, 0.5^(ageDays/halfLife))` BEFORE the
-// minScore cut, so a stale lesson ranks lower (and can drop out) without mutating stored confidence —
-// read-only, reversible. `lastReinforcedAt` is the one field read (set by consolidation); undated →
-// ageDays 0 → weight 1 → tilt = max(floor, 1) = 1 (no change), preserving the no-decay test corpora.
+// Two bounded, multiplicative tilts applied to the cosine score BEFORE the minScore cut — both
+// floored at `tiltFloor` so they NUDGE relevance, never bury it (a relevant pitfall can lose at most
+// `tiltFloor` of its score to either, never be zeroed), and both read-only/reversible (stored fields
+// untouched):
+//   • Recency (ADR-42): `max(tiltFloor, 0.5^(ageDays/halfLife))` from `lastReinforcedAt` — a stale
+//     lesson ranks lower. Undated → ageDays 0 → weight 1 → tilt 1 (no change; preserves test corpora).
+//   • Confidence: `max(tiltFloor, confidence)` — the Wilson-grounded evidence strength (one estimator
+//     everywhere, see confidenceFromOutcomes/consolidatePitfalls), so among similarly-relevant
+//     pitfalls the better-evidenced one wins. Freshness and evidence are orthogonal axes and compound;
+//     a pitfall with NO confidence (legacy/seeded) uses 1 (neutral — never penalized for missing data).
 const rankAndSlim = (
   scored: RetrievedPitfall[],
   topK: number,
@@ -83,8 +89,9 @@ const rankAndSlim = (
     .map((r) => {
       const t = r.pitfall.lastReinforcedAt ? Date.parse(r.pitfall.lastReinforcedAt) : NaN;
       const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000;
-      const tilt = Math.max(tiltFloor, recencyWeight(ageDays, halfLifeDays));
-      return { pitfall: r.pitfall, score: r.score * tilt };
+      const recencyTilt = Math.max(tiltFloor, recencyWeight(ageDays, halfLifeDays));
+      const confidenceTilt = Math.max(tiltFloor, r.pitfall.confidence ?? 1);
+      return { pitfall: r.pitfall, score: r.score * recencyTilt * confidenceTilt };
     })
     .filter((r) => r.score >= minScore)
     .sort((a, b) => b.score - a.score)

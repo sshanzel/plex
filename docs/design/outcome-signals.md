@@ -1,6 +1,6 @@
 # Design note — richer outcome signals for analyzed incidents
 
-**Status:** proposed (not built). Captures the plan + the rate-limit/attribution risks so we don't rediscover them. Promote to an ADR when we commit to it.
+**Status: LOCAL PATH BUILT — ADR-44.** The local-first half shipped, but **not as this note first framed it.** The framing flipped: the win is *correcting a mislabeled input*, not *grading positives with weights*. See the "What actually shipped" section at the bottom; the hosted-API pieces (`isResolved`, revert detection) remain deferred behind the rate-limit discipline below. The original plan is kept for that context.
 
 ## Problem
 
@@ -60,3 +60,18 @@ So the paired change is: make `consolidatePitfalls` actually *use* a per-inciden
 ## Suggested MVP (smallest useful slice)
 
 Local-git **resolving-diff match** only: for each surviving comment, if a commit after `createdAt` modified the region around `path:line`, emit `fixed`, else `accepted` (unchanged). Conservative; no API; pair with the `outcomeWeight`/`consolidatePitfalls` update; unit-test the matcher on a throwaway git repo. Defer `isResolved` + revert detection to the hosted path, behind the rate-limit discipline above.
+
+## What actually shipped (ADR-44) — and why it diverged from the above
+
+Two findings, made while implementing, redirected the whole thing:
+
+1. **The confidence math was already principled** (ADR-39 made it a Wilson lower bound), and `confirmsAndRefutes` treats `accepted`/`fixed`/`reverted` as *equal* confirms. So the "required paired change" above — wire `outcomeWeight` back in so `fixed` > `accepted` — would **reintroduce the exact 1.5 magic constant ADR-39 deleted**. Producing `fixed` vs `accepted` is a *no-op* in the real math. `outcomeWeight` was dead code; it's now **deleted**.
+2. **The real arbitrary value was the label, not the weight.** `prMerged ? 'accepted' : 'rejected'` *manufactures a confirm* from a merge — a comment that shipped UNCHANGED is no evidence it was accepted. That assumption is the thing to remove.
+
+So the MVP's "else `accepted` (unchanged)" was **rejected** — it keeps the manufactured confirm. What shipped instead:
+
+- **`outcomeFor` counts only observed action**: confirm (`fixed`) iff the comment is **outdated** (GitHub's `position` went null → its hunk was changed by a later commit; `isOutdated`) **AND** merged; **everything else abstains** (`undefined` → dropped from the counts, not a fake confirm). The resolving-diff "matcher" reduces to GitHub's own server-computed outdatedness — already in the comments payload, **one call, squash-merge-proof, no per-commit diffing** (the rate-limit blowup this note feared never materializes for the local path). Analysis emits **no `rejected`** — it can confirm a pattern but never refute one; refutation is the live-review `reject` path.
+- **One Wilson definition of confidence** (`confidenceFromOutcomes`) replaces both the `0.3 + 0.1·n` polynomial and the `0.6` `add_pitfalls` default.
+- **Retrieval finally uses confidence** (a bounded tilt beside the recency tilt) — without this the richer signal would feed a value nothing reads.
+
+Still deferred (need the API + rate-limit discipline, so they stay off the local path): `isResolved` corroboration and revert detection.

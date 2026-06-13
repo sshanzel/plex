@@ -154,3 +154,38 @@ describe('retrieval recency tilt (ADR-42)', () => {
     expect(res[0]!.pitfall.id).toBe('undated');
   });
 });
+
+describe('retrieval confidence tilt (ADR-44 — evidence weights, never buries)', () => {
+  const provider = new FakeEmbeddingProvider();
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it('a better-evidenced pitfall outranks a weakly-evidenced one of equal relevance', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-conf-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']); // equal cosine for both
+    await store.addPitfall(pf({ id: 'proven', title: 'A', embedding: qv, confidence: 0.9 }));
+    await store.addPitfall(pf({ id: 'thin', title: 'B', embedding: qv, confidence: 0.2 }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    expect(res[0]!.pitfall.id).toBe('proven');
+    const thin = res.find((r) => r.pitfall.id === 'thin')!;
+    const proven = res.find((r) => r.pitfall.id === 'proven')!;
+    expect(thin).toBeDefined(); // floor (0.5) keeps the weak one visible — nudged, not erased
+    // proven tilt = max(.5,.9)=.9 ; thin tilt = max(.5,.2)=.5 → ratio .5/.9
+    expect(thin.score).toBeCloseTo(proven.score * (0.5 / 0.9), 6);
+  });
+
+  it('a missing confidence is neutral (tilt 1) — never penalized for absent data', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-conf2-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // pf() defaults confidence 0.5; override to undefined to model a legacy/seeded pitfall.
+    await store.addPitfall(pf({ id: 'legacy', title: 'A', embedding: qv, confidence: undefined }));
+    await store.addPitfall(pf({ id: 'lowconf', title: 'B', embedding: qv, confidence: 0.2 }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    expect(res[0]!.pitfall.id).toBe('legacy'); // tilt 1 (neutral) beats max(.5,.2)=.5
+  });
+});

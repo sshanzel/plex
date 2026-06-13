@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { wilsonLowerBound, suppressionTier, recencyWeight, decayedCounts, type Dismissal } from './stats';
+import type { IncidentOutcome } from '@plex/core';
+import { wilsonLowerBound, confidenceFromOutcomes, suppressionTier, recencyWeight, decayedCounts, type Dismissal } from './stats';
 
 describe('wilsonLowerBound', () => {
   it('returns 0 with no observations', () => {
@@ -22,6 +23,27 @@ describe('wilsonLowerBound', () => {
   });
   it('rejects pull the bound down', () => {
     expect(wilsonLowerBound(8, 10)).toBeLessThan(wilsonLowerBound(10, 10));
+  });
+});
+
+describe('confidenceFromOutcomes (one Wilson definition of confidence)', () => {
+  const O = (...os: (IncidentOutcome | undefined)[]) => os;
+  it('is the Wilson lower bound of the confirm rate — identical to the raw estimator', () => {
+    expect(confidenceFromOutcomes(O('fixed', 'fixed'))).toBe(wilsonLowerBound(2, 2));
+    expect(confidenceFromOutcomes(O('accepted', 'rejected', 'fixed'))).toBe(wilsonLowerBound(2, 3));
+  });
+  it('treats accepted, fixed, and reverted all as confirms; rejected as a refute', () => {
+    expect(confidenceFromOutcomes(O('accepted', 'fixed', 'reverted'))).toBe(wilsonLowerBound(3, 3));
+    expect(confidenceFromOutcomes(O('rejected', 'rejected'))).toBe(wilsonLowerBound(0, 2));
+  });
+  it('ABSTAINS on undefined/uninformative outcomes — they drop from the counts, not count as a confirm', () => {
+    // The whole point of ADR-44: a merged-but-unchanged comment (→ undefined) is NOT a manufactured
+    // confirm. One confirm + two abstains is a 1/1 record, not 1/3.
+    expect(confidenceFromOutcomes(O('fixed', undefined, undefined))).toBe(wilsonLowerBound(1, 1));
+  });
+  it('no informative evidence → 0 (honest floor, not a guess)', () => {
+    expect(confidenceFromOutcomes(O(undefined, undefined))).toBe(0);
+    expect(confidenceFromOutcomes([])).toBe(0);
   });
 });
 

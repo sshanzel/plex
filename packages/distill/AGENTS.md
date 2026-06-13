@@ -23,12 +23,12 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
 
 | File | Responsibility |
 | --- | --- |
-| `src/github.ts` | `gh`-CLI fetchers (`listPrs`, `fetchCommentsForPr`) + pure `groupThreads` (replies attached to their root comment; orphans dropped, reply-cycles guarded) |
+| `src/github.ts` | `gh`-CLI fetchers (`listPrs`, `fetchCommentsForPr`) + pure `groupThreads` (replies attached to their root comment; orphans dropped, reply-cycles guarded) + pure `isOutdated` (GitHub's `position`-null "hunk changed" signal, ADR-44) |
 | `src/classify.ts` | Denoise (`isSubstantive`) + coarse regex `categorize` (first-match-wins, security first) |
 | `src/cluster.ts` | Pure clustering: `greedyCluster`, `adaptiveCosineThreshold` (μ+kσ), `centroid` |
 | `src/distill.ts` | `llmDistill`: one cluster → one Pitfall (or `null` = SKIP); `distilledPitfallId` |
 | `src/llm.ts` | `CompletionProvider`s: `claude-cli` (default), `anthropic`, `openai`; `createCompletionProvider` → `null` when unusable |
-| `src/outcome.ts` | `outcomeFor` (binary merged-signal); re-exports `outcomeWeight` (lives in `@plex/core`, applied by knowledge consolidation) |
+| `src/outcome.ts` | `outcomeFor` — the OBSERVED outcome (confirm `fixed` only on an outdated+merged comment, else abstain; ADR-44) |
 | `src/pipeline.ts` | Orchestration: `scanHistory` (mechanical, no LLM) and `distillHistory` (scan + distill + store) |
 | `src/types.ts` | `RawComment` (thread-grouped source unit), `DistillResult` |
 
@@ -58,17 +58,26 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
    model decides what's worth remembering; dismissed/intentional suggestions are skipped). LLM/transport
    errors **propagate** — a broken distiller must fail loudly, not silently skip every cluster.
 6. **Mechanical pitfall fields** (the LLM supplies only the semantic content + keep/skip):
-   `confidence = min(0.9, 0.3 + 0.1·n + 0.1·(merged/n))` (`n` = cluster size, `merged` = comments on
-   merged PRs); `tier` = `codifiable` only on the exact string, else `judgmental`; **`scope` =
-   `global` only on the exact string, else `repo`** (ADR-21 — project-specific lessons are kept,
-   stamped with `repo`, and retrieval scopes them); id `pf:analyzed:<repo>:<title-slug>-<hashId(title)>`;
-   `embedding` = the cluster **centroid**; `incidentIds` = the `inc:analyzed:*` ids (provenance, mandatory).
-   Storage dedupes by **exact title** (`hasPitfallTitled`) — same in `addAnalyzedPitfalls` (the
-   `add_pitfalls` path, which embeds `` `${category}: ${title}\n${why}` `` server-side and defaults
-   `scope` to `'repo'`, `confidence` to `0.6`).
+   `confidence = confidenceFromOutcomes(comments.map(outcomeFor))` — the **Wilson lower bound of the
+   cluster's OBSERVED confirm rate** (ADR-44; the same `@plex/knowledge` estimator consolidation and
+   retrieval use). No observed fixes → 0 (honest floor, no positive evidence yet); it replaced the old
+   `min(0.9, 0.3 + 0.1·n + …)` polynomial. `tier` = `codifiable` only on the exact string, else
+   `judgmental`; **`scope` = `global` only on the exact string, else `repo`** (ADR-21 — project-specific
+   lessons are kept, stamped with `repo`, and retrieval scopes them); id
+   `pf:analyzed:<repo>:<title-slug>-<hashId(title)>`; `embedding` = the cluster **centroid**;
+   `incidentIds` = the `inc:analyzed:*` ids (provenance, mandatory). Storage dedupes by **exact title**
+   (`hasPitfallTitled`) — same in `addAnalyzedPitfalls` (the `add_pitfalls` path, which embeds
+   `` `${category}: ${title}\n${why}` `` server-side, defaults `scope` to `'repo'`, and derives
+   `confidence` the same Wilson way from the linked provenance incidents — no `0.6` magic default).
 
-**Outcome signal is coarse**: `outcomeFor` = `prMerged ? 'accepted' : 'rejected'`. Thread
-`isResolved` and the resolving diff are not consulted, so `fixed`/`reverted` are never produced.
+**Outcome signal (ADR-44, observed not assumed)**: `outcomeFor(c)` = `c.outdated && c.prMerged ?
+'fixed' : undefined`. A **confirm** requires OBSERVED action — GitHub outdated the comment (`isOutdated`:
+`position` null while `original_position` set → its hunk was changed by a later commit) AND the PR
+shipped. Everything else **abstains** (`undefined` → recorded for provenance, dropped from the confidence
+counts). Analysis emits **no `rejected`/`reverted`**: it can positively confirm a pattern but never
+refute one (an unmerged PR says nothing about a comment's validity) — refutation is the live-review
+`reject` path. The old binary `prMerged ? 'accepted' : 'rejected'` *manufactured* a confirm from a bare
+merge; that's the arbitrary value ADR-44 removed.
 
 ## The incremental cursor
 
@@ -84,10 +93,10 @@ next run continues.
 
 ## Known gaps (code vs docs — verified)
 
-- **Analysis never produces `fixed`/`reverted` outcomes** — `outcomeFor` is binary (merged →
-  `accepted`, else `rejected`); thread `isResolved` and the resolving diff are unused. The
-  `outcomeWeight` table itself (core) IS applied by knowledge consolidation now; richer outcomes
-  would make it bite on analyzed incidents too. See outcome-signals.md.
+- **Analysis confirms but never refutes** (ADR-44, by design) — `outcomeFor` emits `fixed` (observed
+  via `isOutdated`+merged) or abstains; it deliberately produces no `rejected`/`reverted` (an unmerged
+  PR isn't evidence against a comment; refutation is the live-review `reject` path). Thread `isResolved`
+  and revert detection stay deferred to the hosted/API path (rate-limit discipline; outcome-signals.md).
 - **The cursor advances at scan time**, before the agent distills: if `analyze_scan` clusters are never
   passed to `add_pitfalls`, those PRs won't be re-clustered without `--reset` (their Incidents are
   recorded, though).
