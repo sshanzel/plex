@@ -1,6 +1,11 @@
 # Tokenless release: npm OIDC Trusted Publishing + provenance.
 #
-# DORMANT until you push a `v*` tag (or manually dispatch) — it never runs on a normal push.
+# MANUAL-ONLY for now: this runs ONLY when you click "Run workflow" (workflow_dispatch). Releases are
+# cut by hand via `pnpm release` (which does the local `npm publish`). The automatic `v*`-tag trigger
+# is intentionally commented out below until npm Trusted Publishing is configured (see ONE-TIME SETUP)
+# — otherwise every `pnpm release` tag would fire this, it would fail OIDC auth (no Trusted Publisher)
+# or collide with the version the local flow already published. Re-enable the tag trigger only AFTER
+# the setup below AND after deciding this workflow — not `pnpm release` — is the canonical publisher.
 #
 # Why this shape (supply-chain hardening):
 #   - NO long-lived npm token is stored anywhere. The job mints a short-lived OIDC credential
@@ -19,8 +24,10 @@
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  # Re-enable this once npm Trusted Publishing is set up (ONE-TIME SETUP above) to auto-publish on a
+  # release tag. Left off so `pnpm release`'s tag push does NOT trigger a (failing) auto-publish.
+  # push:
+  #   tags: ['v*']
   workflow_dispatch: {}
 
 permissions:
