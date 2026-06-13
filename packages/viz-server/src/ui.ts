@@ -60,6 +60,7 @@ export function renderAppHtml(version: string): string {
       <button class="tab active" data-graph="code">Code graph</button>
       <button class="tab" data-graph="brain">PR brain</button>
       <button class="tab" data-graph="knowledge">Knowledge</button>
+      <button class="tab" data-graph="lineage">Lineage</button>
     </div>
     <input type="search" id="search" placeholder="Search nodes…" />
     <div class="filters" id="filters"></div>
@@ -89,8 +90,9 @@ const CLIENT_JS = String.raw`
   };
   var EDGE_TYPES = {
     code: ['import','ref','co-change','declares','coupled'],
-    brain: ['round of','raised in','verdict on','comment'],
-    knowledge: ['from','about']
+    brain: ['round of','raised in','verdict on','comment','comment on'],
+    knowledge: ['from','about'],
+    lineage: ['round of','raised in','verdict on','comment','comment on','from','about','likely became']
   };
   var state = { graph:'code', repo:null, cy:null, hidden:{}, raw:{nodes:[],edges:[]} };
 
@@ -110,6 +112,7 @@ const CLIENT_JS = String.raw`
       { selector:'edge', style:{ 'label':'data(label)','font-size':6,'color':'#6b7280','curve-style':'bezier',
         'width':1,'line-color':'#3a4150','target-arrow-color':'#3a4150','target-arrow-shape':'triangle','arrow-scale':0.7,
         'text-rotation':'autorotate','text-opacity':0 } },
+      { selector:'edge[?inferred]', style:{ 'line-style':'dashed','line-color':'#f783ac','target-arrow-color':'#f783ac','text-opacity':1,'color':'#f783ac' } },
       { selector:'edge:selected', style:{ 'line-color':'#fff','target-arrow-color':'#fff','text-opacity':1 } }
     ];
   }
@@ -170,7 +173,7 @@ const CLIENT_JS = String.raw`
   function toElements(data) {
     var els = [];
     data.nodes.forEach(function (n) { els.push({ data:{ id:n.id, label:n.label, type:n.type, props:n.props, symbols:(n.props&&n.props.symbols)||0 } }); });
-    data.edges.forEach(function (e) { els.push({ data:{ id:e.id, source:e.source, target:e.target, label:e.label } }); });
+    data.edges.forEach(function (e) { els.push({ data:{ id:e.id, source:e.source, target:e.target, label:e.label, inferred: !!e.inferred } }); });
     return els;
   }
 

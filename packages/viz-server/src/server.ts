@@ -3,7 +3,7 @@ import { AddressInfo } from 'node:net';
 import type { ReviewerConfig } from '@plex/core';
 import { RepoBusyError } from '@plex/core';
 import { listRepos, resolveRepo } from './registry';
-import { collectCode, collectBrain, collectKnowledge, expandCodeFile } from './collect';
+import { collectCode, collectBrain, collectKnowledge, collectLineage, expandCodeFile } from './collect';
 import { renderAppHtml } from './ui';
 import { DEFAULT_PORT, HOST, type DaemonInfo } from './daemon';
 
@@ -54,15 +54,22 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
   // Every /api/graph and /api/expand request carries a validated repo id (path-traversal gate).
   if (p.startsWith('/api/graph/') || p === '/api/expand') {
     const repoId = url.searchParams.get('repo') ?? '';
-    if (p.startsWith('/api/graph/knowledge')) {
-      // Knowledge is machine-global (not per-repo) — no repo needed.
-      return json(res, 200, await collectKnowledge(config.knowledgeDir));
+
+    // Knowledge is machine-global, but optionally scoped to the selected repo (by name).
+    if (p === '/api/graph/knowledge') {
+      if (!repoId) return json(res, 200, await collectKnowledge(config.knowledgeDir));
+      const scoped = resolveRepo(config, repoId);
+      if (!scoped) return json(res, 404, { error: 'unknown repo', repo: repoId });
+      return json(res, 200, await collectKnowledge(config.knowledgeDir, { repo: scoped.name }));
     }
+
+    // The remaining graphs require a valid repo.
     const repo = repoId ? resolveRepo(config, repoId) : null;
     if (!repo) return json(res, 404, { error: 'unknown repo', repo: repoId });
 
     if (p === '/api/graph/code') return json(res, 200, await collectCode(repo));
     if (p === '/api/graph/brain') return json(res, 200, await collectBrain(repo));
+    if (p === '/api/graph/lineage') return json(res, 200, await collectLineage(repo, config.knowledgeDir));
     if (p === '/api/expand') {
       const node = url.searchParams.get('node') ?? '';
       // Only File nodes expand (their symbols + neighbors). `node` is prefixed `f:<fileId>`.

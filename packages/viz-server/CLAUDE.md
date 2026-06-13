@@ -17,7 +17,7 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 | --- | --- |
 | `src/model.ts` | The uniform `{nodes, edges}` shape the UI consumes (`VizNode`/`VizEdge`/`GraphPayload`), `withCounts`, `emptyPayload`. `props` is flat + JSON-safe (collectors strip embeddings/secrets). |
 | `src/registry.ts` | Enumerate the machine's indexed repos (dirs under the repos root) + **validate a requested id** (`resolveRepo`) — the path-traversal gate. |
-| `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu graph), `collectBrain` (Kùzu brain), `collectKnowledge` (JSON). |
+| `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu graph), `collectBrain` (Kùzu brain), `collectKnowledge` (JSON, optional repo-origin scope), `collectLineage` + pure `linkLineage` (brain ⨝ knowledge). |
 | `src/server.ts` | `startServer` — routes `/`, `/healthz`, `/api/repos`, `/api/graph/{code,brain,knowledge}`, `/api/expand`; binds 127.0.0.1; maps `RepoBusyError` → 503. |
 | `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the universal auto-start). `DEFAULT_PORT = 2288`. |
 | `src/ui.ts` | `renderAppHtml` — the whole single-page Cytoscape app (CDN + SRI-pinned 3.30.2, same hash as the M5 static viz). |
@@ -37,6 +37,20 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
    unknown ids 404. The UI builds the detail panel with `textContent`, never `innerHTML` of store
    text; the only interpolated HTML value is our own build `version` (escaped). **The UI is
    read-only** — it never writes a verdict or mutates a store.
+
+## Lineage view (Tier 1)
+
+The **Lineage** tab unifies a repo's brain and its origin-scoped knowledge into one
+comment → finding → verdict → incident → pitfall chain. The brain-internal edges
+(comment→finding by locality, finding→round, verdict→finding) and the knowledge provenance
+(incident→pitfall) are **real**; the **finding→incident** hop is an **inferred same-file bridge**
+(`linkLineage`, flagged `inferred` → drawn dashed) because an `Incident` carries no recorded
+back-reference to its `Finding` yet. **Tier 2** (a durable, global, append-only *lineage journal*
+written eagerly at review time — `docs/adr/` follow-up) replaces those dashed bridges with exact,
+recorded edges AND fixes the real durability hole: a worktree's brain dies with the worktree (ADR-40)
+and the sweeper (its only loop-closer) reads the *transient* brain, so autonomous/local-only reviews
+can lose their tail before consolidation. The journal becomes the durable source the sweeper and this
+view read — the brain demoted to a rebuildable working index. (Tier 2 is a separate PR.)
 
 ## Brain edges are synthesized
 

@@ -12,6 +12,10 @@ const num = (v: unknown): number => Number(v) || 0;
  *  sets `truncated`, which the UI surfaces, so a partial graph never silently reads as complete. */
 const DEFAULT_NODE_CAP = 800;
 
+/** A PR comment is linked to a finding in the same file when their lines are within this many rows
+ *  (the brain stores no explicit comment→finding edge, so locality is the honest correlation). */
+const COMMENT_LINK_WINDOW = 25;
+
 /**
  * Open Kùzu, run `fn`, ALWAYS close — the daemon must never hold a handle across requests (Kùzu is
  * single-writer; a held lock would make a concurrent review throw `RepoBusyError`, ADR-45). A
@@ -129,7 +133,10 @@ export async function expandCodeFile(repo: RepoEntry, fileId: string): Promise<{
 
 export async function collectBrain(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Promise<GraphPayload> {
   if (!repo.hasBrain || !existsSync(repo.brainDir)) {
-    return emptyPayload('brain', 'No PR brain yet — it fills in as Plex reviews this repo.');
+    return emptyPayload(
+      'brain',
+      'No PR brain for this base checkout. If this repo was reviewed from worktrees, each brain lived in its worktree and is gone — durable lessons are under Knowledge.',
+    );
   }
   return withGraph(repo.brainDir, async (db) => {
     const nodes: VizNode[] = [];
@@ -162,12 +169,14 @@ export async function collectBrain(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Pro
 
     const findings = await db.run('MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.title AS title, fi.severity AS severity, fi.confidence AS confidence, fi.source AS source, fi.file AS file, fi.line AS line, fi.triage AS triage, fi.outcome AS outcome, fi.round AS round');
     const findingNodeId = new Map<string, string>(); // brain finding id -> node id
+    const findingLocs: Array<{ nodeId: string; target: string; file: string; line: number }> = []; // for comment→finding locality
     for (const r of findings.slice(0, cap)) {
       const t = str(r.target);
       ensureHub(t);
       const fid = str(r.id);
       const id = `fi:${fid}`;
       findingNodeId.set(fid, id);
+      findingLocs.push({ nodeId: id, target: t, file: str(r.file), line: num(r.line) });
       nodes.push({
         id,
         label: str(r.title),
@@ -199,13 +208,26 @@ export async function collectBrain(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Pro
     for (const r of await db.run('MATCH (c:Comment) RETURN c.id AS id, c.target AS target, c.body AS body, c.author AS author, c.file AS file, c.line AS line')) {
       const t = str(r.target);
       ensureHub(t);
-      const id = `c:${str(r.id)}`;
+      const cid = str(r.id);
+      const id = `c:${cid}`;
       const body = str(r.body);
+      const file = str(r.file);
+      const line = num(r.line);
       nodes.push({
         id, label: body.length > 40 ? body.slice(0, 40) + '…' : body, type: 'Comment', graph: 'brain',
-        props: { body, author: str(r.author), file: str(r.file), line: num(r.line) },
+        props: { body, author: str(r.author), file, line },
       });
-      edges.push({ id: `c-t|${str(r.id)}`, source: id, target: hubId(t), label: 'comment', graph: 'brain' });
+      // Link the comment to findings it likely concerns (same target + file, line within window) — the
+      // "this comment ↔ this finding" hop. The brain stores no explicit edge, so locality is the honest
+      // correlation; fall back to the target hub when nothing matches (keeps the comment connected).
+      const near = file
+        ? findingLocs.filter((f) => f.target === t && f.file === file && (line <= 0 || f.line <= 0 || Math.abs(f.line - line) <= COMMENT_LINK_WINDOW)).slice(0, 5)
+        : [];
+      if (near.length) {
+        for (const m of near) edges.push({ id: `c-fi|${cid}|${m.nodeId}`, source: id, target: m.nodeId, label: 'comment on', graph: 'brain' });
+      } else {
+        edges.push({ id: `c-t|${cid}`, source: id, target: hubId(t), label: 'comment', graph: 'brain' });
+      }
     }
 
     const truncated = findings.length > cap;
@@ -218,12 +240,31 @@ export async function collectBrain(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Pro
 // Knowledge base: Pitfall -> Incident provenance (JSON store, no Kùzu).
 // ---------------------------------------------------------------------------
 
-export async function collectKnowledge(knowledgeDir: string, cap = DEFAULT_NODE_CAP * 3): Promise<GraphPayload> {
+export async function collectKnowledge(
+  knowledgeDir: string,
+  opts: { repo?: string; cap?: number } = {},
+): Promise<GraphPayload> {
+  const cap = opts.cap ?? DEFAULT_NODE_CAP * 3;
   const store = new KnowledgeStore(knowledgeDir);
-  const pitfalls = await store.pitfalls();
-  const incidents = await store.incidents();
+  let pitfalls = await store.pitfalls();
+  let incidents = await store.incidents();
+  // Repo-scope (the picker's selected repo): an EXPLORER scopes by ORIGIN — "what did we learn from
+  // THIS repo" — i.e. the `repo` tag, regardless of a pitfall's apply-everywhere scope (ADR-21 scoping
+  // is a retrieval concern; here the user is inspecting provenance). Keep this repo's pitfalls + the
+  // incidents they cite + any incident tagged with this repo. The store holds the repo *name*
+  // (basename), which is what the registry carries. (No repo arg → the whole global base.)
+  if (opts.repo) {
+    pitfalls = pitfalls.filter((p) => (p.repo ?? '') === opts.repo);
+    const cited = new Set(pitfalls.flatMap((p) => p.incidentIds ?? []));
+    incidents = incidents.filter((i) => (i.repo ?? '') === opts.repo || cited.has(i.id));
+  }
   if (pitfalls.length === 0 && incidents.length === 0) {
-    return emptyPayload('knowledge', 'No learned pitfalls yet — they accrue from `plex analyze` and accepted findings.');
+    return emptyPayload(
+      'knowledge',
+      opts.repo
+        ? `No learned pitfalls scoped to ${opts.repo} yet.`
+        : 'No learned pitfalls yet — they accrue from `plex analyze` and accepted findings.',
+    );
   }
   const nodes: VizNode[] = [];
   const edges: VizEdge[] = [];
@@ -270,6 +311,60 @@ export async function collectKnowledge(knowledgeDir: string, cap = DEFAULT_NODE_
   const truncated = pitfalls.length > cap;
   const note = truncated ? `Showing ${cap} of ${pitfalls.length} pitfalls (capped).` : undefined;
   return withCounts({ graph: 'knowledge', nodes, edges, truncated, counts: {}, note });
+}
+
+// ---------------------------------------------------------------------------
+// Lineage: brain ⨝ knowledge — the comment → finding → verdict → incident → pitfall chain.
+// Tier 1 (ADR-45/M13): the finding→incident hop is an INFERRED same-file bridge (dashed), because
+// an Incident carries no recorded back-reference to its Finding yet. Tier 2 (the durable lineage
+// journal) replaces those with exact edges. The brain-internal chain (comment→finding→verdict→round)
+// and the knowledge provenance (incident→pitfall) are REAL edges from the stores.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure: merge a brain payload and a (repo-scoped) knowledge payload, adding heuristic same-file
+ * bridge edges from each accepted/fixed Finding to Incidents in the same file. Unit-tested without
+ * Kùzu. Bridges are flagged `inferred` (drawn dashed) and capped per finding so a busy file can't
+ * fan out unboundedly.
+ */
+export function linkLineage(brain: GraphPayload, knowledge: GraphPayload): GraphPayload {
+  const incidentsByFile = new Map<string, VizNode[]>();
+  for (const n of knowledge.nodes) {
+    if (n.type !== 'Incident') continue;
+    const f = String(n.props.file ?? '');
+    if (!f) continue;
+    const list = incidentsByFile.get(f);
+    if (list) list.push(n);
+    else incidentsByFile.set(f, [n]);
+  }
+  const bridges: VizEdge[] = [];
+  for (const n of brain.nodes) {
+    if (n.type !== 'Finding') continue;
+    const outcome = String(n.props.outcome ?? '');
+    if (outcome !== 'accepted' && outcome !== 'fixed') continue; // only dispositioned-as-real findings became knowledge
+    const incs = incidentsByFile.get(String(n.props.file ?? ''));
+    if (!incs) continue;
+    for (const inc of incs.slice(0, 8)) {
+      bridges.push({ id: `bridge|${n.id}|${inc.id}`, source: n.id, target: inc.id, label: 'likely became', graph: 'lineage', inferred: true });
+    }
+  }
+  const nodes = [...brain.nodes, ...knowledge.nodes];
+  const edges = [...brain.edges, ...knowledge.edges, ...bridges];
+  const counts: Record<string, number> = {};
+  for (const n of nodes) counts[n.type] = (counts[n.type] ?? 0) + 1;
+  const note = brain.nodes.length === 0
+    ? 'No PR brain for this repo (reviews may have run from worktrees) — durable lessons are under Knowledge.'
+    : bridges.length
+      ? `${bridges.length} inferred finding→incident link(s) shown dashed (same-file). Exact links arrive with the Tier-2 lineage journal.`
+      : 'Brain chain shown; no accepted finding correlated to a stored incident by file yet.';
+  return { graph: 'lineage', nodes, edges, truncated: brain.truncated || knowledge.truncated, counts, note };
+}
+
+/** The lineage view for a repo: its brain chain ⨝ its repo-scoped knowledge (one Kùzu open via collectBrain). */
+export async function collectLineage(repo: RepoEntry, knowledgeDir: string): Promise<GraphPayload> {
+  const brain = await collectBrain(repo);
+  const knowledge = await collectKnowledge(knowledgeDir, { repo: repo.name });
+  return linkLineage(brain, knowledge);
 }
 
 /** Pitfall fields for the panel — never the embedding vector (huge + useless to a human). */

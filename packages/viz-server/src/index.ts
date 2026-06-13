@@ -16,6 +16,6 @@ export type { EnsureOptions } from './daemon';
 export type { DaemonInfo } from './daemon';
 export { listRepos, resolveRepo, reposRoot } from './registry';
 export type { RepoEntry } from './registry';
-export { collectCode, collectBrain, collectKnowledge, expandCodeFile } from './collect';
+export { collectCode, collectBrain, collectKnowledge, collectLineage, linkLineage, expandCodeFile } from './collect';
 export { renderAppHtml } from './ui';
 export type { GraphPayload, VizNode, VizEdge, GraphKind } from './model';

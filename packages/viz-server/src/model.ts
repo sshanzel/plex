@@ -3,7 +3,7 @@
  * `props` is a flat, JSON-safe record shown verbatim in the detail panel — collectors must strip
  * heavy/secret fields (e.g. a pitfall's embedding vector) before they land here.
  */
-export type GraphKind = 'code' | 'brain' | 'knowledge';
+export type GraphKind = 'code' | 'brain' | 'knowledge' | 'lineage';
 
 export interface VizNode {
   id: string;
@@ -21,6 +21,13 @@ export interface VizEdge {
   /** Relationship label — provenance for code edges (import/ref/co-change), role for brain/knowledge. */
   label: string;
   graph: GraphKind;
+  /**
+   * True for a **heuristic correlation** edge, not a recorded link — drawn dashed in the UI. The
+   * lineage view bridges the brain and knowledge stores by locality (same file) because, in Tier 1,
+   * an Incident carries no hard back-reference to the Finding it came from. Tier 2 (the durable
+   * lineage journal) replaces these with exact, recorded edges.
+   */
+  inferred?: boolean;
 }
 
 export interface GraphPayload {

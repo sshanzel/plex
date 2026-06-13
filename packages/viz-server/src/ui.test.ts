@@ -10,6 +10,7 @@ describe('renderAppHtml', () => {
     expect(html).toContain('data-graph="code"');
     expect(html).toContain('data-graph="brain"');
     expect(html).toContain('data-graph="knowledge"');
+    expect(html).toContain('data-graph="lineage"');
     expect(html).toContain('9.9.9');
   });
 
