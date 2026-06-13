@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { isGeneratedArtifact } from '@plex/core';
+import { isGeneratedArtifact, retryTransientSpawn } from '@plex/core';
 import { isSupportedSource } from './extract-ts';
 
 const pexec = promisify(execFile);
@@ -135,7 +135,11 @@ export async function readCommits(cwd: string, maxCommits: number, sinceRef?: st
 /** Resolve the current HEAD sha (for incremental update bookkeeping). */
 export async function headSha(cwd: string): Promise<string> {
   try {
-    const { stdout } = await pexec('git', ['rev-parse', 'HEAD'], { cwd });
+    // Retry a transient SPAWN failure (fork-storm under the CI kuzu E2Es) but never a non-zero exit —
+    // the SAME policy ingest's `runGit` uses. Without this, a momentary EAGAIN here returns '' → the
+    // graph's `Meta.headSha` is stamped empty → the next index can't diff `storedSha..HEAD` and forces
+    // a full rebuild (FullRebuildRequired). The un-retried twin of `getHeadSha` the audit flagged (#1).
+    const { stdout } = await retryTransientSpawn(() => pexec('git', ['rev-parse', 'HEAD'], { cwd }));
     return stdout.trim();
   } catch {
     return '';

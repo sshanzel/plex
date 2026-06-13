@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parse } from './parse';
+import { parse, finiteFlag, FlagError } from './parse';
 
 // The CLI arg parser. Pinned after `--flag=value` was found to be silently mis-parsed
 // (the whole `flag=value` became a boolean key, so e.g. `--branch=main` set no base ref).
@@ -40,5 +40,25 @@ describe('parse', () => {
     const { positionals, flags } = parse(['review', '/r', '--pr', '42', '--json']);
     expect(positionals).toEqual(['review', '/r']);
     expect(flags).toEqual({ pr: '42', json: true });
+  });
+});
+
+// #3 silent-failure audit: a non-numeric numeric-flag value used to coerce to NaN and flow silently
+// into the engine (slice(0, NaN) = 0 PRs, clusterThreshold = NaN = 0 pitfalls), exiting 0 having done
+// nothing. finiteFlag turns that into a loud FlagError the run() edge maps to a non-zero exit.
+describe('finiteFlag', () => {
+  it('parses a valid number (int, float, negative)', () => {
+    expect(finiteFlag('42', 'limit')).toBe(42);
+    expect(finiteFlag('0.8', 'threshold')).toBe(0.8);
+    expect(finiteFlag('-5', 'limit')).toBe(-5);
+  });
+  it('throws FlagError on a non-numeric value (the NaN trap)', () => {
+    expect(() => finiteFlag('abc', 'threshold')).toThrow(FlagError);
+    expect(() => finiteFlag('abc', 'threshold')).toThrow('--threshold must be a finite number (got "abc")');
+  });
+  it('throws on empty, Infinity, and other non-finite values', () => {
+    expect(() => finiteFlag('', 'limit')).toThrow(FlagError); // Number('') === 0 is finite, but blank is a user error
+    expect(() => finiteFlag('Infinity', 'limit')).toThrow(FlagError);
+    expect(() => finiteFlag('NaN', 'min-cluster')).toThrow(FlagError);
   });
 });

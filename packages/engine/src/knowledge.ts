@@ -29,6 +29,7 @@ import {
 import { recordVerdict, readVerdicts, type VerdictInput, type StoredVerdict } from './verdicts';
 import { Brain } from './brain';
 import { logAudit } from './audit';
+import { projectableOutcome } from './guards';
 
 export function knowledgeStore(config: ReviewerConfig): KnowledgeStore {
   return new KnowledgeStore(config.knowledgeDir);
@@ -504,10 +505,9 @@ export async function submitVerdict(
       // explicitly dispositioned finding must not be re-matched by later fix inference
       // (reconcile / the next review), which would re-accept it and learn the same evidence
       // twice. recordFixAccepts overwrites accept→'fixed' right after — same family, finer term.
-      const outcomeByKind: Record<string, string> = {
-        accept: 'accepted', reject: 'rejected', waive: 'waived', acknowledge: 'acknowledged',
-      };
-      const projected = outcomeByKind[input.kind];
+      // `projectableOutcome` returns null for an unknown kind OR an empty findingId — the latter would
+      // make `markFindingOutcome` a silent no-op MATCH, leaving the finding open to re-accept (#4).
+      const projected = projectableOutcome(input.kind, input.findingId);
       if (projected) await brain.markFindingOutcome(input.findingId, projected);
     } finally {
       if (!sharedBrain) await brain.close();

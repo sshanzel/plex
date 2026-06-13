@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CompletionProvider } from '@plex/core';
 import { isSubstantive, categorize } from './classify';
 import { greedyCluster, centroid } from './cluster';
-import { groupThreads } from './github';
+import { groupThreads, parsePrList } from './github';
 import { llmDistill } from './distill';
 import type { RawComment } from './types';
 
@@ -32,6 +32,29 @@ describe('greedyCluster', () => {
   });
   it('centroid averages rows', () => {
     expect(centroid([[2, 0], [0, 2]])).toEqual([1, 1]);
+  });
+});
+
+// #8 silent-failure audit: listPrs used a bare JSON.parse — a non-JSON gh response (auth prompt, error
+// banner, empty body) threw an opaque "Unexpected token" with no hint it was gh output. parsePrList
+// labels the failure; valid JSON still round-trips.
+describe('parsePrList', () => {
+  it('parses valid gh pr-list JSON', () => {
+    expect(parsePrList('[{"number":7,"mergedAt":"2026-01-01T00:00:00Z"},{"number":8,"mergedAt":null}]')).toEqual([
+      { number: 7, mergedAt: '2026-01-01T00:00:00Z' },
+      { number: 8, mergedAt: null },
+    ]);
+  });
+  it('throws a labeled error (naming gh) on non-JSON output', () => {
+    expect(() => parsePrList('gh: To get started with GitHub CLI, please run: gh auth login')).toThrow(/gh pr list did not return a JSON array/);
+  });
+  it('throws on valid JSON that is not an array (a {} error object would cast straight through)', () => {
+    expect(() => parsePrList('{"message":"Not Found"}')).toThrow(/gh pr list did not return a JSON array/);
+    expect(() => parsePrList('42')).toThrow(/JSON array/);
+    expect(() => parsePrList('null')).toThrow(/JSON array/);
+  });
+  it('reports <empty> for a blank response', () => {
+    expect(() => parsePrList('   ')).toThrow(/<empty>/);
   });
 });
 

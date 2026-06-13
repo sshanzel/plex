@@ -38,6 +38,7 @@ import { isDebounced } from './sweep-helpers';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
+import { recordableHeadSha, priorRoundHeadSha } from './guards';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
@@ -488,8 +489,12 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
     // un-outcomed findings (brain.ts), so neither path double-accepts the other's.
     let unexplainedChanges: AttributedChange[] = [];
     let inferredAccepts: AcceptedFix[] = [];
-    if (state.lastN > 0 && state.lastHeadSha && headSha && state.lastHeadSha !== headSha) {
-      const changed = await getChangedFileTexts(cwd, state.lastHeadSha, headSha);
+    // Anchor attribution on the PRIOR round's head, not the latest recorded round's — so a crash-retry
+    // that already recorded THIS round (the Linux Kùzu close-time SIGSEGV) reproduces the same signal
+    // instead of comparing the head to itself and silently dropping it (priorRoundHeadSha, guards.ts).
+    const priorHead = priorRoundHeadSha(state.rounds, round);
+    if (state.lastN > 0 && priorHead && headSha && priorHead !== headSha) {
+      const changed = await getChangedFileTexts(cwd, priorHead, headSha);
       if (changed.length > 0) {
         // Locality-only by default (empty vectors → semantic never fires); a configured provider
         // fills these in below for the semantic half + unexplained-change attribution.
@@ -543,7 +548,18 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
       }
     }
 
-    await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: headSha || undefined, baseRef }, comments);
+    // A round with an empty headSha would poison the next round's attribution anchor (#2/#9). When the
+    // current head is unresolved (a git/PR-head lookup that failed even past the spawn-retry), carry
+    // the last known anchor forward so the round still records — comments persist, a Round row exists
+    // (no false split-signature for healSplitTarget), and the next round keeps a valid anchor. Skip +
+    // log ONLY when there's no prior anchor either (a first-ever review whose git is broken).
+    const recordSha = recordableHeadSha(headSha, state.lastHeadSha);
+    if (recordSha) {
+      await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: recordSha, baseRef }, comments);
+    } else {
+      const where = opts.source === 'pr' && opts.pr != null ? `PR #${opts.pr}` : 'HEAD';
+      process.stderr.write(`[plex] could not resolve ${where} sha for ${target} (no prior anchor); skipping round record\n`);
+    }
 
     return { target, round, priorRounds: state.rounds, unexplainedChanges, openComments: comments, inferredAccepts };
   } finally {

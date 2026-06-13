@@ -45,15 +45,26 @@ export async function readVerdicts(
   config: ReviewerConfig,
 ): Promise<StoredVerdict[]> {
   const p = repoPaths(repoPath, config.dataDir);
+  let txt: string;
   try {
-    const txt = await readFile(p.verdictsFile, 'utf8');
-    return txt
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as StoredVerdict);
+    txt = await readFile(p.verdictsFile, 'utf8');
   } catch {
-    return [];
+    return []; // no log yet
   }
+  // Parse PER LINE — a single corrupt record (a truncated final line from an interrupted append) must
+  // not discard EVERY verdict. The old whole-file `.map(JSON.parse)` threw and the catch returned [],
+  // silently wiping all waivers/suppressions so every dismissed finding re-surfaced (#10 silent-failure
+  // audit). Same per-line resilience store.ts/audit.ts already apply to their JSONL logs.
+  const out: StoredVerdict[] = [];
+  for (const line of txt.split('\n')) {
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line) as StoredVerdict);
+    } catch {
+      /* skip the corrupt line, keep the rest */
+    }
+  }
+  return out;
 }
 
 /**

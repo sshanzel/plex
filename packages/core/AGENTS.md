@@ -17,9 +17,14 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`,
   `suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 }` (ADR-41),
   `decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 }` (positive-pitfall decay, ADR-42).
+- `src/spawn-retry.ts` — `isTransientSpawnError` + `retryTransientSpawn`: the shared child-process
+  retry policy (retry a never-forked SPAWN failure under fork-storm, never a non-zero EXIT). Lives here
+  so `@plex/ingest` (`runGit`) and `@plex/code-graph` (`headSha`) can't drift apart — the audit found
+  code-graph's `headSha` was an un-retried twin of the one ingest had hardened.
 - `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) and `CompletionProvider`
   (offline analysis only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
-  null-on-failure so callers degrade instead of failing), `cosineSimilarity`,
+  **result-length check** + null-on-failure so callers degrade instead of failing — a provider that
+  returns a different count than its input would silently misalign every `vecs[i]`), `cosineSimilarity`,
   `isGeneratedArtifact` (lockfiles/minified bundles/source maps/snapshots — the
   ignore-list every ingestion edge applies), `cosineBackground`/`adaptiveFloor` (anisotropy-aware thresholds,
   [`docs/design/tuning.md`](../../docs/design/tuning.md) §6), `slugify`, `hashId`.
@@ -52,5 +57,5 @@ made self-ignoring by `ensureDataDir` (a `.gitignore` of `*` inside).
 
 ## Testing
 
-`config.test.ts`, `providers.test.ts`, `errors.test.ts` — all pure vitest units (`pnpm test:unit`).
-Nothing here touches Kùzu or the network.
+`config.test.ts`, `providers.test.ts`, `errors.test.ts`, `spawn-retry.test.ts` — all pure vitest units
+(`pnpm test:unit`). Nothing here touches Kùzu or the network.

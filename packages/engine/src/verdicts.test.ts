@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveConfig, type ReviewerConfig } from '@plex/core';
+import { repoPaths } from './paths';
 import { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
 
 // verdicts.ts is pure fs (no Kùzu) → vitest-safe. A waiver's embedding must be PERSISTED (so the
@@ -41,6 +42,28 @@ describe('recordVerdict', () => {
     const stored = await recordVerdict(repo, { findingId: 'f2', kind: 'accept' }, config);
     expect('embedding' in stored).toBe(false);
     expect((await readVerdicts(repo, config))[0]!.kind).toBe('accept');
+  });
+
+  // #10 silent-failure audit: one corrupt line (a truncated final record from an interrupted append,
+  // a partial fsync) must NOT discard EVERY verdict. The old whole-file `.map(JSON.parse)` threw and
+  // the catch returned [] — total, silent loss of all waivers/suppressions, so every previously-waived
+  // or -rejected finding re-surfaces with no error. Match store.ts/audit.ts: skip the bad line, keep
+  // the rest. This is the verdict-store sibling of the same fault those two already guard against.
+  it('skips a single corrupt line and keeps the surrounding valid verdicts', async () => {
+    await recordVerdict(repo, { findingId: 'good1', kind: 'waive', file: 'a.ts', line: 1, title: 'first' }, config);
+    // Inject a torn record between two good ones (exactly what an interrupted append leaves behind).
+    appendFileSync(repoPaths(repo, config.dataDir).verdictsFile, '{"findingId":"torn","kind":"wai\n');
+    await recordVerdict(repo, { findingId: 'good2', kind: 'reject', file: 'b.ts', line: 2, title: 'second' }, config);
+
+    const ids = (await readVerdicts(repo, config)).map((v) => v.findingId).sort();
+    expect(ids).toEqual(['good1', 'good2']); // not [] — the corrupt line is dropped, the rest survive
+  });
+
+  it('loadWaivers survives a corrupt verdict line (suppressions are not silently wiped)', async () => {
+    await recordVerdict(repo, { findingId: 'w', kind: 'waive', scope: 'line', file: 'src/x.ts', line: 9, title: 'kept waiver' }, config);
+    appendFileSync(repoPaths(repo, config.dataDir).verdictsFile, 'not json at all\n');
+    const titles = (await loadWaivers(repo, config)).map((w) => w.title);
+    expect(titles).toContain('kept waiver');
   });
 });
 

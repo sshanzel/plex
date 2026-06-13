@@ -11,6 +11,7 @@ import path from 'node:path';
 import { CodeGraphDB } from '@plex/code-graph';
 import { normalizeTitle } from '@plex/findings';
 import { repoPaths } from './paths';
+import { HEAL_RELABEL_ORDER } from './guards';
 
 /**
  * The per-PR "brain" (ADR-22/23/30): a per-repo **Kùzu** database holding rounds, findings,
@@ -154,7 +155,10 @@ export class Brain {
     if (!from) return null;
 
     const rc = await this.db.run('MATCH (r:Round {target:$f}) RETURN count(r) AS c', { f: from });
-    for (const label of ['Round', 'Comment', 'Finding', 'Verdict']) {
+    // Re-key Round LAST (HEAL_RELABEL_ORDER) so a crash mid-migration leaves the brain still detectable
+    // as split (findings present, no own rounds) and the next review/reconcile re-runs to completion —
+    // crash-safe + idempotent without a transaction (#6 silent-failure audit; rationale in guards.ts).
+    for (const label of HEAL_RELABEL_ORDER) {
       await this.db.run(`MATCH (n:${label} {target:$f}) SET n.target=$t`, { f: from, t: canonicalTarget });
     }
     return { from, rounds: Number(rc[0]?.c ?? 0) };
@@ -297,6 +301,10 @@ export class Brain {
 
   /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). */
   async markFindingOutcome(findingId: string, outcome: string): Promise<void> {
+    // An empty id would run `MATCH (fi:Finding {id:''})` — matches nothing, so the disposition is
+    // silently lost and the finding stays open to be re-accepted + double-counted (#4 silent-failure
+    // audit). Callers already gate via `projectableOutcome`; this is the belt-and-suspenders no-op.
+    if (!findingId) return;
     await this.db.run('MATCH (fi:Finding {id:$id}) SET fi.outcome=$o', { id: findingId, o: outcome });
   }
 }

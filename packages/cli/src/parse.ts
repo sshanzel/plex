@@ -33,3 +33,20 @@ export function parse(argv: string[]): Parsed {
   }
   return { positionals, flags };
 }
+
+/** Thrown by `finiteFlag` when a numeric flag's value isn't a finite number — caught at the run() edge. */
+export class FlagError extends Error {}
+
+/**
+ * Coerce a numeric flag value, rejecting anything that isn't finite. A bare `Number('abc')` yields
+ * `NaN`, which then flows silently into the engine — `slice(0, NaN)` is 0 PRs, `clusterThreshold = NaN`
+ * clusters nothing — and the command exits 0 having quietly done nothing (#3 silent-failure audit).
+ * Surfacing it as a `FlagError` turns a silent no-op into an actionable non-zero exit.
+ */
+export function finiteFlag(raw: string, name: string): number {
+  // `Number('')` and `Number('  ')` are 0 (finite) — a blank value is a user error, not zero. Reject it
+  // explicitly so `--limit ''` doesn't silently mean `--limit 0`.
+  const n = raw.trim() === '' ? NaN : Number(raw);
+  if (!Number.isFinite(n)) throw new FlagError(`--${name} must be a finite number (got "${raw}")`);
+  return n;
+}

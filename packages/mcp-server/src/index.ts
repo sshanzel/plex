@@ -220,7 +220,9 @@ server.tool(
   'Record the user\'s verdict on a finding (accept | reject | waive | acknowledge). `acknowledge` is for an `awareness` flag confirmed intentional — it stops re-surfacing UNLESS the situation materially changes, without down-weighting the reviewer (use this, not reject, for "good catch, intentional"). For waive/acknowledge pass the finding identity (file/line/title/pattern/category). Pass the same diff source (source/pr/mode/baseRef) you reviewed so it lands on the right PR brain.',
   {
     repoPath: z.string().optional(),
-    findingId: z.string(),
+    // .min(1): an empty findingId can't key a brain Finding — its outcome projection silently no-ops and
+    // the finding stays open to be re-accepted + double-counted (#4 silent-failure audit). Reject at the edge.
+    findingId: z.string().min(1),
     kind: z.enum(['accept', 'reject', 'waive', 'acknowledge']),
     scope: z.enum(['line', 'file', 'pattern-repo', 'category-repo', 'category-global']).optional(),
     note: z.string().optional(),
@@ -376,7 +378,15 @@ server.tool(
 );
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+try {
+  await server.connect(transport);
+} catch (e) {
+  // Bootstrap (the stdio handshake) failing used to reject this top-level await with a bare,
+  // unhandled stack the client couldn't interpret (#7 silent-failure audit). Surface a labeled
+  // diagnostic on the log channel and exit non-zero so the failure is legible, not a raw trace.
+  process.stderr.write(`[plex] MCP server failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(1);
+}
 // Keep stdin in flowing mode so the event loop doesn't drain between back-to-back
 // tool calls (e.g. index_repo → get_review_context). Without this, after a
 // long-running handler (Kùzu indexing spawns and joins a child) the event loop
