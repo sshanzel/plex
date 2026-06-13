@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NormalizedDiff, DiffFile } from '@plex/core';
@@ -69,6 +69,19 @@ describe('runDeterministic', () => {
       expect(await runDeterministic(repo, diff(file({ path: traversal, hunks: [] })))).toEqual([]);
       // a classic deep escape is contained too.
       expect(await runDeterministic(repo, diff(file({ path: '../../../../etc/passwd.ts', hunks: [] })))).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('never reads through an in-tree symlink that points outside the repo (realpath containment)', async () => {
+    // Lexical resolution alone wouldn't catch this: `link/secret.ts` resolves lexically INSIDE the
+    // repo, but `link` is a symlink to an outside dir, so a plain readFile would follow it out.
+    const outside = mkdtempSync(join(tmpdir(), 'plex-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.ts'), SRC);
+      symlinkSync(outside, join(repo, 'link')); // a symlink planted in the reviewed tree
+      expect(await runDeterministic(repo, diff(file({ path: 'link/secret.ts', hunks: [] })))).toEqual([]);
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
