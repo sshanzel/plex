@@ -75,6 +75,28 @@ describe('safeEmbed', () => {
     const p = stub({ embed: async (texts) => { if (++call === 2) throw new Error('boom'); return texts.map(() => [0]); } });
     expect(await safeEmbed(p, Array.from({ length: 200 }, () => 'x'), { chunkSize: 128 })).toBeNull();
   });
+
+  // m5/#5 silent-failure audit: a provider that returns FEWER (or more) vectors than texts — a real
+  // failure mode of batched embedding APIs (a dropped item, a partial response) — must NOT silently
+  // hand back a misaligned array. Callers index `vecs[i]` against `texts[i]`; a short array means
+  // every vector after the gap is attributed to the WRONG text → a wrong fix-match / waiver. Degrade
+  // to null (locality-only) exactly like a thrown error, never a length-mismatched result.
+  it('returns null when the provider yields fewer vectors than inputs (silent misalignment guard)', async () => {
+    const dropsOne = stub({ embed: async (texts) => texts.slice(1).map((t) => [t.length]) }); // returns n-1
+    expect(await safeEmbed(dropsOne, ['a', 'bb', 'ccc'])).toBeNull();
+  });
+
+  it('returns null when the provider yields more vectors than inputs', async () => {
+    const extra = stub({ embed: async (texts) => [...texts.map((t) => [t.length]), [99]] }); // returns n+1
+    expect(await safeEmbed(extra, ['a', 'bb'])).toBeNull();
+  });
+
+  it('still aligns across chunk boundaries when each chunk returns the right count', async () => {
+    // The length check is on the WHOLE batch, so a correct multi-chunk run must still pass.
+    const inputs = Array.from({ length: 200 }, (_, i) => 'x'.repeat((i % 5) + 1));
+    const out = await safeEmbed(stub(), inputs, { chunkSize: 128 });
+    expect(out!.map((v) => v[0])).toEqual(inputs.map((t) => t.length));
+  });
 });
 
 // slugify + hashId build collision-free ids for pitfalls/incidents. The hash is what

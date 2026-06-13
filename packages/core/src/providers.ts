@@ -111,6 +111,11 @@ export async function safeEmbed(
     for (let i = 0; i < capped.length; i += chunkSize) {
       out.push(...(await provider.embed(capped.slice(i, i + chunkSize))));
     }
+    // A provider that returns a different count than it was given (a dropped item, a partial response)
+    // would silently MISALIGN every caller's `vecs[i] ↔ texts[i]` indexing — a wrong fix-match / waiver,
+    // not a crash. Treat a length mismatch like a thrown error: degrade to null (locality-only), never
+    // hand back a misaligned array (m5/#5 silent-failure audit).
+    if (out.length !== texts.length) return null;
     return out;
   } catch {
     return null;
