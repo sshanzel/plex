@@ -1,7 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { CodeGraphDB } from '@plex/code-graph';
 import { KnowledgeStore } from '@plex/knowledge';
-import type { Pitfall, Incident } from '@plex/core';
+import { foldLineage, parseLineageEvents, type Pitfall, type Incident } from '@plex/core';
 import { type GraphPayload, type VizEdge, type VizNode, emptyPayload, withCounts } from './model';
 import type { RepoEntry } from './registry';
 
@@ -132,108 +133,99 @@ export async function expandCodeFile(repo: RepoEntry, fileId: string): Promise<{
 // ---------------------------------------------------------------------------
 
 export async function collectBrain(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Promise<GraphPayload> {
-  if (!repo.hasBrain || !existsSync(repo.brainDir)) {
-    return emptyPayload(
-      'brain',
-      'No PR brain for this base checkout. If this repo was reviewed from worktrees, each brain lived in its worktree and is gone — durable lessons are under Knowledge.',
-    );
+  // The brain is now the durable JSONL lineage layer (ADR-46) — one file per review target under the
+  // BASE repo's `lineage/` dir. We fold each file with the SAME `@plex/core` fold the engine uses, so
+  // the viz and the review loop agree on outcome-stickiness etc. No Kùzu, so no lock / 503 here.
+  if (!repo.hasLineage || !existsSync(repo.lineageDir)) {
+    return emptyPayload('brain', 'No review history yet — it accrues durably (per PR/branch) as Plex reviews this repo.');
   }
-  return withGraph(repo.brainDir, async (db) => {
-    const nodes: VizNode[] = [];
-    const edges: VizEdge[] = [];
-    const targets = new Set<string>();
-    const roundIdByKey = new Map<string, string>(); // `${target}#${n}` -> node id
+  let files: string[];
+  try {
+    files = readdirSync(repo.lineageDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return emptyPayload('brain', 'No review history yet.');
+  }
 
-    const hubId = (t: string): string => `t:${t}`;
-    const ensureHub = (t: string): void => {
-      if (!t || targets.has(t)) return;
-      targets.add(t);
-      nodes.push({ id: hubId(t), label: t, type: 'Target', graph: 'brain', props: { target: t } });
-    };
+  const nodes: VizNode[] = [];
+  const edges: VizEdge[] = [];
+  const targets = new Set<string>();
+  const addedFindingIds = new Set<string>(); // finding ids actually rendered (within the cap)
+  const hubId = (t: string): string => `t:${t}`;
+  const ensureHub = (t: string): void => {
+    if (!t || targets.has(t)) return;
+    targets.add(t);
+    nodes.push({ id: hubId(t), label: t, type: 'Target', graph: 'brain', props: { target: t } });
+  };
 
-    const rounds = await db.run('MATCH (r:Round) RETURN r.id AS id, r.target AS target, r.n AS n, r.ts AS ts, r.headSha AS headSha, r.baseRef AS baseRef ORDER BY r.target, r.n');
-    for (const r of rounds) {
-      const t = str(r.target);
-      ensureHub(t);
-      const id = `r:${str(r.id)}`;
-      roundIdByKey.set(`${t}#${num(r.n)}`, id);
-      nodes.push({
-        id,
-        label: `round ${num(r.n)}`,
-        type: 'Round',
-        graph: 'brain',
-        props: { target: t, n: num(r.n), ts: str(r.ts), headSha: str(r.headSha).slice(0, 12), baseRef: str(r.baseRef) },
-      });
-      edges.push({ id: `r-t|${str(r.id)}`, source: id, target: hubId(t), label: 'round of', graph: 'brain' });
+  let totalFindings = 0;
+  let findingBudget = cap;
+  for (const f of files) {
+    let events;
+    try {
+      events = parseLineageEvents(readFileSync(join(repo.lineageDir, f), 'utf8'));
+    } catch {
+      continue;
+    }
+    if (events.length === 0) continue;
+    const t = events[0]!.target; // one target per file
+    const view = foldLineage(events);
+    ensureHub(t);
+
+    const roundNodeByN = new Map<number, string>();
+    for (const r of view.rounds) {
+      const id = `r:${t}#${r.n}`;
+      roundNodeByN.set(r.n, id);
+      nodes.push({ id, label: `round ${r.n}`, type: 'Round', graph: 'brain', props: { target: t, n: r.n, ts: r.ts, headSha: r.headSha.slice(0, 12), baseRef: r.baseRef } });
+      edges.push({ id: `r-t|${id}`, source: id, target: hubId(t), label: 'round of', graph: 'brain' });
     }
 
-    const findings = await db.run('MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.title AS title, fi.severity AS severity, fi.confidence AS confidence, fi.source AS source, fi.file AS file, fi.line AS line, fi.triage AS triage, fi.outcome AS outcome, fi.round AS round');
-    const findingNodeId = new Map<string, string>(); // brain finding id -> node id
-    const findingLocs: Array<{ nodeId: string; target: string; file: string; line: number }> = []; // for comment→finding locality
-    for (const r of findings.slice(0, cap)) {
-      const t = str(r.target);
-      ensureHub(t);
-      const fid = str(r.id);
-      const id = `fi:${fid}`;
-      findingNodeId.set(fid, id);
-      findingLocs.push({ nodeId: id, target: t, file: str(r.file), line: num(r.line) });
+    const findingLocs: Array<{ nodeId: string; file: string; line: number }> = [];
+    totalFindings += view.findings.length;
+    for (const fi of view.findings) {
+      if (findingBudget <= 0) break;
+      findingBudget -= 1;
+      const id = `fi:${fi.id}`;
+      addedFindingIds.add(fi.id);
+      findingLocs.push({ nodeId: id, file: fi.file, line: fi.line });
       nodes.push({
-        id,
-        label: str(r.title),
-        type: 'Finding',
-        graph: 'brain',
+        id, label: fi.title, type: 'Finding', graph: 'brain',
         props: {
-          severity: str(r.severity), confidence: num(r.confidence), source: str(r.source),
-          file: str(r.file), line: num(r.line), triage: str(r.triage),
-          outcome: str(r.outcome) || 'open', round: num(r.round),
+          severity: fi.severity, confidence: fi.confidence, source: fi.source,
+          file: fi.file, line: fi.line, triage: fi.triage,
+          outcome: view.outcomeOf(fi.id) || 'open', round: fi.round,
         },
       });
-      // Attach to the round it was last raised in (fallback: the hub) so the graph stays connected.
-      const round = roundIdByKey.get(`${t}#${num(r.round)}`);
-      edges.push({ id: `fi-r|${fid}`, source: id, target: round ?? hubId(t), label: 'raised in', graph: 'brain' });
+      const round = roundNodeByN.get(fi.round);
+      edges.push({ id: `fi-r|${fi.id}`, source: id, target: round ?? hubId(t), label: 'raised in', graph: 'brain' });
     }
 
-    for (const r of await db.run('MATCH (v:Verdict) RETURN v.id AS id, v.target AS target, v.findingId AS findingId, v.kind AS kind, v.scope AS scope, v.ts AS ts, v.title AS title')) {
-      const t = str(r.target);
-      ensureHub(t);
-      const id = `v:${str(r.id)}`;
-      nodes.push({
-        id, label: str(r.kind), type: 'Verdict', graph: 'brain',
-        props: { kind: str(r.kind), scope: str(r.scope), ts: str(r.ts), title: str(r.title), findingId: str(r.findingId) },
-      });
-      const fnode = findingNodeId.get(str(r.findingId));
-      edges.push({ id: `v-fi|${str(r.id)}`, source: id, target: fnode ?? hubId(t), label: 'verdict on', graph: 'brain' });
+    for (const v of view.verdicts) {
+      const id = `v:${t}#${v.findingId}`;
+      nodes.push({ id, label: v.kind, type: 'Verdict', graph: 'brain', props: { kind: v.kind, scope: v.scope, ts: v.ts, title: v.title, findingId: v.findingId } });
+      const fnode = addedFindingIds.has(v.findingId) ? `fi:${v.findingId}` : hubId(t);
+      edges.push({ id: `v-fi|${id}`, source: id, target: fnode, label: 'verdict on', graph: 'brain' });
     }
 
-    for (const r of await db.run('MATCH (c:Comment) RETURN c.id AS id, c.target AS target, c.body AS body, c.author AS author, c.file AS file, c.line AS line')) {
-      const t = str(r.target);
-      ensureHub(t);
-      const cid = str(r.id);
-      const id = `c:${cid}`;
-      const body = str(r.body);
-      const file = str(r.file);
-      const line = num(r.line);
-      nodes.push({
-        id, label: body.length > 40 ? body.slice(0, 40) + '…' : body, type: 'Comment', graph: 'brain',
-        props: { body, author: str(r.author), file, line },
-      });
-      // Link the comment to findings it likely concerns (same target + file, line within window) — the
-      // "this comment ↔ this finding" hop. The brain stores no explicit edge, so locality is the honest
-      // correlation; fall back to the target hub when nothing matches (keeps the comment connected).
-      const near = file
-        ? findingLocs.filter((f) => f.target === t && f.file === file && (line <= 0 || f.line <= 0 || Math.abs(f.line - line) <= COMMENT_LINK_WINDOW)).slice(0, 5)
+    for (const c of view.comments) {
+      const id = `c:${c.id}`;
+      const body = c.body;
+      nodes.push({ id, label: body.length > 40 ? body.slice(0, 40) + '…' : body, type: 'Comment', graph: 'brain', props: { body, author: c.author, file: c.file, line: c.line } });
+      // Same-file, line-window locality → the "this comment ↔ this finding" hop (no stored edge);
+      // fall back to the target hub when nothing matches, so the comment stays connected.
+      const near = c.file
+        ? findingLocs.filter((fl) => fl.file === c.file && (c.line <= 0 || fl.line <= 0 || Math.abs(fl.line - c.line) <= COMMENT_LINK_WINDOW)).slice(0, 5)
         : [];
       if (near.length) {
-        for (const m of near) edges.push({ id: `c-fi|${cid}|${m.nodeId}`, source: id, target: m.nodeId, label: 'comment on', graph: 'brain' });
+        for (const m of near) edges.push({ id: `c-fi|${c.id}|${m.nodeId}`, source: id, target: m.nodeId, label: 'comment on', graph: 'brain' });
       } else {
-        edges.push({ id: `c-t|${cid}`, source: id, target: hubId(t), label: 'comment', graph: 'brain' });
+        edges.push({ id: `c-t|${c.id}`, source: id, target: hubId(t), label: 'comment', graph: 'brain' });
       }
     }
+  }
 
-    const truncated = findings.length > cap;
-    const note = truncated ? `Showing ${cap} of ${findings.length} findings (capped).` : undefined;
-    return withCounts({ graph: 'brain', nodes, edges, truncated, counts: {}, note });
-  });
+  const truncated = totalFindings > cap;
+  const note = truncated ? `Showing ${cap} of ${totalFindings} findings (capped).` : undefined;
+  return withCounts({ graph: 'brain', nodes, edges, truncated, counts: {}, note });
 }
 
 // ---------------------------------------------------------------------------

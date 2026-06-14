@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { repoId, repoPaths, ensureDataDir } from './paths';
+import { repoId, repoPaths, ensureDataDir, baseRepoPath, baseRepoId, lineagePaths } from './paths';
 
 // repoId + repoPaths are the foundation of centralized storage (ADR-30) AND of worktree
 // isolation (ADR-32): distinct absolute paths MUST map to distinct data dirs, and the
@@ -95,7 +95,6 @@ describe('repoPaths', () => {
     const p = repoPaths(abs, '.plex');
     const r = p.reviewerDir;
     expect(p.graphDir).toBe(path.join(r, 'graph.kuzu'));
-    expect(p.brainDir).toBe(path.join(r, 'brain.kuzu'));
     expect(p.verdictsFile).toBe(path.join(r, 'verdicts.jsonl'));
     expect(p.analyzeStateFile).toBe(path.join(r, 'analyze-state.json'));
     expect(p.logFile).toBe(path.join(r, 'log', 'events.jsonl'));
@@ -105,6 +104,23 @@ describe('repoPaths', () => {
     expect(p.sweepLockFile).toBe(path.join(r, 'sweep.lock'));
     expect(p.baseShaFile).toBe(path.join(r, 'base.sha'));
     expect(p.repoPath).toBe(abs);
+  });
+
+  it('lineagePaths: a non-git dir is its own base; files derive from the base reviewerDir (ADR-46)', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'plex-lin-'));
+    try {
+      // Not a git repo → baseRepoPath falls back to the resolved path itself.
+      expect(baseRepoPath(dir)).toBe(path.resolve(dir));
+      expect(baseRepoId(dir)).toBe(repoId(path.resolve(dir)));
+      const lp = lineagePaths(dir, '.plex');
+      expect(lp.lineageDir).toBe(path.join(repoPaths(dir, '.plex').reviewerDir, 'lineage'));
+      // target slug is sanitized + scoped to the lineage dir
+      expect(lp.fileFor('repo__pr_18')).toBe(path.join(lp.lineageDir, 'repo__pr_18.jsonl'));
+      // slashes → `_` (so the result is a single filename segment, never a path-traversal)
+      expect(lp.fileFor('weird/x/name')).toBe(path.join(lp.lineageDir, 'weird_x_name.jsonl'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('gives two different absolute repo paths NON-overlapping data dirs (worktree airtightness)', () => {

@@ -11,13 +11,13 @@ describe('registry', () => {
   let root: string;
   beforeEach(() => {
     root = mkdtempSync(path.join(os.tmpdir(), 'plex-reg-'));
-    // a usable repo: has graph + brain + a repo-path sidecar
+    // a usable repo: has graph + lineage + a repo-path sidecar
     const a = path.join(root, 'alpha-12345678');
     mkdirSync(path.join(a, 'graph.kuzu'), { recursive: true });
-    mkdirSync(path.join(a, 'brain.kuzu'), { recursive: true });
+    mkdirSync(path.join(a, 'lineage'), { recursive: true });
     writeFileSync(path.join(a, 'repo-path'), '/home/me/code/alpha\n');
-    // brain-only repo (a worktree-style entry) — still usable
-    mkdirSync(path.join(root, 'beta-abcdef01', 'brain.kuzu'), { recursive: true });
+    // lineage-only repo — still usable
+    mkdirSync(path.join(root, 'beta-abcdef01', 'lineage'), { recursive: true });
     // a dir with neither store — must be ignored
     mkdirSync(path.join(root, 'empty-00000000'), { recursive: true });
   });
@@ -29,13 +29,13 @@ describe('registry', () => {
     expect(reposRoot(cfg(''))).toBe(path.join(os.homedir(), '.plex', 'repos'));
   });
 
-  it('lists only dirs with a graph or brain, with friendly names', () => {
+  it('lists only dirs with a graph or lineage, with friendly names', () => {
     const repos = listRepos(cfg(root));
     expect(repos.map((r) => r.id).sort()).toEqual(['alpha-12345678', 'beta-abcdef01']);
     const alpha = repos.find((r) => r.id === 'alpha-12345678')!;
     expect(alpha.name).toBe('alpha'); // from repo-path basename
     expect(alpha.hasGraph).toBe(true);
-    expect(alpha.hasBrain).toBe(true);
+    expect(alpha.hasLineage).toBe(true);
     const beta = repos.find((r) => r.id === 'beta-abcdef01')!;
     expect(beta.hasGraph).toBe(false);
     expect(beta.name).toBe('beta'); // id with the -<hash> suffix stripped

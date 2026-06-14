@@ -14,7 +14,7 @@ ADR-32/40 (worktree graph copy), and `docs/design/knowledge-decay.md`.
 | Store | Holds | Tech | Lifetime / scope | A real graph? Labeled edges? |
 |---|---|---|---|---|
 | **Code graph** | Files, Symbols; `Imports`/`Refs`/`CoChange`/`Declares` | **Kùzu** (`graph.kuzu`) | per-repo; worktree gets a **disposable copy** | **Yes** — typed REL tables with properties (`CoChange{weight,cnt}`). The one true labeled-edge graph. |
-| **PR brain** | Round, Finding, Verdict, Comment | **Kùzu** (`brain.kuzu`) | per-repo (today **per-worktree → dies with it**) | **No** — node tables only; "edges" are string FKs (`target`,`round`,`findingId`) synthesized at read time. |
+| **PR brain** (lineage layer) | Round, Finding, Verdict, Comment | **JSONL event log** (`lineage/<target>.jsonl`, ADR-46) | **base-keyed, durable** under `~/.plex/repos/<baseId>/` — survives `git worktree remove` | **No** — append-only events folded (`foldLineage`) by FKs (`target`,`round`,`findingId`); edges synthesized at read time. |
 | **Knowledge** | Pitfall (rule+confidence+vector), Incident (provenance) | **JSONL** (`pitfalls.jsonl`, `incidents.jsonl`) | **global**, durable (`~/.plex/knowledge`) | **No** — flat append logs; connections are FKs (`incidentIds`, `pitfallId`) assembled in memory. |
 | **Verdicts** | accept/reject/waive/acknowledge (+ waiver vector) | JSONL (`verdicts.jsonl`) | per-repo (worktree → dies) | n/a — flat log |
 | **Embed cache** | vectors for stable recurring texts (finding titles) | JSON (`embed-cache.json`) | per-repo, rebuildable | n/a — cache |
@@ -115,7 +115,13 @@ engine, so we get FalkorDB-style labeled edges **without** FalkorDB-style servic
 
 ---
 
-## 6. Target — the knowledge graph *subsumes* lineage (decided direction)
+## 6. Target — the knowledge graph *subsumes* lineage (ADR-46 — BUILT)
+
+> **Status: built.** The brain is now a durable, base-keyed JSONL lineage log (not Kùzu); it survives
+> worktree deletion, the finding→incident edge is recorded (not inferred), `reviewTargetFor`/verdicts
+> are base-keyed, and `healSplitTarget` is retired. The §1–§5 prose below describes the *prior* state
+> and the reasoning that led here; the storage map in this section is what shipped.
+
 
 From the design thread: lineage has no standalone value; its worth is as the **provenance layer
 underneath knowledge**. So the target is **one connected graph**, two layers:

@@ -17,14 +17,14 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 - `src/diff.ts` — `DiffSource` (`source: local|pr`, `mode: working|staged|branch`, `baseRef`, `pr`) → `NormalizedDiff` via `@plex/ingest`.
 - `src/change-context.ts` — the author's *stated intent* (PR title/body, or commit subjects for branch mode) as a fact to check the code against.
 - `src/target.ts` — `reviewTarget` / `reviewTargetFor`: the brain's correlation key (see invariant below).
-- `src/guards.ts` — pure decision helpers extracted so silent-failure guards are unit-testable without opening Kùzu: `HEAL_RELABEL_ORDER` (Round-last crash-safe re-key for `healSplitTarget`), `recordableHeadSha` (carry the last anchor forward when the current head is unresolved rather than skipping the round — keeps comments + avoids a false split-signature), `priorRoundHeadSha` (anchor attribution on the round *before* this one so a crash-retry that already recorded the current round reproduces the same changed-without-feedback/fix-inference signal — fixes the Linux Kùzu close-time SIGSEGV replay), `projectableOutcome`/`OUTCOME_BY_KIND` (skip a brain outcome projection for an empty findingId — a no-op MATCH that re-opens the finding). Imported by `brain.ts`/`review.ts`/`knowledge.ts`.
+- `src/guards.ts` — pure decision helpers extracted so silent-failure guards are unit-testable without opening Kùzu: `recordableHeadSha` (carry the last anchor forward when the current head is unresolved rather than skipping the round — keeps comments + avoids a false split-signature), `priorRoundHeadSha` (anchor attribution on the round *before* this one so a crash-retry that already recorded the current round reproduces the same changed-without-feedback/fix-inference signal — fixes the Linux Kùzu close-time SIGSEGV replay), `projectableOutcome`/`OUTCOME_BY_KIND` (skip a brain outcome projection for an empty findingId — a no-op MATCH that re-opens the finding). Imported by `brain.ts`/`review.ts`/`knowledge.ts`.
 
 **Review context & indexing**
 - `src/review.ts` — `indexRepo` (full/incremental/worktree-seeded, ADR-32), `assembleReviewContext` (the heart — see below), `blastRadius`.
 - `src/viz.ts` — `reviewContextToHtml`: self-contained Cytoscape HTML of the neighborhood (`plex review --html`).
 
 **PR brain & reconcile**
-- `src/brain.ts` — the embedded Kùzu brain (ADR-30): schema, round state, finding/verdict writes, `healSplitTarget`, `rankingSamples`, `openTargets` (the sweep's work list — open non-`awareness` findings + latest round head/baseRef).
+- `src/brain.ts` — the durable JSONL **lineage layer** (ADR-46, replaces the Kùzu brain): append-only event log per target under the base repo's `lineage/`, folded by `@plex/core` `foldLineage`; round state, finding/verdict writes, `rankingSamples`, `openTargets` (the sweep's work list — open non-`awareness` findings + latest round head/baseRef).
 - `src/reconcile.ts` — `reconcileOutcomes` (standalone "did the author fix these?") + `recordFixAccepts` (shared with the in-review fix inference, ADR-28).
 - `src/sweep.ts` — **the background maintenance worker (ADR-43)**: `runMaintenance`/`sweepRepo` targets `main` (`resolveMainRepoPath`) and runs 4 idempotent jobs — Reconcile (loop closure → global KB), GraphFreshness (re-index main in an isolated child), Consolidate (ADR-42 decay/prune — makes it live), Analyze (LLM-gated). Spawned detached + debounced by `maybeSpawnSweep` (review.ts) at the end of `assembleReviewContext` + MCP `reconcile_outcomes`. Pure gates `headAdvanced`/`isDebounced`/`jobDue` keep it idempotent; sidecars `sweep-state.json`/`sweep-last.txt`/`sweep.lock`/`base.sha` (paths.ts). See [docs/design/maintenance-worker.md](../../docs/design/maintenance-worker.md).
 
@@ -50,27 +50,42 @@ Order matters; each step feeds the next:
 5. **Review plan** — `reviewPlan()` (pure, `@plex/findings`) partitions changed files by coupling and computes surface; returned as metadata for angle-based sub-agent orchestration ([`docs/design/angle-review.md`](../../docs/design/angle-review.md)).
 6. **Deterministic findings** (`@plex/deterministic`) on the changed lines, **minus any the user has waived** — `loadWaivers` + `isWaived` (identity-only, no embeddings) drop a rule waived repo-wide (`pattern-repo` on the rule tag) or a waived file/line, so a dismissed rule never even primes the agent. This is the SAME suppression `rankFindings` applies at submit time, pulled one step earlier (it used to surface here as "incorporate these" and only get dropped from the final stream).
 7. **Knowledge retrieval** — query built from changed symbols + deterministic titles + files; with no embedding provider it falls back to lexical (IDF token-overlap) retrieval (degrades, never fails).
-8. **Brain round** (`buildBrainContext`) — second and last Kùzu open: `healSplitTarget` → `loadRoundState` → ingest PR comments → if the head moved since the last round, attribute changes (semantic, embeddings-only) and run fix inference (`recordFixAccepts` — works locality-only without embeddings) → `recordRound`. **Embedding-cost guards (the Voyage bill):** the attribution batch only fires when there's a semantic gain to be had — `signals.length > 0` (classify against comments/prior signals) OR `priorFindings.length > 0` (semantic fix-match); with neither, the embed is skipped entirely (locality fix-match still runs, and "changed with no signal → unexplained" is marked without embeddings — it needs none). Prior-finding TITLES go through `cachedEmbed` (the `embed-cache.json` sidecar) so they're embedded once across all rounds, not re-embedded every round; per-round region/comment CONTENT is embedded fresh (it changes each round).
+8. **Brain round** (`buildBrainContext`) — reads/writes the durable JSONL lineage layer (no Kùzu open, ADR-46): `loadRoundState` → ingest PR comments → if the head moved since the last round, attribute changes (semantic, embeddings-only) and run fix inference (`recordFixAccepts` — works locality-only without embeddings) → `recordRound`. **Embedding-cost guards (the Voyage bill):** the attribution batch only fires when there's a semantic gain to be had — `signals.length > 0` (classify against comments/prior signals) OR `priorFindings.length > 0` (semantic fix-match); with neither, the embed is skipped entirely (locality fix-match still runs, and "changed with no signal → unexplained" is marked without embeddings — it needs none). Prior-finding TITLES go through `cachedEmbed` (the `embed-cache.json` sidecar) so they're embedded once across all rounds, not re-embedded every round; per-round region/comment CONTENT is embedded fresh (it changes each round).
 9. **Audit log** (`context_assembled`) and the returned `ReviewContext` with `notes` — the agent guidance (fresh eyes, severity/confidence as separate axes, never display confidence, reviewPlan directive, staleness warnings, embeddings-off nudge).
 
 `priorRounds`, `openComments`, and `unexplainedChanges` are fed as **facts** (ADR-02) — never prior reasoning.
 
-## The brain (src/brain.ts)
+## The brain — the durable lineage layer (src/brain.ts, ADR-46)
 
-Four node tables in `<repo-data>/brain.kuzu`, all keyed by `target`:
+The brain is **no longer Kùzu**. It's a **durable, base-keyed, append-only JSONL event log** — one file
+per review target at `~/.plex/repos/<baseId>/lineage/<target>.jsonl` (via `lineagePaths`/`baseRepoPath`,
+paths.ts). `Brain` keeps the same method surface (`open`/`close`/`loadRoundState`/`recordRound`/
+`writeFindings`/`writeVerdict`/`markFindingOutcome`/`openTargets`/`rankingSamples`) so callers are
+untouched, but internally it **appends events** and folds them with the pure **`foldLineage`**
+(`@plex/core`, shared with the viz-server so both agree on the rules). `close()` is a no-op (no handle).
+Event kinds + state:
 
-- `Round(id=target#n, target, n, ts, headSha, baseRef)`
-- `Finding(id=target#file:startLine#normalizedTitle, target, title, severity, confidence, signal, source, file, line, triage, outcome, round, blast, prevalence, agreement)` — id is **round-free** so a re-raised finding is the SAME node (ADR-28 fix: round-keyed ids caused duplicate auto-accepts and orphaned signals); `ON MATCH` never resets `outcome`.
-- `Verdict(id=target#findingId, target, findingId, kind, scope, ts, title, file, line)`
-- `Comment(id=target#commentId, target, body, author, file, line)`
+- `round` → `Round(n, ts, headSha, baseRef)` (LWW by n).
+- `finding` → id `target#file:startLine#normalizedTitle` (**round-free** so a re-raise is the SAME
+  finding, ADR-28); a finding event updates every field **except outcome**.
+- `outcome` → sets a finding's outcome (the ONLY writer of outcome — so a re-raised finding never
+  resets a `fixed`/dispositioned outcome; this is the load-bearing fold rule, in `foldLineage`).
+- `verdict` → keyed by `findingId` (LWW); `comment` → keyed by `target#commentId`.
 
-`Brain.open` is idempotent (DDL + swallow-on-exists `ALTER TABLE ADD` migration for the ranking-feature columns). One handle per review, reused for all brain I/O; always `close()`.
+A review now opens Kùzu **only for the code graph** (one open) — the brain is plain files. The log is
+append-only but reads are idempotent (the fold is LWW per id), so a re-recorded round/finding collapses.
 
-### The `reviewTargetFor` invariant
+### The `reviewTargetFor` invariant (base-keyed)
 
-**Every brain write keys off `reviewTargetFor(repoPath, src)`** = `reviewTarget(basename(resolve(repoPath)), src)` (`src/target.ts`) — round recording (`review.ts`), finding writes (`findings.ts`), verdicts (`knowledge.ts` / MCP `record_outcome`), reconcile (`reconcile.ts`). **Never the code graph's `repo` meta**: a worktree seeds its graph by *copying* the base repo's graph (ADR-32), so the copy carries the BASE repo name while the worktree dir is named differently. Keying rounds off graph meta and findings off basename split the brain across two targets — reconcile found the findings but no `lastHeadSha` and reported `checked: N, accepted: 0`. Route any **new** brain key through `reviewTargetFor`.
-
-`Brain.healSplitTarget(target)` is the belt-and-suspenders **permanent invariant guard** (not a one-off migration — do not delete): on every review and reconcile it checks the split signature (canonical target has findings but no rounds of its own) and, if found, adopts the same-suffix sibling target's rounds/comments/findings/verdicts. A healthy brain pays one COUNT.
+**Every lineage write keys off `reviewTargetFor(repoPath, src)`** = `reviewTarget(basename(baseRepoPath(repoPath)), src)`
+(`src/target.ts`) — round recording (`review.ts`), finding writes (`findings.ts`), verdicts
+(`knowledge.ts` / MCP `record_outcome`), reconcile (`reconcile.ts`). It keys off the **BASE repo**
+basename (the primary checkout a worktree branches from), **never** the worktree dir name or the code
+graph's `repo` meta — so a review from a worktree and one from the base of the SAME PR resolve to ONE
+target, stored under the base repo's data dir, surviving `git worktree remove`. (`verdicts.jsonl` is
+base-keyed the same way.) Because the key is base-derived, the brain **cannot split across worktree
+names** — so the old `Brain.healSplitTarget` guard + `HEAL_RELABEL_ORDER` are **deleted** (ADR-46);
+do not reintroduce them.
 
 ## Reconcile (src/reconcile.ts)
 
@@ -85,7 +100,7 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 ## Invariants & gotchas
 
 - **ADR-02**: nothing here ever feeds the reviewer prior reasoning — brain state, comments, and the audit log are facts/records only.
-- **ADR-17/19**: ship built JS under node (`pnpm build` → `dist/`), never tsx. A review process = 1 graph open + 1 brain open; anything more (index/refresh) goes through `indexIsolated`.
+- **ADR-17/19**: ship built JS under node (`pnpm build` → `dist/`), never tsx. A review process = **1 graph open** (the brain is now JSONL, ADR-46 — no second open); anything more (index/refresh) goes through `indexIsolated`. The foreground review retries its graph open on a transient `RepoBusyError` (a detached sweep's re-index briefly holds the single-writer lock).
 - **Embeddings are optional (ADR-30)** — degradation map: knowledge retrieval → lexical (keyword) fallback; semantic waivers → identity-only matching; change attribution (`unexplainedChanges`) → skipped; fix inference → locality-only. `safeEmbed` (`@plex/core`) also degrades transient embedding failures to the same paths instead of failing the review.
 - **Best-effort everywhere on the bookkeeping edges**: audit logging, blast-map sidecar, PR auto-comment, and the `head.sha` stamp never throw out of a review.
 - `recordVerdict` persists the waiver embedding to disk but **strips it from the returned value** (the MCP echo would waste tokens no consumer reads).
@@ -94,5 +109,5 @@ A finding counts as *addressed* (→ auto-`accept` + `outcome: fixed`) when EITH
 ## Testing
 
 - **Units (vitest, `pnpm test:unit`)**: pure modules only — `audit`, `config-load`, `guards`, `paths`, `pr-comment`, `target`, `verdicts`, `viz` `.test.ts` files. Never open Kùzu in a `.test.ts` (crashes vitest teardown) — which is exactly why the silent-failure guards live in pure `guards.ts` (testable) rather than inline in `brain.ts`.
-- **Integration (`pnpm test:integration`)**: `integration.mts`, run one scenario per tsx process (ADR-17 open limit; keep each scenario ≤2 Kùzu opens) — orchestrated by **`scripts/run-integration.mjs`**, which spawns each scenario in its own `tsx` process and **retries a transient Kùzu native crash** (exit 139 / `SIGSEGV`) the same way the node check scripts do (a real failure — any other non-zero exit — fails fast, never masked). Add a new scenario to the `SCENARIOS` list there. Scenarios cover build/incremental/co-change, neighborhood, ranking, knowledge, semantic waivers, reconcile, review-plan, brain, brain-heal, worktree-seed.
+- **Integration (`pnpm test:integration`)**: `integration.mts`, run one scenario per tsx process (ADR-17 open limit; keep each scenario ≤2 Kùzu opens) — orchestrated by **`scripts/run-integration.mjs`**, which spawns each scenario in its own `tsx` process and **retries a transient Kùzu native crash** (exit 139 / `SIGSEGV`) the same way the node check scripts do (a real failure — any other non-zero exit — fails fast, never masked). Add a new scenario to the `SCENARIOS` list there. Scenarios cover build/incremental/co-change, neighborhood, ranking, knowledge, semantic waivers, reconcile, review-plan, brain (now the JSONL lineage store), worktree-seed.
 - **Node-only E2Es** (the shipped runtime, need `pnpm build`): `pnpm test:brain` (`scripts/brain-check.mjs` — auto-index on first review, round-aware changed-without-feedback), `pnpm test:worktree` (`scripts/worktree-seed-check.mjs` — the isolated-child base refresh that tsx structurally *cannot* exercise), and `pnpm test:sweep` (`scripts/sweep-check.mjs` — the ADR-43 maintenance worker: refreshes main's graph, manages its sidecars + lock, idempotent; node-only because the worker opens Kùzu several times per run, over the tsx limit). The sweep's loop-closure path rides `reconcileOutcomes` (the `reconcile` integration scenario); its pure gates are unit-tested in `sweep.test.ts`.

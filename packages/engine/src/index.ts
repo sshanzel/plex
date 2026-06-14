@@ -1,4 +1,4 @@
-export { repoPaths } from './paths';
+export { repoPaths, baseRepoPath, baseRepoId, lineagePaths } from './paths';
 export type { RepoPaths } from './paths';
 export { loadConfig } from './config-load';
 export { readHomeConfig, writeHomeConfig, homeConfigPath } from './home-config';

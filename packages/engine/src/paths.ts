@@ -2,14 +2,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 export interface RepoPaths {
   repoPath: string;
   reviewerDir: string;
   /** Kùzu code-graph DB directory for this repo. */
   graphDir: string;
-  /** Kùzu per-repo PR-brain DB (rounds/findings/verdicts/comments — ADR-30). */
-  brainDir: string;
   /** Append-only verdict log (feedback-loop seed). */
   verdictsFile: string;
   /** Incremental review-history analysis cursor (which PRs have been scanned). */
@@ -53,6 +52,48 @@ function isLinkedWorktree(repoPath: string): boolean {
   }
 }
 
+/**
+ * The **base repo** a checkout belongs to — the primary worktree the `.git` actually lives in.
+ * `git rev-parse --git-common-dir` always points at the SHARED `.git` (a linked worktree's own
+ * gitdir differs, but `--git-common-dir` resolves to the main one), so its parent is the base
+ * checkout root — deterministic and independent of which branch `main` has checked out (unlike
+ * `resolveMainRepoPath`, which picks the default-branch worktree). The lineage layer keys off this
+ * so a base review and a worktree review of the same PR collect under ONE identity (ADR-46), and a
+ * worktree's history outlives the worktree. Any git failure → the resolved repoPath itself (a plain
+ * non-git dir is its own base).
+ */
+export function baseRepoPath(repoPath: string): string {
+  const abs = path.resolve(repoPath);
+  try {
+    const r = spawnSync('git', ['-C', abs, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' });
+    const commonDir = r.status === 0 ? r.stdout.trim() : '';
+    if (commonDir) return path.dirname(path.resolve(commonDir)); // <base>/.git → <base>
+  } catch {
+    /* not a git repo / git unavailable — fall through */
+  }
+  return abs;
+}
+
+/** Stable id for the BASE repo — the lineage store's key (ADR-46). */
+export function baseRepoId(repoPath: string): string {
+  return repoId(baseRepoPath(repoPath));
+}
+
+/**
+ * Where the durable lineage layer lives (ADR-46): under the BASE repo's CENTRALIZED data dir
+ * (`~/.plex/repos/<baseId>/lineage/`), never the worktree's `<wt>/.plex` — that's the whole point,
+ * the history must survive `git worktree remove`. Per-target files (`<target>.jsonl`) limit
+ * concurrent-append contention between worktrees reviewing different PRs of the same base.
+ */
+export function lineagePaths(repoPath: string, dataDir?: string): { lineageDir: string; fileFor: (target: string) => string } {
+  // The base is a normal checkout (its `.git` is a dir), so its reviewerDir is the centralized
+  // `~/.plex/repos/<id>` — even when `repoPath` is a worktree whose own data would be in-workspace.
+  const base = baseRepoPath(repoPath);
+  const lineageDir = path.join(repoPaths(base, dataDir).reviewerDir, 'lineage');
+  const safe = (t: string): string => t.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 120) || 'target';
+  return { lineageDir, fileFor: (target) => path.join(lineageDir, `${safe(target)}.jsonl`) };
+}
+
 /** A stable, filesystem-safe id for a repo's centralized data dir (basename + path hash). */
 export function repoId(repoPath: string): string {
   const abs = path.resolve(repoPath);
@@ -90,7 +131,6 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     repoPath: abs,
     reviewerDir,
     graphDir: path.join(reviewerDir, 'graph.kuzu'),
-    brainDir: path.join(reviewerDir, 'brain.kuzu'),
     verdictsFile: path.join(reviewerDir, 'verdicts.jsonl'),
     analyzeStateFile: path.join(reviewerDir, 'analyze-state.json'),
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),

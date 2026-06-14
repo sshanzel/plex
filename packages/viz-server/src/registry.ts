@@ -27,9 +27,10 @@ export interface RepoEntry {
   repoPath?: string;
   reviewerDir: string;
   graphDir: string;
-  brainDir: string;
+  /** Durable lineage layer dir (ADR-46) — `<reviewerDir>/lineage/`, per-target JSONL files. */
+  lineageDir: string;
   hasGraph: boolean;
-  hasBrain: boolean;
+  hasLineage: boolean;
 }
 
 /** Only ever accept ids of this shape — `repoId` mints exactly this, and it forbids `.`/`/` traversal. */
@@ -49,10 +50,10 @@ function entryFor(root: string, id: string): RepoEntry | null {
   }
   if (!isDir) return null;
   const graphDir = path.join(reviewerDir, 'graph.kuzu');
-  const brainDir = path.join(reviewerDir, 'brain.kuzu');
+  const lineageDir = path.join(reviewerDir, 'lineage');
   const hasGraph = existsSync(graphDir);
-  const hasBrain = existsSync(brainDir);
-  if (!hasGraph && !hasBrain) return null; // a dir with neither store isn't a usable repo
+  const hasLineage = existsSync(lineageDir);
+  if (!hasGraph && !hasLineage) return null; // a dir with neither store isn't a usable repo
   let repoPath: string | undefined;
   try {
     repoPath = readFileSync(path.join(reviewerDir, 'repo-path'), 'utf8').trim() || undefined;
@@ -60,7 +61,7 @@ function entryFor(root: string, id: string): RepoEntry | null {
     /* sidecar absent (older index) — fall back to the id-derived name */
   }
   const name = repoPath ? path.basename(repoPath) : id.replace(/-[0-9a-f]{8}$/, '');
-  return { id, name, repoPath, reviewerDir, graphDir, brainDir, hasGraph, hasBrain };
+  return { id, name, repoPath, reviewerDir, graphDir, lineageDir, hasGraph, hasLineage };
 }
 
 /** Every indexed repo on this machine, newest data dir first. */

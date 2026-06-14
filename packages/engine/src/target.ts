@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { DiffSource } from './diff';
+import { baseRepoPath } from './paths';
 
 /**
  * A stable, recognizable id for a review target — the correlation key for the PR brain
@@ -14,19 +15,20 @@ export function reviewTarget(repo: string, src: DiffSource): string {
 }
 
 /**
- * The CANONICAL review target for a repo *path* — always the resolved directory **basename**,
- * never the code graph's `repo` meta. Every brain path (round recording, finding writes,
- * verdicts, reconcile, record_outcome) MUST go through this so they agree on the key.
+ * The CANONICAL review target for a repo *path* — keyed off the **base repo basename** (the primary
+ * checkout a worktree branches from, `baseRepoPath`), never the worktree dir name or the code graph's
+ * `repo` meta. Every lineage path (round recording, finding writes, verdicts, reconcile,
+ * record_outcome) MUST go through this so they agree on the key.
  *
- * Why basename and not the graph meta: a secondary git worktree seeds its graph by COPYING the
- * base repo's graph (ADR-32), so the copy carries the BASE's `repo` meta (e.g. `playright`) while
- * the worktree directory is named differently (e.g. `dazzling-spinning-harbor`). Keying rounds
- * off the graph meta but findings off the basename then splits the brain in two — rounds under
- * one target, findings under another — so reconcile finds findings but no `lastHeadSha` and bails
- * (`checked: N, accepted: 0`). Basename is also free (no Kùzu open), which reconcile needs.
+ * Why the BASE basename (ADR-46): a review run from a linked worktree (`…/.worktrees/dazzling-…`) and
+ * one run from the base checkout (`…/playright`) are the SAME PR — both must resolve to
+ * `playright__pr_N` so their rounds/findings/verdicts collect under one target, durably under the base
+ * repo's data dir (`lineagePaths`), and the sweep/reconcile see one continuous history. Keying off the
+ * worktree basename instead fragmented a base repo's reviews across worktree names (and needed the old
+ * `healSplitTarget` guard, now retired). A non-git dir is its own base, so this is identity there.
  */
 export function reviewTargetFor(repoPath: string, src: DiffSource): string {
-  return reviewTarget(path.basename(path.resolve(repoPath)), src);
+  return reviewTarget(path.basename(baseRepoPath(repoPath)), src);
 }
 
 /**
