@@ -10,7 +10,7 @@ import {
   foldLineage,
   parseLineageEvents,
 } from '@plex/core';
-import { mkdirSync, appendFileSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, appendFileSync, readFileSync, readdirSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { normalizeTitle } from '@plex/findings';
 import { lineagePaths } from './paths';
@@ -32,6 +32,16 @@ import { lineagePaths } from './paths';
  */
 
 const excerpt = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '…' : s);
+
+/** Synchronous sleep for the append lock's brief spin (no async in the append path). Best-effort —
+ *  a platform without SharedArrayBuffer just falls through to a tight retry. */
+const sleepSync = (ms: number): void => {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* SAB unavailable — tight retry instead */
+  }
+};
 
 export interface RoundSummary {
   n: number;
@@ -100,18 +110,59 @@ export class Brain {
     /* no handle to release — the lineage log is plain files */
   }
 
-  private append(target: string, event: LineageEvent): void {
-    // One JSON object per line; a single small `write` is atomic enough for concurrent appends, and
-    // per-target files keep two worktrees reviewing different PRs off each other's file.
-    appendFileSync(this.fileFor(target), JSON.stringify(event) + '\n', 'utf8');
+  /**
+   * Append events to a target's file under a **best-effort per-target lockfile**, so two concurrent
+   * same-PR reviews (e.g. base + a worktree) can't interleave a `>PIPE_BUF` line and tear it (a torn
+   * `outcome` line, silently dropped by `parseLineageEvents`, would re-open a resolved finding). All
+   * of one call's events go in ONE `appendFileSync` while the lock is held. Best-effort: a stale lock
+   * (crashed holder) is reclaimed by age, and if the lock can't be taken we append anyway rather than
+   * block — the `parseLineageEvents` torn-line skip remains the backstop.
+   */
+  private appendEvents(target: string, events: LineageEvent[]): void {
+    if (events.length === 0) return;
+    const file = this.fileFor(target);
+    const lock = `${file}.lock`;
+    const body = events.map((e) => JSON.stringify(e) + '\n').join('');
+    let held = false;
+    for (let i = 0; i < 50 && !held; i++) {
+      try {
+        closeSync(openSync(lock, 'wx')); // O_CREAT|O_EXCL — fails if another writer holds it
+        held = true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') break; // unexpected → append unlocked
+        try {
+          if (Date.now() - statSync(lock).mtimeMs > 2000) { unlinkSync(lock); continue; } // reclaim a stale lock
+        } catch {
+          continue; // lock vanished between stat and now — retry immediately
+        }
+        sleepSync(20);
+      }
+    }
+    try {
+      appendFileSync(file, body, 'utf8');
+    } finally {
+      if (held) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* best-effort release */
+        }
+      }
+    }
   }
 
   private view(target: string): LineageView {
+    let body: string;
     try {
-      return foldLineage(parseLineageEvents(readFileSync(this.fileFor(target), 'utf8')));
-    } catch {
-      return foldLineage([]); // no file yet → empty view
+      body = readFileSync(this.fileFor(target), 'utf8');
+    } catch (e) {
+      // ONLY a missing file is "no history yet". A real read fault (EACCES/EISDIR/EIO) must NOT
+      // masquerade as empty — that would silently drop outcome-stickiness, so reconcile reports
+      // `checked:0` and the next review re-raises resolved findings + re-learns incidents (Plex #1).
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return foldLineage([]);
+      throw e;
     }
+    return foldLineage(parseLineageEvents(body));
   }
 
   /** Every target's view (one file = one target) — for the cross-target reads. */
@@ -197,18 +248,19 @@ export class Brain {
   }
 
   async recordRound(target: string, round: ReviewRound, comments: PrComment[]): Promise<void> {
-    this.append(target, { k: 'round', target, n: round.n, ts: round.ts, headSha: round.headSha ?? '', baseRef: round.baseRef });
-    for (const c of comments) {
-      this.append(target, { k: 'comment', target, id: `${target}#${c.id}`, body: c.body, author: c.author ?? '', file: c.file ?? '', line: c.line ?? -1 });
-    }
+    this.appendEvents(target, [
+      { k: 'round', target, n: round.n, ts: round.ts, headSha: round.headSha ?? '', baseRef: round.baseRef },
+      ...comments.map((c): LineageEvent => ({ k: 'comment', target, id: `${target}#${c.id}`, body: c.body, author: c.author ?? '', file: c.file ?? '', line: c.line ?? -1 })),
+    ]);
   }
 
   /** Persist the agent's ranked findings. Id is keyed by target+file:line+title — NOT round (ADR-28),
    *  so a re-raised finding is the SAME node and its accrued outcome (a separate `outcome` event) is
    *  never reset. */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
-    for (const f of findings) {
-      this.append(target, {
+    this.appendEvents(
+      target,
+      findings.map((f): LineageEvent => ({
         k: 'finding',
         target,
         id: `${target}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
@@ -226,15 +278,15 @@ export class Brain {
         prevalence: f.prevalence ?? 0,
         agreement: f.agreedSources?.length ?? 1,
         rule: f.tags?.[0] ?? '', // the deterministic rule tag — lets an inferred accept refute a suppression (ADR-39)
-      });
-    }
+      })),
+    );
   }
 
   async writeVerdict(
     target: string,
     verdict: { findingId: string; kind: VerdictKind; scope?: WaiverScope; title?: string; file?: string; line?: number; ts: string },
   ): Promise<void> {
-    this.append(target, {
+    this.appendEvents(target, [{
       k: 'verdict',
       target,
       findingId: verdict.findingId ?? '',
@@ -244,7 +296,7 @@ export class Brain {
       title: verdict.title ?? '',
       file: verdict.file ?? '',
       line: verdict.line ?? -1,
-    });
+    }]);
   }
 
   /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). The target is the id's
@@ -254,6 +306,6 @@ export class Brain {
     const hash = findingId.indexOf('#');
     const target = hash > 0 ? findingId.slice(0, hash) : '';
     if (!target) return;
-    this.append(target, { k: 'outcome', target, findingId, outcome });
+    this.appendEvents(target, [{ k: 'outcome', target, findingId, outcome }]);
   }
 }
