@@ -17,17 +17,18 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 | --- | --- |
 | `src/model.ts` | The uniform `{nodes, edges}` shape the UI consumes (`VizNode`/`VizEdge`/`GraphPayload`), `withCounts`, `emptyPayload`. `props` is flat + JSON-safe (collectors strip embeddings/secrets). |
 | `src/registry.ts` | Enumerate the machine's indexed repos (dirs under the repos root) + **validate a requested id** (`resolveRepo`) — the path-traversal gate. |
-| `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu graph), `collectBrain` (Kùzu brain), `collectKnowledge` (JSON, optional repo-origin scope), `collectLineage` + pure `linkLineage` (brain ⨝ knowledge). |
+| `src/collect.ts` | Read each store into a `GraphPayload`: `collectCode` / `expandCodeFile` (Kùzu code graph), `collectBrain` (durable JSONL lineage via `@plex/core` `foldLineage` — ADR-46, no Kùzu), `collectKnowledge` (JSON, optional repo-origin scope), `collectLineage` + pure `linkLineage` (brain ⨝ knowledge). |
 | `src/server.ts` | `startServer` — routes `/`, `/healthz`, `/api/repos`, `/api/graph/{code,brain,knowledge}`, `/api/expand`; binds 127.0.0.1; maps `RepoBusyError` → 503. |
-| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the universal auto-start). `DEFAULT_PORT = 2288`. |
+| `src/daemon.ts` | Pidfile (`~/.plex/daemon.json`) read/write/clear, `pidAlive`, `probe`, `liveDaemon` (probe-over-pidfile, clears stale), `ensureDaemon` (the opt-in always-on spawn). `DEFAULT_PORT = 2288`. |
 | `src/ui.ts` | `renderAppHtml` — the whole single-page Cytoscape app (CDN + SRI-pinned 3.30.2, same hash as the M5 static viz). |
 
 ## The two load-bearing invariants
 
-1. **Never hold a Kùzu handle.** Kùzu is single-writer — a held handle makes a concurrent review's
-   open throw `RepoBusyError` (i.e. the viewer would break reviews). So `collect.ts` opens **per
-   request and closes immediately** (`withGraph`), and the server maps a `RepoBusyError` (a review
-   holds the lock *right now*) to a **503** the UI retries. Read-only opens (which would allow
+1. **Never hold a Kùzu handle.** Only `collectCode`/`expandCodeFile` touch Kùzu now (the code graph);
+   `collectBrain` reads plain JSONL (ADR-46). Kùzu is single-writer — a held handle makes a concurrent
+   review's open throw `RepoBusyError` (i.e. the viewer would break reviews). So `collect.ts` opens the
+   code graph **per request and closes immediately** (`withGraph`), and the server maps a
+   `RepoBusyError` (a review holds the lock *right now*) to a **503** the UI retries. Read-only opens (which would allow
    shared readers) are NOT an option: Kùzu 0.11.3's read-only open SIGSEGVs on Linux (ADR-40).
 
 2. **127.0.0.1 only + validated repo ids = no exposure, no traversal.** The server binds the
@@ -43,9 +44,11 @@ into a long-lived process. The CLI (`plex serve`) is the only caller.
 The **Lineage** tab unifies a repo's brain and its origin-scoped knowledge into one
 comment → finding → verdict → incident → pitfall chain. The brain-internal edges
 (comment→finding by locality, finding→round, verdict→finding) and the knowledge provenance
-(incident→pitfall) are **real**; the **finding→incident** hop is an **inferred same-file bridge**
-(`linkLineage`, flagged `inferred` → drawn dashed) because an `Incident` carries no recorded
-back-reference to its `Finding` yet. **Tier 2** (a durable, global, append-only *lineage journal*
+(incident→pitfall) are **real**. The **finding→incident** hop is **recorded** when an `Incident`
+carries `findingId` (ADR-46 increment 1 — captured at accept-time in `submitVerdict`; drawn solid,
+label `became`); for findings without one yet it falls back to an **inferred same-file bridge**
+(`linkLineage`, flagged `inferred` → dashed). The dashed set shrinks as new accepts carry provenance.
+**Tier 2** (the rest — a durable, global, append-only *lineage layer*
 written eagerly at review time — `docs/adr/` follow-up) replaces those dashed bridges with exact,
 recorded edges AND fixes the real durability hole: a worktree's brain dies with the worktree (ADR-40)
 and the sweeper (its only loop-closer) reads the *transient* brain, so autonomous/local-only reviews
@@ -54,8 +57,9 @@ view read — the brain demoted to a rebuildable working index. (Tier 2 is a sep
 
 ## Brain edges are synthesized
 
-The brain (ADR-30) has **no Kùzu rel tables** — `Round`/`Finding`/`Verdict`/`Comment` are keyed by
-`target` / `round` / `findingId` strings. `collectBrain` rebuilds the graph from those keys: a hub
+The brain (ADR-46) is a JSONL event log with **no stored edges** — `Round`/`Finding`/`Verdict`/`Comment`
+relate by `target` / `round` / `findingId`. `collectBrain` folds each per-target file (`foldLineage`)
+and rebuilds the graph from those keys: a hub
 per `target`, `Round → hub`, `Finding → its round` (matched by `target#round.n`, fallback hub),
 `Verdict → its Finding` (by `findingId`), `Comment → hub`.
 
@@ -69,12 +73,14 @@ daemon (binds, writes the pidfile, returns a never-resolving promise so the CLI'
 `--status` manage it. Port: `--port` > `PLEX_UI_PORT` > 2288, with EADDRINUSE fallback to the next
 ports (the pidfile records the actual one, which is why the parent polls `liveDaemon` not a fixed port).
 
-**Auto-start is universal** (ADR-45): `ensureDaemon({execPath, scriptPath, port})` probes first (cheap
-no-op when up) and otherwise detached-spawns `node plex.js serve --foreground`. It's called by the
-**MCP server on startup** (`plex-mcp`, the entry every client runs — Claude plugin, Codex plugin, or a
-bare MCP registration), so the UI comes up with no CLI install and no client-specific hook.
+**Lifecycle: on-demand by default, opt-in always-on** (ADR-45). The daemon is a *viewer*, not a
+capturer — nothing is missed by it being off — so it does **not** run unless asked. You launch it with
+`plex serve` (`serve.ts`), which spawns it detached and opens the browser. Setting **`ui.autoStart`**
+(or `PLEX_UI_AUTOSTART=1`) restores always-on: the **MCP server on startup** calls `ensureDaemon({execPath,
+scriptPath, port})` (probe-first → detached-spawn `node plex.js serve --foreground` when down), so it
+comes up for any client (Claude/Codex/bare MCP) with no CLI install and no client-specific hook.
 `ensureDaemon` is **stdout-safe** (writes nothing to stdout — the MCP's stdio protocol channel — and
-swallows every error) and no-ops when `scriptPath` doesn't exist (dev/tsx). Opt out: `PLEX_NO_UI=1`.
+swallows every error) and no-ops when `scriptPath` doesn't exist (dev/tsx).
 
 ## Limitations (v1, accepted — ADR-45)
 

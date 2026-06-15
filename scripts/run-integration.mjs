@@ -28,7 +28,6 @@ const SCENARIOS = [
   'review-plan',
   'ranking',
   'knowledge',
-  'brain-heal',
   'brain',
 ];
 

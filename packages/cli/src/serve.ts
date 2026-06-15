@@ -21,11 +21,11 @@ export interface ServeFlags {
   port?: number;
 }
 
-/** Resolve the UI port: explicit flag > `PLEX_UI_PORT` env > the 2288 default (ADR-45). */
-export function resolvePort(flagPort?: number): number {
+/** Resolve the UI port: explicit `--port` flag wins, else the configured port (`config.ui.port`,
+ *  which already folds in `PLEX_UI_PORT` / home config / the 2288 default via `loadConfig`). */
+export function resolvePort(flagPort: number | undefined, configPort = DEFAULT_PORT): number {
   if (flagPort && Number.isFinite(flagPort)) return flagPort;
-  const env = Number(process.env.PLEX_UI_PORT);
-  return Number.isFinite(env) && env > 0 ? env : DEFAULT_PORT;
+  return Number.isFinite(configPort) && configPort > 0 ? configPort : DEFAULT_PORT;
 }
 
 /** Best-effort build version for the UI header — read the package.json nearest the running script. */
@@ -91,7 +91,7 @@ export async function runServe(config: ReviewerConfig, flags: ServeFlags): Promi
   }
 
   if (flags.foreground) {
-    const running = await startServer({ config, port: resolvePort(flags.port), version });
+    const running = await startServer({ config, port: resolvePort(flags.port, config.ui.port), version });
     writeDaemon(running.info);
     const shutdown = (): void => {
       clearDaemon();
@@ -112,7 +112,7 @@ export async function runServe(config: ReviewerConfig, flags: ServeFlags): Promi
     return 0;
   }
 
-  const port = resolvePort(flags.port);
+  const port = resolvePort(flags.port, config.ui.port);
   const script = process.argv[1];
   if (!script) {
     out.write('Cannot resolve the plex executable to spawn the daemon. Run `plex serve --foreground` instead.\n');

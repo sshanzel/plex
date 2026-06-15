@@ -1,34 +1,47 @@
-import type {
-  ReviewerConfig,
-  ReviewRound,
-  PrComment,
-  RankedFinding,
-  VerdictKind,
-  WaiverScope,
+import {
+  type ReviewerConfig,
+  type ReviewRound,
+  type PrComment,
+  type RankedFinding,
+  type VerdictKind,
+  type WaiverScope,
+  type LineageEvent,
+  type LineageView,
+  foldLineage,
+  parseLineageEvents,
 } from '@plex/core';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, appendFileSync, readFileSync, readdirSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { CodeGraphDB } from '@plex/code-graph';
 import { normalizeTitle } from '@plex/findings';
-import { repoPaths } from './paths';
-import { HEAL_RELABEL_ORDER } from './guards';
+import { lineagePaths } from './paths';
 
 /**
- * The per-PR "brain" (ADR-22/23/30): a per-repo **Kùzu** database holding rounds, findings,
- * verdicts, and PR comments as typed nodes keyed by review target. Embedded — no service,
- * no Docker, and no cross-engine SIGSEGV (it's the same engine as the code graph; ADR-30
- * replaces the FalkorDB brain). One `Brain` handle is opened per review and reused for all
- * that review's brain I/O (avoids reopening the same Kùzu file concurrently).
+ * The per-PR "brain" — the **lineage layer** of the knowledge graph (ADR-46). Replaces the ephemeral,
+ * per-worktree Kùzu DB (ADR-30/M11) with a **durable, base-keyed, append-only JSONL event log**:
+ * round/finding/verdict/comment events under the BASE repo's centralized data dir
+ * (`~/.plex/repos/<baseId>/lineage/<target>.jsonl`, via `lineagePaths`), folded into current state by
+ * the pure `foldLineage` (`@plex/core`). So a worktree review's history **survives `git worktree
+ * remove`**, the sweeper reads the same durable file the worktree wrote, and — because the target is
+ * base-derived — the brain can no longer split across worktree names (`healSplitTarget` retired).
+ *
+ * The public method surface is unchanged from the Kùzu brain, so callers (review/findings/knowledge/
+ * reconcile/sweep) are untouched. `close()` is a no-op (no handle to release). Idempotent reads: the
+ * log is append-only, but `foldLineage` is last-write-wins per id, so a re-recorded round/finding/
+ * comment collapses; outcome is tracked orthogonally so a re-raised finding never resets a `fixed`
+ * disposition (ADR-28).
  */
 
 const excerpt = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '…' : s);
 
-const SCHEMA = [
-  'CREATE NODE TABLE IF NOT EXISTS Round(id STRING, target STRING, n INT64, ts STRING, headSha STRING, baseRef STRING, PRIMARY KEY(id))',
-  'CREATE NODE TABLE IF NOT EXISTS Finding(id STRING, target STRING, title STRING, severity STRING, confidence DOUBLE, signal DOUBLE, source STRING, file STRING, line INT64, triage STRING, outcome STRING, round INT64, blast DOUBLE, prevalence DOUBLE, agreement INT64, rule STRING, PRIMARY KEY(id))',
-  'CREATE NODE TABLE IF NOT EXISTS Verdict(id STRING, target STRING, findingId STRING, kind STRING, scope STRING, ts STRING, title STRING, file STRING, line INT64, PRIMARY KEY(id))',
-  'CREATE NODE TABLE IF NOT EXISTS Comment(id STRING, target STRING, body STRING, author STRING, file STRING, line INT64, PRIMARY KEY(id))',
-];
+/** Synchronous sleep for the append lock's brief spin (no async in the append path). Best-effort —
+ *  a platform without SharedArrayBuffer just falls through to a tight retry. */
+const sleepSync = (ms: number): void => {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* SAB unavailable — tight retry instead */
+  }
+};
 
 export interface RoundSummary {
   n: number;
@@ -49,22 +62,12 @@ export interface BrainFinding {
   file?: string;
   line?: number;
   title: string;
-  /** Severity (bug|improvement|nit|awareness) — `awareness` is excluded from auto-accept (ADR-31). */
   severity?: string;
-  /**
-   * The deterministic rule tag (e.g. `no-console`), persisted so an INFERRED accept (reconcile /
-   * fix-inference) can pass it as `pattern` and thereby *refute* a learned suppression — the brain id
-   * (`target#file:line#title`) can't carry it, so without this the auto-accept reversal path (ADR-39
-   * "an accept pulls the tier back down") silently no-ops. Empty for non-deterministic findings.
-   */
+  /** Deterministic rule tag — lets an inferred accept refute a learned suppression (ADR-39). */
   rule?: string;
 }
 
-/**
- * One finding's ranking `signal` + its raw input features + resolved outcome — the row the offline
- * ranking-quality eval (tuning.md §5) and a future re-weight fit (§"deferred #1") consume. The
- * features may be 0 for findings written before feature persistence landed (graceful, not an error).
- */
+/** One finding's ranking `signal` + features + resolved outcome — the offline ranking-eval row. */
 export interface RankingSample {
   target: string;
   round: number;
@@ -79,206 +82,202 @@ export interface RankingSample {
 }
 
 export interface RoundState {
-  /** Highest round number recorded for this target (0 = none yet). */
   lastN: number;
-  /** Head SHA of the most recent round (to diff "what changed since last round"). */
   lastHeadSha?: string;
   rounds: RoundSummary[];
-  /** Prior findings + comments as signals for change attribution (embedded by the engine). */
   signals: BrainSignal[];
-  /** Prior-round findings with no recorded outcome yet — candidates for fix inference. */
   priorFindings: BrainFinding[];
 }
 
-type Row = Record<string, unknown>;
-const str = (v: unknown): string | undefined => (v == null ? undefined : String(v));
-
 export class Brain {
-  private readonly db: CodeGraphDB;
-  constructor(brainDir: string) {
-    mkdirSync(path.dirname(brainDir), { recursive: true }); // Kùzu needs the parent dir to exist
-    this.db = new CodeGraphDB(brainDir);
+  private readonly lineageDir: string;
+  private readonly fileFor: (target: string) => string;
+
+  private constructor(p: { lineageDir: string; fileFor: (target: string) => string }) {
+    this.lineageDir = p.lineageDir;
+    this.fileFor = p.fileFor;
   }
 
+  /** Open the base repo's durable lineage store (creates the dir). No DB handle — `close()` is a no-op. */
   static async open(repoPath: string, config: ReviewerConfig): Promise<Brain> {
-    const b = new Brain(repoPaths(repoPath, config.dataDir).brainDir);
-    for (const ddl of SCHEMA) await b.db.run(ddl);
-    // Idempotent column migration: `CREATE … IF NOT EXISTS` never *alters* an existing table, so a
-    // brain created before the raw ranking features (blast/prevalence/agreement, M12+ feature
-    // persistence) lacks these columns. ADD COLUMN is the only way to backfill them; it throws
-    // "already exists" on a brain that already has them, which we swallow — making open idempotent.
-    for (const col of ['blast DOUBLE DEFAULT 0.0', 'prevalence DOUBLE DEFAULT 0.0', 'agreement INT64 DEFAULT 0', "rule STRING DEFAULT ''"]) {
-      try {
-        await b.db.run(`ALTER TABLE Finding ADD ${col}`);
-      } catch {
-        /* column already present (fresh brain or prior migration) — nothing to do */
-      }
-    }
-    return b;
+    const lp = lineagePaths(repoPath, config.dataDir);
+    mkdirSync(lp.lineageDir, { recursive: true });
+    return new Brain(lp);
   }
 
-  close(): Promise<void> {
-    return this.db.close();
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  async close(): Promise<void> {
+    /* no handle to release — the lineage log is plain files */
   }
 
   /**
-   * INVARIANT GUARD (permanent — not one-off migration; do not delete as "stale"): a review's
-   * rounds and findings MUST live under one target. If they ever diverge — `canonicalTarget` has
-   * findings but NO rounds of its own — realign them. The known historical cause was the
-   * pre-`reviewTargetFor` worktree-seed bug (an old build keyed ROUNDS off the BASE repo name a
-   * worktree copied via ADR-32, while findings used the dir basename), and that cause is fixed —
-   * but this stays as a cheap safety net for the targeting layer, because a split is high-cost
-   * (reconcile + fix-inference silently see no history) and recovery here is free.
-   *
-   * Adopt the sibling target holding this review's rounds — same `__pr_<n>` / `__<mode>` suffix,
-   * different repo-name prefix — into the canonical target (with its comments + any stray
-   * findings/verdicts). One brain file = one repo, so a same-suffix sibling is always THIS repo's
-   * same review — safe to merge. Fires only on the split signature (findings, no own rounds), so a
-   * healthy brain pays a single COUNT and a fresh target is a no-op. Returns what it merged, or null.
+   * Append events to a target's file under a **best-effort per-target lockfile**, so two concurrent
+   * same-PR reviews (e.g. base + a worktree) can't interleave a `>PIPE_BUF` line and tear it (a torn
+   * `outcome` line, silently dropped by `parseLineageEvents`, would re-open a resolved finding). All
+   * of one call's events go in ONE `appendFileSync` while the lock is held. Best-effort: a stale lock
+   * (crashed holder) is reclaimed by age, and if the lock can't be taken we append anyway rather than
+   * block — the `parseLineageEvents` torn-line skip remains the backstop.
    */
-  async healSplitTarget(canonicalTarget: string): Promise<{ from: string; rounds: number } | null> {
-    const sep = canonicalTarget.indexOf('__');
-    if (sep < 0) return null;
-    const suffix = canonicalTarget.slice(sep); // e.g. "__pr_79" — the part after the repo prefix
-
-    const own = await this.db.run('MATCH (r:Round {target:$t}) RETURN count(r) AS c', { t: canonicalTarget });
-    if (Number(own[0]?.c ?? 0) > 0) return null; // canonical already has its own rounds — not split
-    const finds = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN count(fi) AS c', { t: canonicalTarget });
-    if (Number(finds[0]?.c ?? 0) === 0) return null; // nothing to anchor — not the split signature
-
-    // A sibling target that HAS rounds, shares the suffix, and whose prefix is everything before it.
-    const targets = await this.db.run('MATCH (r:Round) RETURN DISTINCT r.target AS t');
-    const from = targets
-      .map((s) => str(s.t) ?? '')
-      .find((t) => t !== canonicalTarget && t.endsWith(suffix) && t.indexOf('__') === t.length - suffix.length);
-    if (!from) return null;
-
-    const rc = await this.db.run('MATCH (r:Round {target:$f}) RETURN count(r) AS c', { f: from });
-    // Re-key Round LAST (HEAL_RELABEL_ORDER) so a crash mid-migration leaves the brain still detectable
-    // as split (findings present, no own rounds) and the next review/reconcile re-runs to completion —
-    // crash-safe + idempotent without a transaction (#6 silent-failure audit; rationale in guards.ts).
-    for (const label of HEAL_RELABEL_ORDER) {
-      await this.db.run(`MATCH (n:${label} {target:$f}) SET n.target=$t`, { f: from, t: canonicalTarget });
+  private appendEvents(target: string, events: LineageEvent[]): void {
+    if (events.length === 0) return;
+    const file = this.fileFor(target);
+    const lock = `${file}.lock`;
+    const body = events.map((e) => JSON.stringify(e) + '\n').join('');
+    let held = false;
+    for (let i = 0; i < 50 && !held; i++) {
+      try {
+        closeSync(openSync(lock, 'wx')); // O_CREAT|O_EXCL — fails if another writer holds it
+        held = true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') break; // unexpected → append unlocked
+        try {
+          if (Date.now() - statSync(lock).mtimeMs > 2000) { unlinkSync(lock); continue; } // reclaim a stale lock
+        } catch {
+          continue; // lock vanished between stat and now — retry immediately
+        }
+        sleepSync(20);
+      }
     }
-    return { from, rounds: Number(rc[0]?.c ?? 0) };
+    try {
+      appendFileSync(file, body, 'utf8');
+    } finally {
+      if (held) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* best-effort release */
+        }
+      }
+    }
+  }
+
+  private view(target: string): LineageView {
+    let body: string;
+    try {
+      body = readFileSync(this.fileFor(target), 'utf8');
+    } catch (e) {
+      // ONLY a missing file is "no history yet". A real read fault (EACCES/EISDIR/EIO) must NOT
+      // masquerade as empty — that would silently drop outcome-stickiness, so reconcile reports
+      // `checked:0` and the next review re-raises resolved findings + re-learns incidents (Plex #1).
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return foldLineage([]);
+      throw e;
+    }
+    return foldLineage(parseLineageEvents(body));
+  }
+
+  /** Every target's view (one file = one target) — for the cross-target reads. */
+  private allViews(): Array<{ target: string; view: LineageView }> {
+    let files: string[];
+    try {
+      files = readdirSync(this.lineageDir).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      return [];
+    }
+    const out: Array<{ target: string; view: LineageView }> = [];
+    for (const f of files) {
+      try {
+        const events = parseLineageEvents(readFileSync(path.join(this.lineageDir, f), 'utf8'));
+        if (events.length === 0) continue;
+        out.push({ target: events[0]!.target, view: foldLineage(events) });
+      } catch {
+        /* skip an unreadable file */
+      }
+    }
+    return out;
   }
 
   /** Load prior rounds + the signals/findings used for change attribution & fix inference. */
   async loadRoundState(target: string): Promise<RoundState> {
-    const roundRows = await this.db.run(
-      'MATCH (r:Round {target:$t}) RETURN r.n AS n, r.ts AS ts, r.headSha AS headSha ORDER BY r.n',
-      { t: target },
-    );
-    const rounds: RoundSummary[] = roundRows.map((r) => ({ n: Number(r.n), ts: str(r.ts) ?? '', headSha: str(r.headSha) || undefined }));
+    const v = this.view(target);
+    const rounds: RoundSummary[] = v.rounds.map((r) => ({ n: r.n, ts: r.ts, headSha: r.headSha || undefined }));
     const last = rounds[rounds.length - 1];
-
-    const findingRows = await this.db.run('MATCH (fi:Finding {target:$t}) RETURN fi.id AS id, fi.file AS file, fi.line AS line, fi.title AS title, fi.severity AS severity, fi.outcome AS outcome, fi.rule AS rule', { t: target });
-    const commentRows = await this.db.run('MATCH (c:Comment {target:$t}) RETURN c.file AS file, c.body AS body', { t: target });
-
     const signals: BrainSignal[] = [
-      ...findingRows.map((r) => ({ text: str(r.title) ?? '', file: str(r.file), label: `finding: ${excerpt(str(r.title) ?? '')}` })).filter((s) => s.text),
-      ...commentRows.map((r) => ({ text: str(r.body) ?? '', file: str(r.file), label: `comment: ${excerpt(str(r.body) ?? '')}` })).filter((s) => s.text),
+      ...v.findings.map((f) => ({ text: f.title, file: f.file || undefined, label: `finding: ${excerpt(f.title)}` })).filter((s) => s.text),
+      ...v.comments.map((c) => ({ text: c.body, file: c.file || undefined, label: `comment: ${excerpt(c.body)}` })).filter((s) => s.text),
     ];
-    const priorFindings: BrainFinding[] = findingRows
-      .filter((r) => !str(r.outcome)) // un-outcomed ('' sentinel)
-      .map((r) => ({ id: str(r.id) ?? '', file: str(r.file) || undefined, line: r.line == null ? undefined : Number(r.line), title: str(r.title) ?? '', severity: str(r.severity), rule: str(r.rule) || undefined }))
+    const priorFindings: BrainFinding[] = v.findings
+      .filter((f) => !v.outcomeOf(f.id)) // un-outcomed
+      .map((f) => ({ id: f.id, file: f.file || undefined, line: f.line < 0 ? undefined : f.line, title: f.title, severity: f.severity || undefined, rule: f.rule || undefined }))
       .filter((f) => f.id && f.title);
-
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
   }
 
   /**
-   * Targets in THIS brain that still have ≥1 OPEN (un-outcomed, non-`awareness`) finding AND a
-   * recorded round — the maintenance sweep's work list (ADR-43). `awareness` is excluded: it's never
-   * auto-accepted (ADR-31), so a target whose only open findings are flags has nothing to reconcile.
-   * Each entry carries the latest round's `headSha`/`baseRef` so the sweep can reconstruct a
-   * `DiffSource` (`diffSourceFromTarget`) and detect head-advance without a caller. Read-only.
+   * Targets with ≥1 OPEN (un-outcomed, non-`awareness`) finding AND a recorded round — the sweep's
+   * work list (ADR-43). Now durable + base-keyed, so the sweep sees a worktree's open findings even
+   * after the worktree is gone. `awareness` is excluded (never auto-accepted, ADR-31).
    */
   async openTargets(): Promise<Array<{ target: string; lastHeadSha?: string; baseRef?: string }>> {
-    const openRows = await this.db.run(
-      "MATCH (fi:Finding) WHERE (fi.outcome IS NULL OR fi.outcome = '') AND fi.severity <> 'awareness' RETURN DISTINCT fi.target AS target",
-    );
     const out: Array<{ target: string; lastHeadSha?: string; baseRef?: string }> = [];
-    for (const row of openRows) {
-      const target = str(row.target);
+    for (const { target, view } of this.allViews()) {
       if (!target) continue;
-      const roundRows = await this.db.run(
-        'MATCH (rd:Round {target:$t}) RETURN rd.headSha AS headSha, rd.baseRef AS baseRef ORDER BY rd.n DESC LIMIT 1',
-        { t: target },
-      );
-      const last = roundRows[0];
+      const hasOpen = view.findings.some((f) => !view.outcomeOf(f.id) && f.severity !== 'awareness');
+      if (!hasOpen) continue;
+      const last = view.rounds[view.rounds.length - 1];
       if (!last) continue; // no round → no head cursor → can't diff; skip
-      out.push({ target, lastHeadSha: str(last.headSha) || undefined, baseRef: str(last.baseRef) || undefined });
+      out.push({ target, lastHeadSha: last.headSha || undefined, baseRef: last.baseRef || undefined });
     }
     return out;
   }
 
   /**
-   * Every finding's ranking `signal` paired with its resolved outcome — the raw material for the
-   * offline ranking-quality eval (tuning.md §5). Outcome is the explicit Verdict kind if one exists,
-   * else the inferred `Finding.outcome` (`fixed`). Read-only; uses only data the review flow already
-   * persists (no schema change). Across all targets/rounds in this repo's brain.
+   * Every finding's ranking `signal` paired with its resolved outcome — the offline ranking-quality
+   * eval (tuning.md §5). Outcome is the explicit Verdict kind if one exists, else the inferred
+   * `outcome` event. Across all targets in this base's lineage.
    */
   async rankingSamples(): Promise<RankingSample[]> {
-    const finds = await this.db.run(
-      'MATCH (fi:Finding) RETURN fi.id AS id, fi.target AS target, fi.round AS round, fi.signal AS signal, fi.outcome AS outcome, ' +
-        'fi.severity AS severity, fi.confidence AS confidence, fi.blast AS blast, fi.prevalence AS prevalence, fi.agreement AS agreement',
-    );
-    const verds = await this.db.run('MATCH (v:Verdict) RETURN v.findingId AS fid, v.kind AS kind');
-    const kindBy = new Map<string, string>();
-    for (const v of verds) kindBy.set(str(v.fid) ?? '', str(v.kind) ?? '');
-    return finds.map((r) => {
-      const id = str(r.id) ?? '';
-      return {
-        target: str(r.target) ?? '',
-        round: Number(r.round) || 0,
-        id,
-        signal: Number(r.signal) || 0,
-        outcome: kindBy.get(id) || str(r.outcome) || '',
-        // Raw features (may be 0 on a finding written before feature persistence / by a non-enriching path).
-        severity: str(r.severity) ?? '',
-        confidence: Number(r.confidence) || 0,
-        blast: Number(r.blast) || 0,
-        prevalence: Number(r.prevalence) || 0,
-        agreement: Number(r.agreement) || 0,
-      };
-    });
+    const samples: RankingSample[] = [];
+    for (const { target, view } of this.allViews()) {
+      const kindByFinding = new Map(view.verdicts.map((vd) => [vd.findingId, vd.kind]));
+      for (const f of view.findings) {
+        samples.push({
+          target,
+          round: f.round || 0,
+          id: f.id,
+          signal: f.signal || 0,
+          outcome: kindByFinding.get(f.id) || view.outcomeOf(f.id) || '',
+          severity: f.severity,
+          confidence: f.confidence || 0,
+          blast: f.blast || 0,
+          prevalence: f.prevalence || 0,
+          agreement: f.agreement || 0,
+        });
+      }
+    }
+    return samples;
   }
 
   async recordRound(target: string, round: ReviewRound, comments: PrComment[]): Promise<void> {
-    const rid = `${target}#${round.n}`;
-    await this.db.run(
-      'MERGE (r:Round {id:$id}) SET r.target=$t, r.n=$n, r.ts=$ts, r.headSha=$h, r.baseRef=$b',
-      { id: rid, t: target, n: round.n, ts: round.ts, h: round.headSha ?? '', b: round.baseRef },
-    );
-    await this.db.insertMany(
-      'MERGE (c:Comment {id:$id}) SET c.target=$t, c.body=$body, c.author=$author, c.file=$file, c.line=$line',
-      comments.map((c) => ({ id: `${target}#${c.id}`, t: target, body: c.body, author: c.author ?? '', file: c.file ?? '', line: c.line ?? -1 })),
-    );
+    this.appendEvents(target, [
+      { k: 'round', target, n: round.n, ts: round.ts, headSha: round.headSha ?? '', baseRef: round.baseRef },
+      ...comments.map((c): LineageEvent => ({ k: 'comment', target, id: `${target}#${c.id}`, body: c.body, author: c.author ?? '', file: c.file ?? '', line: c.line ?? -1 })),
+    ]);
   }
 
-  /** Persist the agent's ranked findings with an empty outcome; `round` is the latest round raised.
-   *
-   * The id is keyed by target+file:line+title — NOT round (ADR-28 fix). A defect re-raised in a
-   * later round (the agent re-reviews the whole diff and re-flags what's still unfixed) is the SAME
-   * finding: keying by round minted a fresh node each round, so when the fix finally landed every
-   * duplicate auto-accepted → multiple incidents (over-reinforcing the pitfall), and un-fixed
-   * findings piled up one orphaned un-outcomed node per round (re-embedded as a signal every time).
-   * Round-free identity makes re-raises idempotent; `ON MATCH SET fi.round` tracks the latest round
-   * WITHOUT resetting the accrued `outcome` (a fixed finding stays fixed even if somehow re-raised). */
+  /** Persist the agent's ranked findings. Id is keyed by target+file:line+title — NOT round (ADR-28),
+   *  so a re-raised finding is the SAME node and its accrued outcome (a separate `outcome` event) is
+   *  never reset. */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
-    await this.db.insertMany(
-      'MERGE (fi:Finding {id:$id}) ON CREATE SET fi.outcome=$o, fi.target=$t, fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.file=$file, fi.line=$line, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree, fi.rule=$rule ' +
-        'ON MATCH SET fi.title=$title, fi.severity=$sev, fi.confidence=$conf, fi.signal=$signal, fi.source=$source, fi.triage=$triage, fi.round=$round, fi.blast=$blast, fi.prevalence=$prev, fi.agreement=$agree',
-      findings.map((f) => ({
+    this.appendEvents(
+      target,
+      findings.map((f): LineageEvent => ({
+        k: 'finding',
+        target,
         id: `${target}#${f.location.file}:${f.location.startLine}#${normalizeTitle(f.title)}`,
-        o: '', t: target, title: f.title, sev: f.severity, conf: f.confidence, signal: f.signal,
-        source: f.source, file: f.location.file, line: f.location.startLine, triage: f.triage, round: roundN,
-        // Raw ranking features (tuning.md §"feature persistence"): the inputs to `signal`, stored so a
-        // future re-weight/fit can learn from them. agreement = #independent sources (min 1 = itself).
-        blast: f.blastRadius ?? 0, prev: f.prevalence ?? 0, agree: f.agreedSources?.length ?? 1,
-        // The rule tag (deterministic findings) so an inferred accept can refute a suppression (ADR-39).
-        rule: f.tags?.[0] ?? '',
+        title: f.title,
+        severity: f.severity,
+        confidence: f.confidence,
+        signal: f.signal,
+        source: f.source,
+        file: f.location.file,
+        line: f.location.startLine,
+        triage: f.triage,
+        round: roundN,
+        // Raw ranking features (tuning.md §"feature persistence"). agreement = #independent sources (min 1).
+        blast: f.blastRadius ?? 0,
+        prevalence: f.prevalence ?? 0,
+        agreement: f.agreedSources?.length ?? 1,
+        rule: f.tags?.[0] ?? '', // the deterministic rule tag — lets an inferred accept refute a suppression (ADR-39)
       })),
     );
   }
@@ -287,21 +286,26 @@ export class Brain {
     target: string,
     verdict: { findingId: string; kind: VerdictKind; scope?: WaiverScope; title?: string; file?: string; line?: number; ts: string },
   ): Promise<void> {
-    await this.db.run(
-      'MERGE (v:Verdict {id:$id}) SET v.target=$t, v.findingId=$fid, v.kind=$kind, v.scope=$scope, v.ts=$ts, v.title=$title, v.file=$file, v.line=$line',
-      {
-        id: `${target}#${verdict.findingId}`, t: target, fid: verdict.findingId, kind: verdict.kind,
-        scope: verdict.scope ?? '', ts: verdict.ts, title: verdict.title ?? '', file: verdict.file ?? '', line: verdict.line ?? -1,
-      },
-    );
+    this.appendEvents(target, [{
+      k: 'verdict',
+      target,
+      findingId: verdict.findingId ?? '',
+      kind: verdict.kind,
+      scope: verdict.scope ?? '',
+      ts: verdict.ts,
+      title: verdict.title ?? '',
+      file: verdict.file ?? '',
+      line: verdict.line ?? -1,
+    }]);
   }
 
-  /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). */
+  /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). The target is the id's
+   *  prefix (`<target>#…`), so no separate target arg is needed; an empty id is a no-op (#4 guard). */
   async markFindingOutcome(findingId: string, outcome: string): Promise<void> {
-    // An empty id would run `MATCH (fi:Finding {id:''})` — matches nothing, so the disposition is
-    // silently lost and the finding stays open to be re-accepted + double-counted (#4 silent-failure
-    // audit). Callers already gate via `projectableOutcome`; this is the belt-and-suspenders no-op.
     if (!findingId) return;
-    await this.db.run('MATCH (fi:Finding {id:$id}) SET fi.outcome=$o', { id: findingId, o: outcome });
+    const hash = findingId.indexOf('#');
+    const target = hash > 0 ? findingId.slice(0, hash) : '';
+    if (!target) return;
+    this.appendEvents(target, [{ k: 'outcome', target, findingId, outcome }]);
   }
 }

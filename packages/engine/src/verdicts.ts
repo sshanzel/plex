@@ -1,7 +1,7 @@
 import { appendFile, readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Verdict, Waiver, ReviewerConfig } from '@plex/core';
-import { repoPaths } from './paths';
+import { repoPaths, baseRepoPath } from './paths';
 
 /** Identity fields captured at waive time so a waiver can re-match future findings. */
 export interface WaiverIdentity {
@@ -28,7 +28,7 @@ export async function recordVerdict(
   input: VerdictInput,
   config: ReviewerConfig,
 ): Promise<StoredVerdict> {
-  const p = repoPaths(repoPath, config.dataDir);
+  const p = repoPaths(baseRepoPath(repoPath), config.dataDir); // base-keyed (ADR-46): survives worktree removal
   await mkdir(path.dirname(p.verdictsFile), { recursive: true });
   const rec: StoredVerdict = { ...input, ts: new Date().toISOString() };
   // Persist WITH the embedding (loadWaivers reads it back for next-round semantic matching),
@@ -44,7 +44,7 @@ export async function readVerdicts(
   repoPath: string,
   config: ReviewerConfig,
 ): Promise<StoredVerdict[]> {
-  const p = repoPaths(repoPath, config.dataDir);
+  const p = repoPaths(baseRepoPath(repoPath), config.dataDir); // base-keyed (ADR-46): survives worktree removal
   let txt: string;
   try {
     txt = await readFile(p.verdictsFile, 'utf8');

@@ -30,6 +30,10 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   [`docs/design/tuning.md`](../../docs/design/tuning.md) §6), `slugify`, `hashId`.
 - `src/errors.ts` — `RepoBusyError` + `isLockError`: translate Kùzu's single-writer file-lock
   IOException into an actionable message.
+- `src/lineage-fold.ts` — pure event-sourcing fold for the durable lineage layer (ADR-46):
+  `LineageEvent` types + `foldLineage` (round/finding/verdict/comment/outcome events → current state,
+  last-write-wins per id, outcome tracked orthogonally so a re-raised finding never resets a `fixed`
+  outcome) + `parseLineageEvents`. Shared by the engine `Brain` and the viz-server so both agree.
 - `src/index.ts` — barrel.
 
 ## How config is actually resolved

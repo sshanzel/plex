@@ -102,4 +102,20 @@ describe('linkLineage', () => {
     const out = linkLineage({ graph: 'brain', truncated: false, counts: {}, nodes: [], edges: [] }, knowledge);
     expect(out.note).toMatch(/no pr brain/i);
   });
+
+  it('prefers a RECORDED finding→incident edge (incident.findingId) over the inferred bridge', () => {
+    // incident inc:9 records findingId '1' → matches brain finding fi:1 (id is `fi:` + findingId)
+    const knowledgeRec: GraphPayload = {
+      graph: 'knowledge', truncated: false, counts: {},
+      nodes: [node('inc:9', 'Incident', 'knowledge', { file: 'a.ts', findingId: '1' }), node('pf:1', 'Pitfall', 'knowledge', {})],
+      edges: [{ id: 'pe', source: 'pf:1', target: 'inc:9', label: 'from', graph: 'knowledge' }],
+    };
+    const out = linkLineage(brain, knowledgeRec);
+    const rec = out.edges.find((e) => e.source === 'fi:1' && e.target === 'inc:9');
+    expect(rec).toMatchObject({ label: 'became' });
+    expect(rec!.inferred).toBeUndefined(); // solid, not dashed
+    // fi:1 got a recorded edge, so it must NOT also get an inferred same-file bridge
+    expect(out.edges.some((e) => e.source === 'fi:1' && e.inferred)).toBe(false);
+    expect(out.note).toMatch(/1 recorded finding→incident/);
+  });
 });

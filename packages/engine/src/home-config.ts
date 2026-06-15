@@ -19,6 +19,8 @@ export interface HomeConfig {
   suppression?: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number };
   /** Positive-pitfall recency-decay knobs (ADR-42). Partial blocks merge with defaults in `resolveConfig`. */
   decay?: { halfLifeDays?: number; retrievalTiltFloor?: number; pruneFloor?: number; pruneMinAgeDays?: number };
+  /** Viz daemon (ADR-45): `autoStart: true` restores always-on (the MCP spawns it); default off (on-demand). */
+  ui?: { autoStart?: boolean; port?: number };
 }
 
 export const homeConfigPath = (): string => path.join(os.homedir(), '.plex', 'config.json');
@@ -42,6 +44,7 @@ export function writeHomeConfig(patch: HomeConfig): HomeConfig {
     llm: { ...current.llm, ...patch.llm },
     suppression: { ...current.suppression, ...patch.suppression },
     decay: { ...current.decay, ...patch.decay },
+    ui: { ...current.ui, ...patch.ui },
   };
   const f = homeConfigPath();
   mkdirSync(path.dirname(f), { recursive: true });

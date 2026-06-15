@@ -47,7 +47,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
     return void res.end(html);
   }
   if (p === '/api/repos') {
-    const repos = listRepos(config).map((r) => ({ id: r.id, name: r.name, path: r.repoPath ?? '', hasGraph: r.hasGraph, hasBrain: r.hasBrain }));
+    const repos = listRepos(config).map((r) => ({ id: r.id, name: r.name, path: r.repoPath ?? '', hasGraph: r.hasGraph, hasLineage: r.hasLineage }));
     return json(res, 200, { repos });
   }
 
