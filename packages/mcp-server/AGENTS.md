@@ -60,6 +60,12 @@ target (`reviewTargetFor(repoPath, src)`) agrees across context → findings →
   `.mcp.json` registration — see root `AGENTS.md`).
 - The shebang in `src/index.ts` line 1 is preserved by tsup into `dist/plex-mcp.js` so the
   published `plex-mcp` bin is directly spawnable.
+- **UI auto-start (ADR-45/M13) — OPT-IN.** The viz daemon is on-demand by default (`plex serve`); it
+  is a viewer, not a capturer, so nothing's missed by it being off. Only when **`config.ui.autoStart`**
+  (or `PLEX_UI_AUTOSTART=1`) is set does startup best-effort call `ensureDaemon` (`@plex/viz-server`) to
+  spawn its sibling `plex.js serve --foreground` (resolved from `SELF`'s dir) detached on the configured
+  `ui.port`. **Stdout-safe** (the MCP's stdout is the protocol channel — `ensureDaemon` writes nothing
+  there and swallows errors); no-ops in dev/tsx (no sibling `plex.js`).
 
 ## Invariants & gotchas
 

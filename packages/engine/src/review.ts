@@ -12,7 +12,7 @@ import type {
   PrComment,
   AttributedChange,
 } from '@plex/core';
-import { safeEmbed } from '@plex/core';
+import { safeEmbed, RepoBusyError } from '@plex/core';
 import {
   CodeGraphDB,
   buildCodeGraph,
@@ -466,9 +466,8 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 
   const brain = await Brain.open(opts.repoPath, config);
   try {
-    // Self-heal a worktree brain split (rounds orphaned under a sibling target by an older build)
-    // before reading state, so a re-review's fix-inference sees the prior rounds (reviewTargetFor).
-    await brain.healSplitTarget(target);
+    // The lineage store is base-keyed and durable (ADR-46), so a worktree review and the base share
+    // one target — no split to heal (the old `healSplitTarget` guard retired with the Kùzu brain).
     const state = await brain.loadRoundState(target);
     const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
     const round = sameRound ? state.lastN : state.lastN + 1;
@@ -678,19 +677,28 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open, normal mode (the worktree owns
   // its copied graph, so no read-only share).
   const changedPaths = diff.files.map((f) => f.path);
-  const db = new CodeGraphDB(graphP.graphDir);
-  let repo: string;
-  let nb: ReviewNeighborhood;
-  let coupling: [string, string][] = [];
-  let couplingDeg = new Map<string, number>();
-  try {
-    repo = (await getMeta(db, 'repo')) ?? p.repoPath;
-    nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
-    coupling = await changedFileCoupling(db, changedPaths);
-    couplingDeg = await getCouplingDegrees(db, changedPaths); // for per-finding blast enrichment
-  } finally {
-    await db.close();
+  // A detached background sweep (ADR-43) may briefly hold the graph's single-writer lock while it
+  // re-indexes main (ADR-46). The review is foreground, so retry the open/query a few times on a
+  // transient `RepoBusyError` (~3s budget) rather than failing the whole review for a moment of
+  // contention; the lock can surface at open OR lazily at first query, so the retry wraps both.
+  let result: { repo: string; nb: ReviewNeighborhood; coupling: [string, string][]; couplingDeg: Map<string, number> } | undefined;
+  for (let attempt = 0; result === undefined; attempt++) {
+    let db: CodeGraphDB | undefined;
+    try {
+      db = new CodeGraphDB(graphP.graphDir);
+      const repo = (await getMeta(db, 'repo')) ?? p.repoPath;
+      const nb = await computeNeighborhood(db, repo, diff, opts.config.neighborhood);
+      const coupling = await changedFileCoupling(db, changedPaths);
+      const couplingDeg = await getCouplingDegrees(db, changedPaths); // for per-finding blast enrichment
+      result = { repo, nb, coupling, couplingDeg };
+    } catch (e) {
+      if (!(e instanceof RepoBusyError) || attempt >= 20) throw e;
+      await new Promise((r) => setTimeout(r, 150));
+    } finally {
+      if (db) await db.close().catch(() => {});
+    }
   }
+  const { repo, nb, coupling, couplingDeg } = result;
 
   // Merge dependents of COMMITTED deletions from the sidecar — their nodes were
   // DETACH-DELETEd by whichever incremental update ingested the deletion (this round's

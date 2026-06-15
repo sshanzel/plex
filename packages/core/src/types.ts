@@ -339,5 +339,14 @@ export interface Incident {
    * pre-decay incidents (which default to `reject`, the conservative short half-life).
    */
   verb?: 'reject' | 'waive';
+  /**
+   * Provenance back to the review event that produced this incident (ADR-46, Tier-2 increment 1):
+   * the brain `Finding.id` it was confirmed from, and the review `target` (`<repo>__pr_<n>` /
+   * `__<mode>`). Lets the knowledge graph draw a **recorded** finding→incident→pitfall edge — "where
+   * this pitfall came from" — instead of the explorer's same-file *inferred* bridge. Optional/
+   * best-effort (absent on analyzed incidents and pre-Tier-2 records); never affects confidence math.
+   */
+  findingId?: string;
+  target?: string;
   ts: string;
 }

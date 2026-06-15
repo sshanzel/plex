@@ -1,16 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { HEAL_RELABEL_ORDER, recordableHeadSha, priorRoundHeadSha, OUTCOME_BY_KIND, projectableOutcome } from './guards';
-
-// #6: healSplitTarget re-keys 4 labels with no transaction. Round MUST be last so a partial-crash brain
-// still reads as "split" (findings, no own rounds) and the next run finishes the migration.
-describe('HEAL_RELABEL_ORDER (crash-safety of the split-target heal)', () => {
-  it('re-keys Round LAST so a mid-migration crash stays detectable + re-healable', () => {
-    expect(HEAL_RELABEL_ORDER[HEAL_RELABEL_ORDER.length - 1]).toBe('Round');
-  });
-  it('covers exactly the four brain node labels, once each', () => {
-    expect([...HEAL_RELABEL_ORDER].sort()).toEqual(['Comment', 'Finding', 'Round', 'Verdict']);
-  });
-});
+import { recordableHeadSha, priorRoundHeadSha, OUTCOME_BY_KIND, projectableOutcome } from './guards';
 
 // #2 + PR #10 review: never persist a round with an empty headSha (poisons the next anchor), but
 // carry the last anchor forward rather than skipping outright (a skipped round drops comments + fakes

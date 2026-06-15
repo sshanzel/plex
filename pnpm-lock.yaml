@@ -49,6 +49,9 @@ importers:
       '@plex/engine':
         specifier: workspace:*
         version: link:../engine
+      '@plex/viz-server':
+        specifier: workspace:*
+        version: link:../viz-server
 
   packages/code-graph:
     dependencies:
@@ -144,6 +147,9 @@ importers:
       '@plex/ingest':
         specifier: workspace:*
         version: link:../ingest
+      '@plex/viz-server':
+        specifier: workspace:*
+        version: link:../viz-server
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -156,6 +162,18 @@ importers:
       '@plex/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/viz-server:
+    dependencies:
+      '@plex/code-graph':
+        specifier: workspace:*
+        version: link:../code-graph
+      '@plex/core':
+        specifier: workspace:*
+        version: link:../core
+      '@plex/knowledge':
+        specifier: workspace:*
+        version: link:../knowledge
 
 packages:
 

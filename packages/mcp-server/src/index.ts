@@ -41,6 +41,7 @@ import {
   type SubmittedFinding,
   type AgentPitfall,
 } from '@plex/engine';
+import { ensureDaemon } from '@plex/viz-server';
 import { buildDoctorReport } from './doctor';
 
 // Single-sourced from the package.json that ships beside the bundle (dist/ → ../package.json),
@@ -404,3 +405,19 @@ process.stdin.resume();
 process.stderr.write(
   `[plex] MCP server v${VERSION} (build ${LOADED_BUILD_MS ? new Date(LOADED_BUILD_MS).toISOString() : 'unknown'}) running on stdio\n`,
 );
+
+// UI auto-start (ADR-45/M13) — OPT-IN. The viz daemon is a *viewer*, not a capturer: it only displays
+// data the review flow already persists, so nothing is missed by it being off. Default is on-demand
+// (`plex serve` / `npx … plex serve`); set `ui.autoStart` (or PLEX_UI_AUTOSTART=1) to restore always-on,
+// in which case the MCP spawns it detached via its sibling built CLI (`plex.js`). Best-effort +
+// STDOUT-SAFE (ensureDaemon writes nothing to stdout, swallows errors); no-ops in dev/tsx (no sibling).
+{
+  const startupConfig = loadConfig();
+  if (startupConfig.ui.autoStart && SELF) {
+    void ensureDaemon({
+      execPath: process.execPath,
+      scriptPath: path.join(path.dirname(SELF), 'plex.js'),
+      port: startupConfig.ui.port,
+    });
+  }
+}

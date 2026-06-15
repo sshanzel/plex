@@ -17,6 +17,7 @@ export default defineConfig({
       '@plex/distill': pkg('distill'),
       '@plex/deterministic': pkg('deterministic'),
       '@plex/findings': pkg('findings'),
+      '@plex/viz-server': pkg('viz-server'),
     },
   },
   test: {

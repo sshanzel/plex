@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@plex/core": "workspace:*",
-    "@plex/engine": "workspace:*"
+    "@plex/engine": "workspace:*",
+    "@plex/viz-server": "workspace:*"
   }
 }

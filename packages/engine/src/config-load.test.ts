@@ -9,7 +9,7 @@ import { writeHomeConfig } from './home-config';
 // REAL home config via os.homedir(), so every test sandboxes $HOME to a temp dir (verified:
 // os.homedir() honors $HOME here) and clears PLEX_* env — otherwise results leak from the
 // dev machine. No Kùzu → vitest-safe.
-const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS', 'PLEX_DECAY_HALFLIFE_DAYS', 'PLEX_DECAY_RETRIEVAL_TILT_FLOOR', 'PLEX_DECAY_PRUNE_FLOOR', 'PLEX_DECAY_PRUNE_MIN_AGE_DAYS'];
+const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS', 'PLEX_DECAY_HALFLIFE_DAYS', 'PLEX_DECAY_RETRIEVAL_TILT_FLOOR', 'PLEX_DECAY_PRUNE_FLOOR', 'PLEX_DECAY_PRUNE_MIN_AGE_DAYS', 'PLEX_UI_AUTOSTART', 'PLEX_UI_PORT'];
 let home: string;
 let saved: Record<string, string | undefined>;
 
@@ -66,6 +66,22 @@ describe('loadConfig precedence', () => {
     process.env.PLEX_DATA_DIR = 'Y';
     expect(loadConfig().dataDir).toBe('Y');
     expect(loadConfig({ dataDir: 'X' }).dataDir).toBe('X');
+  });
+
+  it('viz daemon is on-demand by default (ui.autoStart=false, port 2288)', () => {
+    const c = loadConfig();
+    expect(c.ui).toEqual({ autoStart: false, port: 2288 });
+  });
+
+  it('PLEX_UI_AUTOSTART / PLEX_UI_PORT opt into always-on and a custom port', () => {
+    process.env.PLEX_UI_AUTOSTART = '1';
+    process.env.PLEX_UI_PORT = '9999';
+    expect(loadConfig().ui).toEqual({ autoStart: true, port: 9999 });
+  });
+
+  it('a ~/.plex/config.json ui.autoStart reaches the config', () => {
+    writeHomeConfig({ ui: { autoStart: true } });
+    expect(loadConfig().ui.autoStart).toBe(true);
   });
 
   it('suppression half-lives default to 30/365 with empty home and no env', () => {

@@ -109,10 +109,8 @@ export async function reconcileOutcomes(
   const cwd = repoPaths(repoPath, config.dataDir).repoPath;
   const brain = await Brain.open(repoPath, config);
   try {
-    // Self-heal a worktree brain split before reading state: if this review's rounds were
-    // orphaned under a sibling target by an older build, adopt them so reconcile can proceed.
-    const healed = await brain.healSplitTarget(target);
-    const healNote = healed ? `merged ${healed.rounds} orphaned round(s) from "${healed.from}" (worktree brain split); ` : '';
+    // Lineage is base-keyed + durable (ADR-46): a worktree and its base share one target, so there's
+    // no brain split to heal, and a worktree's prior rounds survive `git worktree remove`.
     const state = await brain.loadRoundState(target);
     const checked = state.priorFindings.length;
     const head =
@@ -124,17 +122,17 @@ export async function reconcileOutcomes(
         target,
         checked,
         accepted: 0,
-        reason: `no prior round recorded for target "${target}" — cannot tell what changed since the findings were raised (if this repo is a worktree, the brain may be split across two target names; see reviewTargetFor)`,
+        reason: `no prior round recorded for target "${target}" — cannot tell what changed since the findings were raised`,
       };
     }
-    if (!head) return { target, checked, accepted: 0, reason: `${healNote}could not resolve the current head sha`, fromSha: state.lastHeadSha };
+    if (!head) return { target, checked, accepted: 0, reason: 'could not resolve the current head sha', fromSha: state.lastHeadSha };
     if (state.lastHeadSha === head) {
-      return { target, checked, accepted: 0, reason: `${healNote}no commits since the last reviewed round (head unchanged) — push fixes, then reconcile`, fromSha: state.lastHeadSha, toSha: head };
+      return { target, checked, accepted: 0, reason: 'no commits since the last reviewed round (head unchanged) — push fixes, then reconcile', fromSha: state.lastHeadSha, toSha: head };
     }
 
     const changed = await getChangedFileTexts(cwd, state.lastHeadSha, head);
     if (changed.length === 0) {
-      return { target, checked, accepted: 0, reason: `${healNote}commits exist since the last round but added no lines to diff against`, fromSha: state.lastHeadSha, toSha: head, changedFiles: 0 };
+      return { target, checked, accepted: 0, reason: 'commits exist since the last round but added no lines to diff against', fromSha: state.lastHeadSha, toSha: head, changedFiles: 0 };
     }
 
     // Embed only when a provider exists; otherwise empty vectors → semantic never fires and
@@ -157,8 +155,8 @@ export async function reconcileOutcomes(
     const accepted = accepts.length;
     const reason =
       accepted > 0
-        ? `${healNote}accepted ${accepted} of ${checked} — a pushed change addressed them (see acceptedFindings for what matched and how)`
-        : `${healNote}${changed.length} file(s) changed since ${state.lastHeadSha.slice(0, 8)} but none matched an open finding (no semantic match and no change near a finding's file:line)${embedder ? '' : '; no embedding provider, so only locality was tried'}`;
+        ? `accepted ${accepted} of ${checked} — a pushed change addressed them (see acceptedFindings for what matched and how)`
+        : `${changed.length} file(s) changed since ${state.lastHeadSha.slice(0, 8)} but none matched an open finding (no semantic match and no change near a finding's file:line)${embedder ? '' : '; no embedding provider, so only locality was tried'}`;
     return { target, checked, accepted, reason, fromSha: state.lastHeadSha, toSha: head, changedFiles: changed.length, ...(accepted > 0 ? { acceptedFindings: accepts } : {}) };
   } finally {
     await brain.close();

@@ -6,18 +6,6 @@
  */
 
 /**
- * Order `healSplitTarget` re-keys the four node labels when adopting a split sibling's rows — **`Round`
- * LAST, deliberately** (#6 silent-failure audit). The split signature heal detects is "canonical has
- * Findings but no Rounds of its own". The re-key is several separate `db.run`s with no transaction, so
- * a crash mid-way must leave the brain STILL detectable as split, so the next review/reconcile re-runs
- * and completes. If `Round` moved first, a crash after it would give the canonical target its own
- * rounds → the heal's early-return (`own rounds > 0`) fires forever and the remaining Findings/
- * Verdicts/Comments stay orphaned under the sibling. Moving `Round` last makes the migration
- * crash-safe and idempotent without a transaction: re-keying an already-moved label is a no-op MATCH.
- */
-export const HEAL_RELABEL_ORDER = ['Comment', 'Finding', 'Verdict', 'Round'] as const;
-
-/**
  * The headSha to persist for a review round, or `''` to skip recording it entirely.
  *
  * A round keys off its `headSha`. Recording one with an EMPTY sha (a `git rev-parse` failure that

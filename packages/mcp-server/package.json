@@ -8,6 +8,7 @@
     "@plex/core": "workspace:*",
     "@plex/ingest": "workspace:*",
     "@plex/engine": "workspace:*",
+    "@plex/viz-server": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.4.3"
   }
