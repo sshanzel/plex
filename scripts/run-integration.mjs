@@ -22,6 +22,7 @@ const SCENARIOS = [
   'worktree-seed',
   'neighborhood',
   'blast-hub',
+  'blast-barrel',
   'cochange-hub',
   'precise',
   'engine',

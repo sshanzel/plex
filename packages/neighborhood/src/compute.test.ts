@@ -35,6 +35,35 @@ describe('personalizedPageRank (the propagation, pure)', () => {
     const floored = await personalizedPageRank(['S'], graphExpand({ S: wide }), { ...opts, minScore: 0.5 });
     expect(floored.every((n) => n.score >= 0.5)).toBe(true);
   });
+
+  it('transparent barrel: passes mass through to consumers instead of ranking #1 and burying them', async () => {
+    // S → B (a barrel) → 20 consumers, reachable ONLY through B (no co-change shortcut).
+    const consumers = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const graph = { S: [['B', 1]] as [string, number][], B: consumers.map((c) => [c, 1] as [string, number]) };
+    const score = (out: Awaited<ReturnType<typeof personalizedPageRank>>, id: string) =>
+      out.find((n) => n.id === id)?.score ?? 0;
+
+    // Opaque (default): the barrel itself ranks #1, and its consumers are diluted below minScore.
+    const opaque = await personalizedPageRank(['S'], graphExpand(graph), { ...opts, maxHops: 2, minScore: 0.05 });
+    expect(opaque[0]!.id).toBe('B'); // the barrel is the noisy top neighbor
+    expect(score(opaque, 'c0')).toBeLessThan(0.05); // real consumers fall under the floor → dropped
+
+    // Transparent: the barrel is gone from the output and the consumers surface as the radius.
+    const seethrough = await personalizedPageRank(['S'], graphExpand(graph), {
+      ...opts, maxHops: 2, minScore: 0.05, transparent: new Set(['B']),
+    });
+    expect(seethrough.some((n) => n.id === 'B')).toBe(false); // plumbing, not a reviewable neighbor
+    expect(seethrough.length).toBe(consumers.length); // all consumers surfaced
+    expect(seethrough[0]!.score).toBeCloseTo(1, 10); // a genuine consumer is now the top, normalized to 1
+  });
+
+  it('transparent never applies to a seed (the changed file is the signal, even if it looks like a barrel)', async () => {
+    // S is in the transparent set but it's also the seed — it must still drive the walk normally.
+    const out = await personalizedPageRank(['S'], graphExpand({ S: [['A', 1], ['B', 1]] }), {
+      ...opts, transparent: new Set(['S']),
+    });
+    expect(out.map((n) => n.id).sort()).toEqual(['A', 'B']);
+  });
 });
 
 describe('associationStrength (co-change promiscuity normalization)', () => {

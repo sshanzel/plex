@@ -17,6 +17,7 @@ export {
   getCouplingDegrees,
   getImportEdges,
   getRefEdges,
+  getBarrelFiles,
   fileExists,
   getMeta,
 } from './query';

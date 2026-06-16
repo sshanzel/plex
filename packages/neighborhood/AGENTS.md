@@ -54,9 +54,23 @@ frontier node `u` with residual `ru`:
   hundreds natively *dilutes* what it forwards (no separate hub-damping knob; it subsumed
   the old `hubWeight` falloff from the ADR-06 refinement).
 
+**Barrel transparency (ADR-06 refinement).** A **barrel / re-export file** (`getBarrelFiles`,
+`@plex/code-graph` — 0 own symbols + import degree ≥ 3, i.e. `index.ts`-style `export … from`
+plumbing) is passed to the walk as a **transparent** node: it deposits **no** mass (local
+`restart = 0`) and forwards **100%** of its residual, then is dropped from the output. Rationale
+(measured on the real graph): a barrel otherwise ranks **#1** — useless noise ("the barrel is
+affected") that also sets the max-normalization ceiling and buries the genuine consumers behind it.
+Making it transparent (a) removes the plumbing from the radius, (b) lowers the ceiling so real
+consumers rank higher / clear `minScore`, and (c) passes mass through to consumers reachable *only*
+via the barrel (the case where co-change is sparse — a fresh repo or a big mechanical PR). A barrel
+that is *itself* a changed (seed) file is **never** transparent — the change is the signal. This is
+the stronger "pure plumbing" sibling of the degree-normalization hub dilution above (which still
+applies to non-barrel hubs and to promiscuous co-change).
+
 A node reached by several paths accumulates more mass; `via` collects every edge
 provenance that touched it; `distance` is the first hop that reached it. After the last
-hop, in-flight residual deposits its `restart` share so reachable nodes aren't lost.
+hop, in-flight residual deposits its `restart` share so reachable nodes aren't lost
+(transparent nodes still deposit nothing, so they never surface).
 Seeds are excluded from the output; scores are **max-normalized** to [0,1] (top neighbor
 = 1), filtered by `minScore` (default **0.05**), sorted by score with **id as a stable
 tie-break** (deterministic `maxNeighbors` cutoff, default **40**), and capped.

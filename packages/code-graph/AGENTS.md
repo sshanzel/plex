@@ -21,7 +21,8 @@ a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/gr
 - `src/build.ts` — `buildCodeGraph` (full) and `updateCodeGraph` (incremental, ADR-25/26);
   throws `FullRebuildRequired` when incremental can't run.
 - `src/query.ts` — read surface: symbols per file, undirected edge/degree queries used by
-  the neighborhood walk, `getMeta`.
+  the neighborhood walk, `getBarrelFiles` (re-export plumbing — 0 own symbols + import
+  degree ≥ 3 — which the walk treats as transparent), `getMeta`.
 
 ## The algorithm
 

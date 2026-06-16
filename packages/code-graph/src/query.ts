@@ -104,6 +104,30 @@ export async function getRefEdges(
   return rows.map((r) => ({ src: String(r.src), dst: String(r.dst) }));
 }
 
+/**
+ * Identify **barrel / re-export files** — `index.ts`-style modules that are almost pure
+ * `export … from './x'` plumbing (ADR-06 refinement). Heuristic, no type checker: a file that
+ * declares **zero own symbols** yet has an import degree ≥ `minImportDegree` (its captured
+ * `export…from` specifiers count as Imports, `extract-ts.ts`). The blast-radius walk treats these
+ * as **transparent** — they pass coupling through to their consumers/targets instead of ranking as
+ * a top "neighbor" (a barrel has no code to review) and inflating the normalization ceiling.
+ *
+ * Conservative by design: a file with no declared symbols + several import relationships is
+ * overwhelmingly plumbing, so mislabeling a real module is unlikely.
+ */
+export async function getBarrelFiles(db: CodeGraphDB, minImportDegree = 3): Promise<Set<string>> {
+  const symCount = new Map<string, number>();
+  for (const r of await db.run('MATCH (s:Symbol) RETURN s.file AS file, count(s) AS c')) {
+    symCount.set(String(r.file), Number(r.c) || 0);
+  }
+  const barrels = new Set<string>();
+  for (const r of await db.run('MATCH (f:File)-[i:Imports]-(:File) RETURN f.id AS id, count(i) AS deg')) {
+    const id = String(r.id);
+    if ((Number(r.deg) || 0) >= minImportDegree && (symCount.get(id) ?? 0) === 0) barrels.add(id);
+  }
+  return barrels;
+}
+
 export async function fileExists(db: CodeGraphDB, id: string): Promise<boolean> {
   const rows = await db.run('MATCH (f:File {id:$id}) RETURN f.id AS id', { id });
   return rows.length > 0;

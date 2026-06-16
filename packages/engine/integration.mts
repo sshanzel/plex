@@ -190,6 +190,47 @@ test('blast-hub', "neighborhood: a changed barrel's importers are damped vs a di
   }
 });
 
+test('blast-barrel', 'neighborhood: a barrel/re-export file is transparent — excluded from the radius, consumers surface through it', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-bar-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-bardb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    // index.ts is a PURE BARREL: 0 own symbols, only `export … from` re-exports (a/b/c).
+    writeFileSync(join(repo, 'src/index.ts'), "export * from './a';\nexport * from './b';\nexport * from './c';\n");
+    for (const m of ['a', 'b', 'c']) writeFileSync(join(repo, `src/${m}.ts`), `export const ${m} = 1;\n`);
+    // 5 consumers import from the barrel — so a.ts → consumers is reachable ONLY via index.ts.
+    for (let i = 0; i < 5; i++) writeFileSync(join(repo, `src/u${i}.ts`), `import { a } from './index';\nexport const u${i} = a;\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init'); // single commit ⇒ no co-change edges (minPairCount 2) — barrel is the only path
+
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    const oneLine = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, newRanges: [{ start: 1, end: 1 }] };
+    const diff: NormalizedDiff = {
+      baseRef: 'HEAD',
+      files: [{ path: 'src/a.ts', status: 'modified', hunks: [oneLine] }], // change a re-exported module
+    };
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 2, maxNeighbors: 40, minScore: 0.001 });
+      const score = (p: string) => nb.neighbors.find((n) => String(n.node.props.path) === p)?.score ?? 0;
+      // The barrel is plumbing, not a reviewable neighbor — it must be absent from the radius…
+      assert.equal(score('src/index.ts'), 0, 'barrel (index.ts) is transparent — excluded from the blast radius');
+      // …and its consumers, reachable ONLY through it, must still surface (mass passed through).
+      const consumers = [0, 1, 2, 3, 4].map((i) => score(`src/u${i}.ts`));
+      assert.ok(consumers.every((s) => s > 0), `all barrel consumers surface through the transparent barrel (${consumers.map((s) => s.toFixed(3)).join(', ')})`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
 test('cochange-hub', 'neighborhood: a promiscuous co-change file is damped vs an exclusive coupling (assoc. strength)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-coh-'));
   const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-cohdb-')), 'g.kuzu');

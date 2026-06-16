@@ -12,6 +12,7 @@ import {
   getCoChangeDegrees,
   getImportEdges,
   getRefEdges,
+  getBarrelFiles,
   fileExists,
   type SymbolRow,
 } from '@plex/code-graph';
@@ -84,13 +85,22 @@ export interface PprNeighbor {
  * rest split across its out-edges in proportion to weight — so a high-degree hub dilutes natively,
  * a node reached by several paths accumulates more, and scores converge. Seeds are excluded; scores
  * are max-normalized to [0,1]; the result is minScore-filtered, ranked, and capped at maxNeighbors.
+ *
+ * `transparent` nodes (barrel / re-export plumbing — `getBarrelFiles`) are treated as pass-through:
+ * they deposit **no** mass (local restart = 0) and forward **all** their residual, then are dropped
+ * from the output. A barrel has no code to review, and ranking it #1 would only inflate the
+ * normalization ceiling and bury the genuine consumers it sits in front of — making it transparent
+ * surfaces those consumers (and reaches any reachable only *through* the barrel, where co-change is
+ * sparse). Seeds are never transparent even if they match (the changed file is the signal).
  */
 export async function personalizedPageRank(
   seeds: readonly string[],
   expand: (frontier: string[]) => Promise<readonly WeightedEdge[]>,
-  opts: { restart: number; maxHops: number; maxNeighbors: number; minScore: number },
+  opts: { restart: number; maxHops: number; maxNeighbors: number; minScore: number; transparent?: ReadonlySet<string> },
 ): Promise<PprNeighbor[]> {
   const sources = new Set(seeds);
+  // A barrel is transparent ONLY if it isn't itself a changed (seed) file.
+  const isTransparent = (id: string): boolean => (opts.transparent?.has(id) ?? false) && !sources.has(id);
   const ppr = new Map<string, number>(); // accumulated PageRank mass (the deposited score)
   const via = new Map<string, Set<EdgeProvenance>>();
   const dist = new Map<string, number>();
@@ -108,11 +118,13 @@ export async function personalizedPageRank(
     for (const u of frontier) {
       const ru = residual.get(u) ?? 0;
       if (ru <= 0) continue;
-      ppr.set(u, (ppr.get(u) ?? 0) + opts.restart * ru); // deposit the restart share at u
+      // Transparent (barrel) nodes deposit nothing and forward 100% — pure pass-through plumbing.
+      const restart = isTransparent(u) ? 0 : opts.restart;
+      ppr.set(u, (ppr.get(u) ?? 0) + restart * ru); // deposit the restart share at u
       const ue = out.get(u) ?? [];
       const deg = ue.reduce((s, e) => s + e.w, 0);
       if (deg <= 0) continue;
-      const flow = (1 - opts.restart) * ru;
+      const flow = (1 - restart) * ru;
       for (const e of ue) {
         nextResidual.set(e.dst, (nextResidual.get(e.dst) ?? 0) + flow * (e.w / deg));
         (via.get(e.dst) ?? via.set(e.dst, new Set()).get(e.dst)!).add(e.via);
@@ -121,10 +133,13 @@ export async function personalizedPageRank(
     }
     residual = nextResidual;
   }
-  // Deposit whatever mass is still in flight after the last hop (so reachable nodes aren't lost).
-  for (const [u, ru] of residual) ppr.set(u, (ppr.get(u) ?? 0) + opts.restart * ru);
+  // Deposit whatever mass is still in flight after the last hop (so reachable nodes aren't lost) —
+  // transparent nodes still deposit nothing, so they never surface as a neighbor.
+  for (const [u, ru] of residual) ppr.set(u, (ppr.get(u) ?? 0) + (isTransparent(u) ? 0 : opts.restart) * ru);
 
-  const ranked = [...ppr.entries()].filter(([id, s]) => !sources.has(id) && s > 0);
+  // Exclude transparent (barrel) nodes from the output AND from the max used to normalize — otherwise
+  // a barrel would set the ceiling and bury the very consumers it forwarded mass to.
+  const ranked = [...ppr.entries()].filter(([id, s]) => !sources.has(id) && !isTransparent(id) && s > 0);
   const max = ranked.reduce((m, [, s]) => Math.max(m, s), 0);
   return ranked
     .map(([id, s]) => ({ id, score: max > 0 ? s / max : 0, via: [...(via.get(id) ?? [])], distance: dist.get(id) ?? 1 }))
@@ -206,11 +221,16 @@ export async function computeNeighborhood(
     return edges;
   };
 
+  // Barrel / re-export files are transparent in the walk: they pass coupling through to their
+  // consumers instead of ranking as a noisy top "neighbor" (ADR-06 refinement). Computed once here.
+  const transparent = await getBarrelFiles(db);
+
   const ranked = await personalizedPageRank(changedFileIds, expand, {
     restart,
     maxHops: opts.maxHops,
     maxNeighbors: opts.maxNeighbors,
     minScore: opts.minScore,
+    transparent,
   });
   const neighbors: NeighborEntry[] = ranked.map((r) => ({
     node: { id: r.id, label: 'File' as const, props: { path: r.id } },
