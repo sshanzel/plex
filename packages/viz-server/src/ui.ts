@@ -89,7 +89,10 @@ const CLIENT_JS = String.raw`
     Pitfall:'#63e6be', Suppression:'#ff6b6b', Incident:'#868e96'
   };
   var EDGE_TYPES = {
-    code: ['import','ref','co-change','declares','coupled'],
+    // No 'declares'/'coupled' here on purpose: those are expand-only edges (File→Symbol, File→neighbor)
+    // that arrive on double-click. They render unfiltered (always shown) rather than cluttering the
+    // base-view filter row with toggles for edge types the initial graph doesn't contain.
+    code: ['import','ref','co-change'],
     brain: ['round of','raised in','verdict on','comment','comment on'],
     knowledge: ['from','about'],
     lineage: ['round of','raised in','verdict on','comment','comment on','from','about','likely became']
