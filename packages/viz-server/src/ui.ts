@@ -345,9 +345,7 @@ const CLIENT_JS = String.raw`
     });
   }
 
-  function doSearch(q) {
-    if (!state.cy) return;
-    q = (q || '').toLowerCase();
+  function highlightMatches(q) {
     state.cy.batch(function () {
       state.cy.nodes().forEach(function (n) {
         var hit = q && n.data('label').toLowerCase().indexOf(q) !== -1;
@@ -355,6 +353,40 @@ const CLIENT_JS = String.raw`
         n.toggleClass('faded', !!q && !hit);
       });
     });
+  }
+  var searchTimer = null, searchGen = 0;
+  function currentQuery() { return ($('search').value || '').toLowerCase(); }
+  function doSearch(q) {
+    if (!state.cy) return;
+    q = (q || '').toLowerCase();
+    highlightMatches(q); // instant: highlight/fade the LOADED nodes
+    // Code graph lands on the hub files only, so a wanted file may not be loaded — fetch it (debounced)
+    // and add it to the graph so search reaches the WHOLE repo, not just the landing set.
+    clearTimeout(searchTimer);
+    searchGen++; // bump the request generation: any in-flight fetch's response is now stale
+    if (state.graph === 'code' && state.repo && q.length >= 2) {
+      var gen = searchGen;
+      searchTimer = setTimeout(function () { fetchSearch(q, gen, 0); }, 250);
+    }
+  }
+  function fetchSearch(q, gen, attempt) {
+    api('/api/search?repo=' + encodeURIComponent(state.repo) + '&q=' + encodeURIComponent(q)).then(function (data) {
+      if (data === null) { // 503 (api() set the "Repo busy — retrying…" status) — honour it with a bounded backoff
+        if (gen === searchGen && attempt < 5) setTimeout(function () { fetchSearch(q, gen, attempt + 1); }, 800);
+        return;
+      }
+      // Drop a STALE response: the user typed on (or switched graph/repo) since this fetch fired, so a
+      // late/out-of-order result must not re-add nodes or re-fade the current matches.
+      if (!data.nodes || !state.cy || gen !== searchGen) return;
+      // Evict the PREVIOUS search batch so repeated searches don't grow the graph unboundedly — only
+      // nodes WE added via search carry the "searched" class; the landing + expansions are untouched.
+      state.cy.nodes('.searched').remove();
+      var present = {};
+      state.cy.nodes().forEach(function (n) { present[n.id()] = true; });
+      var added = data.nodes.filter(function (n) { return !present[n.id]; }).map(nodeEl);
+      if (added.length) { state.cy.add(added).addClass('searched'); state.cy.layout(layoutFor('code')).run(); applyEdgeFilter(); }
+      highlightMatches(currentQuery()); // re-highlight against the CURRENT input, never the captured q
+    }).catch(function () { /* search is best-effort; the loaded-node highlight already ran */ });
   }
 
   function setGraph(g) {

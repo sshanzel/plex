@@ -36,6 +36,21 @@ describe('renderAppHtml', () => {
     expect(html).toContain('d.parent = n.parent'); // incident nested via Cytoscape compound parent
   });
 
+  it('code-graph search reaches files beyond the landing set (server-backed)', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain('function fetchSearch'); // debounced server search
+    expect(html).toContain('/api/search?repo='); // loads matching files not in the landing set
+  });
+
+  it('code-graph search is race-, growth-, and 503-safe (PR #29 review fixes)', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain('searchGen'); // request-generation token drops stale/out-of-order responses
+    expect(html).toContain('gen !== searchGen'); // a late response for a superseded query is ignored
+    expect(html).toContain("nodes('.searched').remove()"); // prior search batch evicted (bounded growth)
+    expect(html).toContain('highlightMatches(currentQuery())'); // re-highlight the CURRENT input, not stale q
+    expect(html).toContain('attempt < 5'); // a 503 actually retries (the "retrying…" status is honest)
+  });
+
   it('renders a cold-start empty state (centered CTA) instead of a black void', () => {
     const html = renderAppHtml('9.9.9');
     expect(html).toContain('id="empty"'); // the centered overlay element
