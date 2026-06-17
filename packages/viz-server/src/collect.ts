@@ -186,7 +186,9 @@ async function linkSymbolIncidents(
     const key = symbolKey(fileId, s.name);
     const keyed = new Set(concernsAt(graph, key).map((i) => i.id)); // exact symbol-key matches (solid edges)
     const hits = inFile
-      .filter((i) => keyed.has(i.id) || (i.line != null && i.line >= s.startLine && i.line <= s.endLine))
+      // exact key (solid) OR — only for an incident with NO symbol key — line falls in this symbol's
+      // span (dashed). An incident keyed to a DIFFERENT symbol must not drift here on line alone.
+      .filter((i) => keyed.has(i.id) || (!i.symbol && i.line != null && i.line >= s.startLine && i.line <= s.endLine))
       .slice(0, 8); // a busy symbol shouldn't fan out unboundedly
     for (const i of hits) {
       const incId = `inc:${i.id}`;

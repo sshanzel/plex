@@ -115,7 +115,10 @@ export function matchCodePath(
       const fileHits: Incident[] = [];
       for (const i of incs) {
         if (cKey && i.symbol && i.symbol === cKey) symbolHits.push(i);
-        else if (c.symbol && i.file === c.file && i.line != null && rangesOverlap(c.startLine, c.endLine, i.line, i.line)) lineHits.push(i);
+        // Line-overlap is a fallback ONLY for an incident with no symbol key (e.g. mined). An incident
+        // already keyed to a DIFFERENT symbol must not drift into this one just because its line falls
+        // in range — that would mislabel the alert's `symbol`. (It only ever matches its own key above.)
+        else if (c.symbol && !i.symbol && i.file === c.file && i.line != null && rangesOverlap(c.startLine, c.endLine, i.line, i.line)) lineHits.push(i);
         else if (!c.symbol && i.file === c.file) fileHits.push(i); // file-level change (no named symbol)
       }
       // Strongest matching rung wins; a file-only match never competes with a symbol/line one.

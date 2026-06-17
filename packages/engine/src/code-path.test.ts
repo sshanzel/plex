@@ -96,6 +96,16 @@ describe('matchCodePath', () => {
     const p = pf({ id: 'p1', incidentIds: ['i1'] });
     expect(run([ret(p)], [i], [changedSym('a.ts', 'foo', 10, 30)], []).alerts).toHaveLength(0);
   });
+
+  it('line-overlap does NOT claim an incident already keyed to a DIFFERENT symbol', () => {
+    // The incident is anchored to `other` but its line (15) drifts into `foo`'s span (10..30). It must
+    // match only via its own symbol key, never mislabel itself as history at `foo`.
+    const i = inc({ id: 'i1', file: 'a.ts', symbol: symbolKey('a.ts', 'other'), line: 15 });
+    const p = pf({ id: 'p1', incidentIds: ['i1'] });
+    expect(run([ret(p)], [i], [changedSym('a.ts', 'foo', 10, 30)], []).alerts).toHaveLength(0);
+    // …but at its OWN symbol it matches (sanity: the guard didn't break symbol-key matching).
+    expect(run([ret(p)], [i], [changedSym('a.ts', 'other', 10, 30)], []).alerts[0]).toMatchObject({ via: 'symbol-key', symbol: 'other' });
+  });
 });
 
 describe('applyCodePathBoost', () => {
