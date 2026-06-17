@@ -6,7 +6,7 @@ import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
 import { llmDistill, type ClusterInput } from './distill';
 import { createCompletionProvider } from './llm';
 import { outcomeFor } from './outcome';
-import type { RawComment, DistillResult } from './types';
+import type { RawComment, DistillResult, LearnedLesson } from './types';
 
 export interface DistillOptions {
   cwd: string;
@@ -136,6 +136,7 @@ export async function distillHistory(
   let pitfalls = 0;
   let reinforced = 0;
   let skipped = 0;
+  const learned: LearnedLesson[] = [];
   for (const cl of scan.clusters) {
     const pitfall = await llmDistill(cl, llm); // the LLM decides what's worth storing
     if (!pitfall) {
@@ -147,6 +148,9 @@ export async function distillHistory(
     const { action } = await addOrReinforcePitfall(store, pitfall);
     if (action === 'minted') pitfalls++;
     else reinforced++;
+    // Capture the payoff: the lesson + how much of YOUR code it's anchored to (distinct comment paths).
+    const files = new Set(cl.comments.map((c) => c.path).filter((p): p is string => !!p)).size;
+    learned.push({ title: pitfall.title, scope: pitfall.scope === 'global' ? 'global' : 'repo', incidents: cl.comments.length, files, action });
   }
 
   return {
@@ -160,6 +164,7 @@ export async function distillHistory(
       skipped,
       incidents: scan.incidents,
       distiller: llm.name,
+      learned,
     },
     scannedPrs: scan.scannedPrs,
   };

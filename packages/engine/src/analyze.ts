@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
-import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult } from '@plex/distill';
+import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult, type LearnedLesson } from '@plex/distill';
 import { confidenceFromOutcomes, addOrReinforcePitfall } from '@plex/knowledge';
 import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
@@ -166,18 +166,21 @@ export async function addAnalyzedPitfalls(
   config: ReviewerConfig,
   pitfalls: AgentPitfall[],
   repo?: string,
-): Promise<{ added: number; reinforced: number }> {
+): Promise<{ added: number; reinforced: number; learned: LearnedLesson[] }> {
   const store = knowledgeStore(config);
   const embed = requireEmbeddings(config);
-  // Map each provenance incident → its observed outcome, so a pitfall's default confidence is the
-  // SAME Wilson lower bound the standalone distiller computes (one definition of confidence; no `0.6`
-  // magic default). The agent may still pass an explicit confidence to override.
-  const outcomeById = new Map((await store.incidents()).map((i) => [i.id, i.outcome]));
+  // Map each provenance incident → its observed outcome (for the Wilson confidence) and its file (for
+  // the "anchored to N files" payoff) in one pass over the store's incidents.
+  const incidents = await store.incidents();
+  const outcomeById = new Map(incidents.map((i) => [i.id, i.outcome]));
+  const fileById = new Map(incidents.map((i) => [i.id, i.file]));
   let added = 0;
   let reinforced = 0;
+  const learned: LearnedLesson[] = [];
   for (const p of pitfalls) {
     const [embedding] = await embed.embed([`${p.category}: ${p.title}\n${p.why}`]);
     const scope = p.scope ?? 'repo';
+    const incidentIds = p.incidentIds ?? [];
     const pitfall: Pitfall = {
       id: distilledPitfallId(p.title, repo),
       title: p.title,
@@ -186,15 +189,17 @@ export async function addAnalyzedPitfalls(
       mitigation: p.mitigation,
       category: p.category,
       tier: p.tier ?? 'judgmental',
-      confidence: p.confidence ?? confidenceFromOutcomes((p.incidentIds ?? []).map((id) => outcomeById.get(id))),
+      confidence: p.confidence ?? confidenceFromOutcomes(incidentIds.map((id) => outcomeById.get(id))),
       scope,
       repo: scope === 'repo' ? repo : undefined,
-      incidentIds: p.incidentIds ?? [],
+      incidentIds,
       embedding,
     };
     const { action } = await addOrReinforcePitfall(store, pitfall);
     if (action === 'minted') added++;
     else reinforced++;
+    const files = new Set(incidentIds.map((id) => fileById.get(id)).filter((f): f is string => !!f)).size;
+    learned.push({ title: p.title, scope, incidents: incidentIds.length, files, action: action === 'minted' ? 'minted' : 'reinforced' });
   }
-  return { added, reinforced };
+  return { added, reinforced, learned };
 }

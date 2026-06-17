@@ -30,7 +30,7 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
 | `src/llm.ts` | `CompletionProvider`s: `claude-cli` (default), `anthropic`, `openai`; `createCompletionProvider` → `null` when unusable |
 | `src/outcome.ts` | `outcomeFor` — the OBSERVED outcome (confirm `fixed` only on an outdated+merged comment, else abstain; ADR-44) |
 | `src/pipeline.ts` | Orchestration: `scanHistory` (mechanical, no LLM) and `distillHistory` (scan + distill + store) |
-| `src/types.ts` | `RawComment` (thread-grouped source unit), `DistillResult` |
+| `src/types.ts` | `RawComment` (thread-grouped source unit), `DistillResult` (+ `learned: LearnedLesson[]` — the per-run payoff: each stored lesson's title/scope/incidents/`files` = distinct comment paths, so the CLI/init/MCP can show "learned X anchored to N files of your code" instead of a bare count; symbol-level anchoring still accrues only from live-review accepts, ADR-47) |
 
 ## The pipeline (`pipeline.ts`)
 

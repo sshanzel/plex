@@ -53,5 +53,6 @@ export type {
   ScanForAnalysisResult,
   AgentPitfall,
 } from './analyze';
+export type { DistillResult, LearnedLesson } from '@plex/distill';
 export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
 export type { StoredVerdict, VerdictInput, WaiverIdentity } from './verdicts';
