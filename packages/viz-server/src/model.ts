@@ -12,6 +12,13 @@ export interface VizNode {
   type: string;
   graph: GraphKind;
   props: Record<string, string | number | boolean>;
+  /**
+   * Cytoscape compound parent (the node id of the container this node nests inside). In the knowledge
+   * graph an Incident's parent is the Pitfall/Suppression it provenances, so each lesson renders as a
+   * box holding its history instead of a two-row hairball of crossing `from` edges. A node with a
+   * `parent` keeps its own type/colour; the containment replaces the redundant provenance edge.
+   */
+  parent?: string;
 }
 
 export interface VizEdge {

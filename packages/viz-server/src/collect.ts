@@ -347,33 +347,60 @@ export async function collectKnowledge(
   for (const i of incidents) incidentById.set(i.id, i);
   const emitted = new Set<string>();
 
+  const pitfallSlice = pitfalls.slice(0, cap);
+  const pitfallNodeIds = new Set(pitfallSlice.map((p) => `pf:${p.id}`));
+  for (const p of pitfallSlice) {
+    nodes.push({
+      id: `pf:${p.id}`, label: p.title, type: p.polarity === 'negative' ? 'Suppression' : 'Pitfall', graph: 'knowledge',
+      props: pitfallProps(p),
+    });
+  }
+
+  // Each incident nests inside ONE container — the FIRST pitfall that cites it (or that it references)
+  // — so the lesson renders as a box holding its history (ADR-45 clustering) instead of a hairball of
+  // crossing `from` edges. A Cytoscape compound node has a single parent, so a second pitfall citing the
+  // same incident keeps a cross-cluster `from`/`about` edge (shared provenance stays visible).
+  const parentOf = new Map<string, string>();
+  for (const p of pitfallSlice) {
+    for (const incId of p.incidentIds ?? []) {
+      if (incidentById.has(incId) && !parentOf.has(incId)) parentOf.set(incId, `pf:${p.id}`);
+    }
+  }
+  for (const i of incidents) {
+    if (i.pitfallId && pitfallNodeIds.has(`pf:${i.pitfallId}`) && !parentOf.has(i.id)) parentOf.set(i.id, `pf:${i.pitfallId}`);
+  }
+
   const incidentNode = (i: Incident): void => {
     const id = `inc:${i.id}`;
     if (emitted.has(id)) return;
     emitted.add(id);
-    nodes.push(incidentVizNode(i));
+    const node = incidentVizNode(i);
+    const parent = parentOf.get(i.id);
+    if (parent) node.parent = parent;
+    nodes.push(node);
   };
 
-  for (const p of pitfalls.slice(0, cap)) {
-    const id = `pf:${p.id}`;
-    nodes.push({
-      id, label: p.title, type: p.polarity === 'negative' ? 'Suppression' : 'Pitfall', graph: 'knowledge',
-      props: pitfallProps(p),
-    });
+  const crossLinked = new Set<string>(); // `${pitfallId}|${incidentId}` pairs already drawn cross-cluster
+  for (const p of pitfallSlice) {
     for (const incId of p.incidentIds ?? []) {
-      const inc = incidentById.get(incId);
-      if (inc) {
-        incidentNode(inc);
-        edges.push({ id: `pf-inc|${p.id}|${incId}`, source: id, target: `inc:${incId}`, label: 'from', graph: 'knowledge' });
+      if (!incidentById.has(incId)) continue;
+      incidentNode(incidentById.get(incId)!);
+      // Containment expresses the primary `from`; only draw an edge when THIS pitfall isn't the container.
+      if (parentOf.get(incId) !== `pf:${p.id}`) {
+        edges.push({ id: `pf-inc|${p.id}|${incId}`, source: `pf:${p.id}`, target: `inc:${incId}`, label: 'from', graph: 'knowledge' });
+        crossLinked.add(`${p.id}|${incId}`);
       }
     }
   }
-  // Incidents that reference a pitfall by id but weren't reached above (orphan provenance) — show them
-  // linked too, so the provenance view is complete rather than silently dropping back-references.
+  // Incidents that reference a pitfall by id (orphan provenance) — nested when this pitfall is their
+  // container, otherwise a cross-cluster `about` edge, so the provenance view stays complete. Skip when
+  // a `from` edge already links this exact (pitfall, incident) pair — they're the same link, one arrow.
   for (const i of incidents) {
-    if (i.pitfallId && emitted.has(`pf:${i.pitfallId}`) === false && nodes.some((n) => n.id === `pf:${i.pitfallId}`)) {
+    if (i.pitfallId && pitfallNodeIds.has(`pf:${i.pitfallId}`)) {
       incidentNode(i);
-      edges.push({ id: `inc-pf|${i.id}`, source: `inc:${i.id}`, target: `pf:${i.pitfallId}`, label: 'about', graph: 'knowledge' });
+      if (parentOf.get(i.id) !== `pf:${i.pitfallId}` && !crossLinked.has(`${i.pitfallId}|${i.id}`)) {
+        edges.push({ id: `inc-pf|${i.id}`, source: `inc:${i.id}`, target: `pf:${i.pitfallId}`, label: 'about', graph: 'knowledge' });
+      }
     }
   }
 
