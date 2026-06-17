@@ -49,19 +49,19 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
    - `bug` — crashes, data corruption, incorrect behavior, security failures, missing `await` causing silent data loss, broken blast-radius contracts
    - `improvement` — error handling gaps that won't crash today but will under failure, missing defensive guards at external boundaries, edge cases that are unlikely but reachable
    - `nit` — naming, style, minor readability with no behavior impact
-   - `awareness` (displays as **Flag**) — intentional-looking but worth confirming ("is this threshold right for production load?", "is this event emit intentionally duplicated?")
+   - `note` — intentional-looking but worth confirming ("is this threshold right for production load?", "is this event emit intentionally duplicated?")
 
    A high-severity, low-confidence item is a "potential bug" — keep it; an unconfirmed hunch is noise — drop it. Set `confidence` honestly (Plex ranks by it), but never surface the raw number: express uncertainty in words ("potential", "likely", "worth confirming").
 
    - **Don't re-audit prior rounds.** Use `priorRounds` / `openComments` only as facts so you don't re-raise something already resolved or anchor on past opinions — not as work to re-confirm. `reconcile` handles that (cheap, no LLM; Plex auto-infers it). Spend your effort on what's in front of you now.
-   - Use **`awareness`** (NOT `nit`) for something *worth surfacing for confirmation* that isn't a defect: a duplicated event-emit across two surfaces, a non-obvious-but-deliberate-looking pattern, a "is this intentional?" — where raising it IS the value even if the answer is "yes, intentional." These display as **Flag** in the table. Plex surfaces them in their own triage bucket and won't auto-suppress them.
+   - Use **`note`** (NOT `nit`) for something *worth surfacing for confirmation* that isn't a defect: a duplicated event-emit across two surfaces, a non-obvious-but-deliberate-looking pattern, a "is this intentional?" — where raising it IS the value even if the answer is "yes, intentional." Plex surfaces them in their own triage bucket and won't auto-suppress them.
    - **A deterministic finding can be a false positive in context** (e.g. a flagged `console` call that is *intentionally* the program's stdout in a CLI). When you judge one wrong, do **NOT** add a contradicting finding — **waive it**: call `mcp__plex__record_outcome` with `kind: 'waive'`, `scope: 'line'`, and the finding's `file`/`line`/`title`, **before** `submit_findings`. The waiver drops it from the ranked stream (and keeps it quiet next round) instead of surfacing two contradicting entries at the same line. Reserve `pattern` scope for a rule that's wrong *repo-wide*; default to `line` for a one-off.
    - **Verify before you flag — then DROP what you can't substantiate.** Your first-pass hunches are candidates, not findings. Before a finding makes the cut, go back to the actual code as a skeptic and confirm it: does the bug really trigger, is the path reachable, is the "violation" genuinely required, is it caused by THIS change? A finding you can't substantiate is noise — cut it. Then set `confidence` honestly on the survivors.
 
    **Check code against stated intent.** Where `changeContext` exists, compare what the code does to what it claims: flag where the diff does *less* than the description promises, silently does *more* (undisclosed behavior/side effects), or *contradicts* its stated motivation. A change that doesn't do what its PR says is a finding even when the code itself is clean.
 
 4. **Submit, then stop** — call `mcp__plex__submit_findings` (title, body, severity, confidence, file, startLine per finding). Plex merges them with the deterministic findings, applies scoped (incl. semantic) waivers, and returns one ranked, triaged stream. Present it, then **stop. Do NOT ask the user whether to accept / reject / waive.** The review is autonomous.
-   - **Present as ONE markdown table — this exact structure, every time.** Columns `Severity | Finding | Location`, one row per finding. Order rows by severity (Bug → Improvement → Nit → Flag), then by signal (most important first) within each severity:
+   - **Present as ONE markdown table — this exact structure, every time.** Columns `Severity | Finding | Location`, one row per finding. Order rows by severity (Bug → Improvement → Nit → Note), then by signal (most important first) within each severity:
 
      ```
      | Severity | Finding | Location |
@@ -69,17 +69,17 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
      | Bug | **<title>** — <one or two sentences: what's wrong + the fix/why>. | `file:line` |
      | Improvement | **<title>** — <…>. | `file:line` |
      | Nit | **<title>** — <…>. | `file:line` |
-     | Flag | **<title>** — <…> Is this intentional? | `file:line` |
+     | Note | **<title>** — <…> Is this intentional? | `file:line` |
      ```
 
-     The `Severity` cell IS the display label — Bug / Improvement / Nit / **Flag** (no other values; `awareness` findings display as **Flag**). Simply omit a severity that has no findings (no empty rows). The `Location` is the finding's ``file:line`` — the same anchor Plex auto-comments to on a PR. Do **NOT** add columns of your own (especially **not confidence**) or invent extra groupings/sections ("Hardening", "Lifecycle", "Not a defect", …) — the single table with its `Severity` column is the only structure. A deterministic finding you judged a false positive should have been **waived** (step 3), so it won't appear — don't add a "Not a defect" row for it. If the change is clean, say so in one line and emit no table.
+     The `Severity` cell IS the display label — Bug / Improvement / Nit / **Note** (no other values). Simply omit a severity that has no findings (no empty rows). The `Location` is the finding's ``file:line`` — the same anchor Plex auto-comments to on a PR. Do **NOT** add columns of your own (especially **not confidence**) or invent extra groupings/sections ("Hardening", "Lifecycle", "Not a defect", …) — the single table with its `Severity` column is the only structure. A deterministic finding you judged a false positive should have been **waived** (step 3), so it won't appear — don't add a "Not a defect" row for it. If the change is clean, say so in one line and emit no table.
 
      **Markdown-safe table rules (follow these exactly):**
      - Every row — header, separator, and each data row — must be on its own **single physical line**. Never wrap a cell across multiple lines; GitHub and most renderers will break the table.
      - If a `Finding` cell genuinely needs a line break (e.g. two distinct sub-points), use a literal `<br>`, not a real newline.
      - Escape any literal pipe character in cell text as `\|`, otherwise it is read as a column separator and shifts every following column.
    - **No confidence on display, and no meta-commentary.** Never print the confidence value or rate your own certainty — confidence is an internal ranking axis, not for the reader. Voice only the uncertainty *intrinsic to the claim itself* ("this **may** reorder…", "**if** two sends race…"). Don't editorialize about the review or narrate your own reasoning as asides — report the finding as a neutral, falsifiable observation, not your thoughts about reviewing it.
-   - **Report; don't decide for the user.** You surface what you found and your technical read — you do NOT triage it on their behalf. Never group or label findings by what they should *do* ("needs a decision", "action required", "must-fix", "substantive") — the `Severity` column is the only classification. The user assesses and decides; Flag rows ask "Is this intentional?" and leave the answer to them.
+   - **Report; don't decide for the user.** You surface what you found and your technical read — you do NOT triage it on their behalf. Never group or label findings by what they should *do* ("needs a decision", "action required", "must-fix", "substantive") — the `Severity` column is the only classification. The user assesses and decides; Note rows ask "Is this intentional?" and leave the answer to them.
    - **No telemetry recap, and no outcome bookkeeping.** Don't report round numbers, commit lists, "loop closed", token talk, OR anything about reconcile / recorded outcomes. Plex auto-accepts fixed findings during the review on its own; that is internal and never yours to narrate. If the change is clean, say so in one line.
    - **Close with what Plex brought to this review — the one place you may editorialize.** After the table, add one or two sentences on what Plex contributed that a plain diff-read couldn't, and tie it to a specific finding wherever it applies. Lead with the **non-obvious**, not effort:
      - a bug or risk in a file the diff doesn't touch, surfaced via **co-change** — e.g. *"the cache-staleness bug is in `cache.ts`, which your diff never touches; Plex surfaced it because it co-changes with this module."*
@@ -87,10 +87,10 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
      - the fresh, unbiased context, or *not* re-raising something dismissed earlier, when those are what actually mattered.
 
      Be honest and specific: claim only what genuinely applied and connect it to real findings. Don't pad with generic effort. If nothing distinctive applied, say so plainly — never manufacture value. If the context flags embeddings are off, you may add one short clause that drawing on the user's review history is off and point to `npx @sshanzel/plex init`.
-   - **Posting to the PR is automatic.** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and Flag findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest **`/pr-master:respond`** so the author can triage what landed and close the loop.
+   - **Posting to the PR is automatic.** When reviewing a PR (`source: 'pr'`) and auto-comment is enabled (config), `submit_findings` ALSO posts the ranked stream to the GitHub PR as **one** review — inline comments on changed lines + a summary body for coupled-file and Note findings, deduped against prior rounds. **Do NOT post to the PR yourself** (no `gh pr review`) — Plex did it. If auto-comment is off, just present the stream. Either way, suggest **`/pr-master:respond`** so the author can triage what landed and close the loop.
 
 5. **Outcomes are recorded autonomously** — you do not prompt for verdicts. When the author addresses a *defect* and the PR is re-reviewed, Plex auto-records it as `accept` (it sees the fix). Only call `mcp__plex__record_outcome` for an **explicit dismissal** — e.g. when responding to PR discussion and the author pushes back ("intentional / by design") — passing file/line/title **and the same diff source (`pr`/`mode`/`baseRef`) you reviewed**, so the verdict + semantic waiver land on the right PR brain and stay quiet next round. Never infer a reject from silence.
-   - **Flag findings are NOT auto-accepted** (they aren't defects to "fix"). They stay surfaced until an **explicit `acknowledge`** (intentional) or `reject` — once acknowledged, the semantic waiver keeps them silent **until the situation materially changes**. A "yes, intentional" should be recorded as `acknowledge`, not left to silence — that's what stops it coming back every round. (`/pr-master:respond` does this when the author confirms intent.)
+   - **Note findings are NOT auto-accepted** (they aren't defects to "fix"). They stay surfaced until an **explicit `acknowledge`** (intentional) or `reject` — once acknowledged, the semantic waiver keeps them silent **until the situation materially changes**. A "yes, intentional" should be recorded as `acknowledge`, not left to silence — that's what stops it coming back every round. (`/pr-master:respond` does this when the author confirms intent.)
 
 ## 6. Intense mode
 
@@ -132,7 +132,7 @@ Prompt template:
 > - **Blast-radius security contracts** — check coupled files for security-relevant interface changes (e.g. an auth check removed from a shared function)
 >
 > Return a **raw JSON array** of findings — nothing else. Schema per item:
-> `{ "title": string, "body": string, "severity": "bug"|"improvement"|"nit"|"awareness", "confidence": number (0..1), "file": string, "startLine": number, "endLine"?: number, "tags"?: string[] }`
+> `{ "title": string, "body": string, "severity": "bug"|"improvement"|"nit"|"note", "confidence": number (0..1), "file": string, "startLine": number, "endLine"?: number, "tags"?: string[] }`
 > Severity and confidence are independent axes. Only include findings you can substantiate from the actual code.
 
 ### Correctness sub-agent
@@ -221,7 +221,7 @@ Cutting these is as important as finding real bugs; each false positive erodes t
 - **Likely-intentional changes** that are part of the broader change's purpose, even if they look surprising in isolation — check `changeContext` before assuming a mistake.
 - **General-quality wishes** ("add tests", "could be cleaner", "more docs") unless the change introduces a concrete defect.
 - **Test coverage gaps for code `changeContext` explicitly marks as a spike or prototype.**
-- **Already-answered "is this intentional?" Flags.** An `awareness`/Flag earns its place only when the answer is genuinely *open*. If an adjacent code comment, ADR, or design doc already documents the thing as a deliberate tradeoff ("intended drift-stability tradeoff", "off, not broken — the embeddings-optional posture", a `// NOTE:` explaining the choice), the question is already settled — re-asking it is reporting noise, not value. Don't raise it. (This is the boundary on the "raising it IS the value" rule above: that holds when nothing in the code/docs answers it; it does **not** license re-surfacing a tradeoff the author already wrote down.)
+- **Already-answered "is this intentional?" Notes.** A `note` earns its place only when the answer is genuinely *open*. If an adjacent code comment, ADR, or design doc already documents the thing as a deliberate tradeoff ("intended drift-stability tradeoff", "off, not broken — the embeddings-optional posture", a `// NOTE:` explaining the choice), the question is already settled — re-asking it is reporting noise, not value. Don't raise it. (This is the boundary on the "raising it IS the value" rule above: that holds when nothing in the code/docs answers it; it does **not** license re-surfacing a tradeoff the author already wrote down.)
 
 A deterministic finding that lands in one of these buckets: **waive it** (step 3), don't relay it.
 

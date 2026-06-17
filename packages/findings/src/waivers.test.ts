@@ -78,24 +78,24 @@ describe('firedSemanticSuppressions — audit attribution (ADR-41)', () => {
   });
 });
 
-describe('awareness flags + acknowledge (ADR-31)', () => {
-  it('an awareness finding surfaces in its own bucket — never suppressed by default, never a nit', () => {
-    const f = finding({ severity: 'awareness', title: 'two playright_booking_payment_confirmed sites' });
+describe('note findings + acknowledge (ADR-31)', () => {
+  it('a note finding surfaces in its own bucket — never suppressed by default, never a nit', () => {
+    const f = finding({ severity: 'note', title: 'two playright_booking_payment_confirmed sites' });
     const [r] = rankFindings([f], {});
-    expect(r!.triage).toBe('awareness');
+    expect(r!.triage).toBe('note');
   });
 
   it('an acknowledge (semantic waiver) suppresses the same flag going forward', () => {
     const ack: Waiver = { scope: 'pattern-repo', title: 'two payment sites', embedding: [1, 0, 0] };
-    const f = finding({ severity: 'awareness', title: 'two payment-confirmed sites — intentional', embedding: [0.96, 0.04, 0] });
+    const f = finding({ severity: 'note', title: 'two payment-confirmed sites — intentional', embedding: [0.96, 0.04, 0] });
     const [r] = rankFindings([f], { waivers: [ack], semanticThreshold: 0.82 });
     expect(r!.triage).toBe('suppressed');
   });
 
   it('a materially changed flag (a 3rd site → different content) re-surfaces past the acknowledge', () => {
     const ack: Waiver = { scope: 'pattern-repo', title: 'two payment sites', embedding: [1, 0, 0] };
-    const f = finding({ severity: 'awareness', title: 'now THREE payment-confirmed sites', embedding: [0.2, 0.9, 0.1] });
+    const f = finding({ severity: 'note', title: 'now THREE payment-confirmed sites', embedding: [0.2, 0.9, 0.1] });
     const [r] = rankFindings([f], { waivers: [ack], semanticThreshold: 0.82 });
-    expect(r!.triage).toBe('awareness'); // not suppressed — situation changed
+    expect(r!.triage).toBe('note'); // not suppressed — situation changed
   });
 });

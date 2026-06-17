@@ -23,7 +23,7 @@ export interface RankOptions {
 const TRIAGE_PRIORITY: Record<RankedFinding['triage'], number> = {
   surface: 0,
   'systemic-migration': 1,
-  awareness: 2,
+  note: 2,
   convention: 3,
   demoted: 4,
   suppressed: 5,
@@ -49,7 +49,7 @@ function learnedSuppression(
  *
  * Triage:
  *  - waived/acknowledged → suppressed
- *  - severity awareness  → awareness (its own bucket — surfaced, never a nit)
+ *  - severity note       → note (its own bucket — surfaced, never a nit)
  *  - common + bug        → systemic-migration (escalate with blast radius)
  *  - common + non-bug    → convention (demote)
  *  - otherwise           → surface
@@ -66,11 +66,11 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
     let triage: RankedFinding['triage'];
     const learned = learnedSuppression(f.tags, opts.suppressions);
     if (isWaived(f, waivers, opts.semanticThreshold)) {
-      triage = 'suppressed'; // an `acknowledge` on a matching flag lands here too
+      triage = 'suppressed'; // an `acknowledge` on a matching note lands here too
     } else if (learned === 'suppress') {
       triage = 'suppressed'; // enough consistent dismissals to be 95%-confident (Wilson) — earned
-    } else if (f.severity === 'awareness') {
-      triage = 'awareness';
+    } else if (f.severity === 'note') {
+      triage = 'note';
     } else if ((f.prevalence ?? 0) >= threshold) {
       triage = f.severity === 'bug' ? 'systemic-migration' : 'convention';
     } else if (learned === 'demote') {

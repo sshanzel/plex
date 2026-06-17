@@ -65,10 +65,10 @@ describe('buildReviewPayload', () => {
     expect(buildReviewPayload(nit, { ...base, skipNits: true }).count).toBe(0);
   });
 
-  it('routes awareness findings to the "worth confirming" section, not inline', () => {
-    const p = buildReviewPayload([mk({ title: 'two emit sites', severity: 'awareness', line: 10 })], base);
+  it('routes note findings to the "worth confirming" section, not inline', () => {
+    const p = buildReviewPayload([mk({ title: 'two emit sites', severity: 'note', line: 10 })], base);
     expect(p.comments).toHaveLength(0);
-    expect(p.body).toContain('Worth confirming');
+    expect(p.body).toContain('Notes — worth confirming');
     expect(p.body).toContain('two emit sites');
   });
 

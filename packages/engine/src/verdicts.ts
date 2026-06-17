@@ -70,7 +70,7 @@ export async function readVerdicts(
 /**
  * Active suppression rules: a recorded verdict stops the SAME finding re-surfacing on later reviews,
  * so a dispositioned issue doesn't keep coming back. `waive` (a defect / false positive, ADR-10),
- * `acknowledge` (a confirmed-intentional `awareness` flag, ADR-31), and `reject` (the finding was
+ * `acknowledge` (a confirmed-intentional `note`, ADR-31), and `reject` (the finding was
  * dismissed) all suppress. They match semantically when they carry an embedding, so a materially
  * changed instance still re-surfaces. `reject` ALSO down-weights the pitfall via the
  * outcome→confidence path; that is orthogonal to this instance-level suppression. (Without this,

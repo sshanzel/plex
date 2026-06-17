@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Finding, Severity } from '@plex/core';
 import { severityWeight, computeSignal, defaultWeights } from './signal';
 
-// Complements rank.test.ts: this file pins the severityWeight scale (incl. `awareness`)
+// Complements rank.test.ts: this file pins the severityWeight scale (incl. `note`)
 // and the computeSignal edge cases — blast floor, clamping, and the agreement boundary —
 // that the higher-level ranking tests don't isolate.
 let n = 0;
@@ -21,21 +21,21 @@ const mk = (over: Partial<Finding> & { severity?: Severity } = {}): Finding => {
 };
 
 describe('severityWeight', () => {
-  it('orders bug > improvement > awareness > nit by weight', () => {
+  it('orders bug > improvement > note > nit by weight', () => {
     expect(severityWeight('bug')).toBe(1);
     expect(severityWeight('improvement')).toBe(0.5);
-    expect(severityWeight('awareness')).toBe(0.3); // M12: between improvement and nit
+    expect(severityWeight('note')).toBe(0.3); // M12: between improvement and nit
     expect(severityWeight('nit')).toBe(0.2);
     expect(severityWeight('bug')).toBeGreaterThan(severityWeight('improvement'));
-    expect(severityWeight('improvement')).toBeGreaterThan(severityWeight('awareness'));
-    expect(severityWeight('awareness')).toBeGreaterThan(severityWeight('nit'));
+    expect(severityWeight('improvement')).toBeGreaterThan(severityWeight('note'));
+    expect(severityWeight('note')).toBeGreaterThan(severityWeight('nit'));
   });
 
-  it('honors custom weights for bug/improvement/nit (awareness stays fixed)', () => {
+  it('honors custom weights for bug/improvement/nit (note stays fixed)', () => {
     const w = { ...defaultWeights, bug: 10, nit: 0.01 };
     expect(severityWeight('bug', w)).toBe(10);
     expect(severityWeight('nit', w)).toBe(0.01);
-    expect(severityWeight('awareness', w)).toBe(0.3);
+    expect(severityWeight('note', w)).toBe(0.3);
   });
 });
 
@@ -67,8 +67,8 @@ describe('computeSignal edge cases', () => {
     expect(computeSignal(f, 2)).toBeGreaterThan(one); // 2 sources → +15%
   });
 
-  it('does not demote a bug by prevalence, but fully applies deviation to improvement/awareness/nit', () => {
-    for (const sev of ['improvement', 'awareness', 'nit'] as Severity[]) {
+  it('does not demote a bug by prevalence, but fully applies deviation to improvement/note/nit', () => {
+    for (const sev of ['improvement', 'note', 'nit'] as Severity[]) {
       const common = computeSignal(mk({ severity: sev, prevalence: 1 }), 1);
       const rare = computeSignal(mk({ severity: sev, prevalence: 0 }), 1);
       expect(common).toBeCloseTo(rare * (1 - 0.8), 10); // deviation = 1 - 0.8*prevalence

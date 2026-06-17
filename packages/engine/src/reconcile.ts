@@ -45,11 +45,11 @@ export async function recordFixAccepts(
   const accepts: AcceptedFix[] = [];
   for (let i = 0; i < priorFindings.length; i++) {
     const f = priorFindings[i]!;
-    // `awareness` flags are never auto-accepted (ADR-31): an awareness item isn't a defect to be
+    // `note` findings are never auto-accepted (ADR-31): a note isn't a defect to be
     // "fixed" — its only valid outcomes are an EXPLICIT acknowledge (intentional) or reject. Auto-
     // inferring "fixed" from a nearby change is semantically wrong and, worse, pre-empts the
     // acknowledge → semantic-waiver path that keeps it quiet until it MATERIALLY changes.
-    if (f.severity === 'awareness') continue;
+    if (f.severity === 'note') continue;
     const matchedBy = findingAddressMatch({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold });
     if (matchedBy) {
       // Pass the rule tag as `pattern` so an inferred accept can REFUTE a learned suppression

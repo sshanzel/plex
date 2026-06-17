@@ -206,15 +206,15 @@ export class Brain {
   }
 
   /**
-   * Targets with ≥1 OPEN (un-outcomed, non-`awareness`) finding AND a recorded round — the sweep's
+   * Targets with ≥1 OPEN (un-outcomed, non-`note`) finding AND a recorded round — the sweep's
    * work list (ADR-43). Now durable + base-keyed, so the sweep sees a worktree's open findings even
-   * after the worktree is gone. `awareness` is excluded (never auto-accepted, ADR-31).
+   * after the worktree is gone. `note` findings are excluded (never auto-accepted, ADR-31).
    */
   async openTargets(): Promise<Array<{ target: string; lastHeadSha?: string; baseRef?: string }>> {
     const out: Array<{ target: string; lastHeadSha?: string; baseRef?: string }> = [];
     for (const { target, view } of this.allViews()) {
       if (!target) continue;
-      const hasOpen = view.findings.some((f) => !view.outcomeOf(f.id) && f.severity !== 'awareness');
+      const hasOpen = view.findings.some((f) => !view.outcomeOf(f.id) && f.severity !== 'note');
       if (!hasOpen) continue;
       const last = view.rounds[view.rounds.length - 1];
       if (!last) continue; // no round → no head cursor → can't diff; skip

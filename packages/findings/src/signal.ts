@@ -11,8 +11,8 @@ export const defaultWeights: SignalWeights = { bug: 1, improvement: 0.5, nit: 0.
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
 
 export function severityWeight(s: Severity, w: SignalWeights = defaultWeights): number {
-  // `awareness` ranks within its own bucket (triage), so weight only orders it there.
-  return s === 'bug' ? w.bug : s === 'improvement' ? w.improvement : s === 'awareness' ? 0.3 : w.nit;
+  // `note` ranks within its own bucket (triage), so weight only orders it there.
+  return s === 'bug' ? w.bug : s === 'improvement' ? w.improvement : s === 'note' ? 0.3 : w.nit;
 }
 
 /**

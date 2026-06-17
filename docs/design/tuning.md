@@ -71,7 +71,7 @@ model** (defensible, but not a canonical formula; the structure encodes ADR-04/0
 
 | Knob | Value | Basis | Why |
 |---|---|---|---|
-| severity weights | bug 1 · improvement 0.5 · nit 0.2 · awareness 0.3 | empirical | relative importance. |
+| severity weights | bug 1 · improvement 0.5 · nit 0.2 · note 0.3 | empirical | relative importance. |
 | `blast` | `0.5 + 0.5·blast` | empirical | a no-blast finding is dampened, never zeroed. `blast` is now **auto-enriched** from the neighborhood sidecar (no longer dormant — see "Blast enrichment" below). |
 | `deviation` | bug→1; else `1 − 0.8·prevalence` | **principled (ADR-05)** | prevalence demotes style, **never a bug** (a common bug is systemic). |
 | `agreement` | `1 + 0.15·(sources−1)` | empirical | cross-source corroboration boost. |
