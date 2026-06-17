@@ -4,10 +4,12 @@ import { isGeneratedArtifact, type CoChangeConfig } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
-import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince } from './co-change';
+import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince, listWorktreeFiles } from './co-change';
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
 import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
+// Fallback skip-list for a NON-git directory (a git repo respects .gitignore instead — see
+// discoverFiles). node_modules/dist/build/coverage/out are conventionally generated/ignored.
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
@@ -16,6 +18,21 @@ const SKIP_DIRS = new Set([
   'out',
   '.plex',
 ]);
+
+/**
+ * `Symbol.id` is `file#name#startLine`. A minified/generated bundle can pack many declarations onto a
+ * single line — two symbols with the same name at the same line collide on that PK, and Kùzu aborts the
+ * ENTIRE repo index ("Found duplicated primary key value …"). One pathological file must never take
+ * down the whole graph: disambiguate within a build with a stable `#<n>` suffix (deterministic
+ * extraction order ⇒ stable across re-indexes). `SKIP_DIRS` keeps most such files out; this is the
+ * belt-and-suspenders so robustness never depends on the skip-list being complete.
+ */
+function uniqueSymbolId(base: string, seen: Set<string>): string {
+  let id = base;
+  for (let n = 2; seen.has(id); n++) id = `${base}#${n}`;
+  seen.add(id);
+  return id;
+}
 
 export interface BuildOptions {
   repoPath: string;
@@ -62,7 +79,25 @@ export interface UpdateResult extends BuildResult {
 /** Reason an incremental update couldn't run and a full rebuild is required. */
 export class FullRebuildRequired extends Error {}
 
+const indexable = (relOrName: string): boolean =>
+  isSupportedSource(relOrName) && !relOrName.endsWith('.d.ts') && !isGeneratedArtifact(relOrName);
+
+/**
+ * The source files to index. A **git repo** is the source of truth: `listWorktreeFiles` returns the
+ * working tree minus `.gitignore`d paths (tracked + untracked-not-ignored), so build output (a
+ * `playwright-report/` of minified bundles, `dist/`, vendored artifacts, the self-ignored `.plex`) is
+ * never indexed — the principled fix vs. a hardcoded skip-list, consistent with co-change being
+ * git-based — while a brand-new uncommitted source file IS still indexed (its blast radius isn't empty
+ * mid-feature). A non-git directory falls back to a filesystem walk (SKIP_DIRS + dot-dirs); the two
+ * branches diverge only on committed dot-directory source (`.storybook/*.ts` etc.), which the git path
+ * indexes as real code and the fallback skips — git is authoritative, the walk is best-effort.
+ * Both paths return ABSOLUTE paths and apply the same `indexable` filter (supported ext, not `.d.ts`,
+ * not a generated artifact).
+ */
 async function discoverFiles(root: string): Promise<string[]> {
+  const tracked = await listWorktreeFiles(root);
+  if (tracked) return tracked.filter(indexable).map((rel) => path.join(root, rel));
+
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -71,7 +106,7 @@ async function discoverFiles(root: string): Promise<string[]> {
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
         await walk(full);
-      } else if (e.isFile() && isSupportedSource(e.name) && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
+      } else if (e.isFile() && indexable(e.name)) {
         out.push(full);
       }
     }
@@ -113,6 +148,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     let symbolCount = 0;
     const symbolRows: Record<string, unknown>[] = [];
     const declareRows: Record<string, unknown>[] = [];
+    const seenSymbolIds = new Set<string>(); // collision-safe Symbol PKs (uniqueSymbolId)
     const importEdges = new Set<string>();
     const fileSpecifiers: PreciseImportInput[] = [];
 
@@ -126,7 +162,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
       }
       const { symbols, imports } = extractFromSource(rel, text);
       for (const s of symbols) {
-        const id = `${rel}#${s.name}#${s.startLine}`;
+        const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
         symbolRows.push({
           id,
           name: s.name,
@@ -275,6 +311,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     let symbolCount = 0;
     const symbolRows: Record<string, unknown>[] = [];
     const declareRows: Record<string, unknown>[] = [];
+    const seenSymbolIds = new Set<string>(); // collision-safe Symbol PKs (uniqueSymbolId)
     const importEdges = new Set<string>();
     const fileSpecifiers: PreciseImportInput[] = [];
     for (const rel of upserts) {
@@ -286,7 +323,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       }
       const { symbols, imports } = extractFromSource(rel, text);
       for (const s of symbols) {
-        const id = `${rel}#${s.name}#${s.startLine}`;
+        const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
         symbolRows.push({ id, name: s.name, kind: s.kind, file: rel, startLine: s.startLine, endLine: s.endLine, exported: s.exported });
         declareRows.push({ f: rel, s: id });
         symbolCount++;

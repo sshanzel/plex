@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 
 // Same order as the legacy chain. `build` first (it primes the shared fixtures the others read).
 const SCENARIOS = [
+  'gitignore-robust',
   'build',
   'ranking-eval',
   'incremental',
