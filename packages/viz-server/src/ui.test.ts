@@ -8,10 +8,16 @@ describe('renderAppHtml', () => {
     expect(html).toContain('integrity="sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4"');
     expect(html).toContain('crossorigin="anonymous"');
     expect(html).toContain('data-graph="code"');
-    expect(html).toContain('data-graph="brain"');
     expect(html).toContain('data-graph="knowledge"');
     expect(html).toContain('data-graph="lineage"');
     expect(html).toContain('9.9.9');
+  });
+
+  it('drops the standalone PR-brain tab (folded into Review history / Lineage) and offers a global knowledge view', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).not.toContain('data-graph="brain"'); // brain is a subset of lineage — no separate tab
+    expect(html).toContain('>Review history<'); // the lineage tab, renamed
+    expect(html).toContain('All repos (global)'); // knowledge no longer hidden behind a repo scope
   });
 
   it('ships the outcome/sentinel legibility encoding (border styles + panel summary + legend key)', () => {

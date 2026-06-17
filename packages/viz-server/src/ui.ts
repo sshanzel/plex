@@ -62,9 +62,8 @@ export function renderAppHtml(version: string): string {
     <select id="repo" title="Indexed repository"></select>
     <div class="tabs" id="tabs">
       <button class="tab active" data-graph="code">Code graph</button>
-      <button class="tab" data-graph="brain">PR brain</button>
       <button class="tab" data-graph="knowledge">Knowledge</button>
-      <button class="tab" data-graph="lineage">Lineage</button>
+      <button class="tab" data-graph="lineage">Review history</button>
     </div>
     <input type="search" id="search" placeholder="Search nodes…" />
     <div class="filters" id="filters"></div>
@@ -255,7 +254,7 @@ const CLIENT_JS = String.raw`
   }
 
   function load() {
-    if (state.graph !== 'knowledge' && !state.repo) { setStatus('No indexed repo selected.', 'note'); return; }
+    if (state.graph !== 'knowledge' && !state.repo) { setStatus('Select a repo for this graph (Knowledge can show "All repos (global)").', 'note'); return; }
     setStatus('Loading…');
     var url = '/api/graph/' + state.graph + (state.repo ? '?repo=' + encodeURIComponent(state.repo) : '');
     api(url).then(function (data) {
@@ -298,11 +297,15 @@ const CLIENT_JS = String.raw`
   function init() {
     api('/api/repos').then(function (d) {
       var sel = $('repo'); sel.innerHTML = '';
+      // "All repos (global)" (value '') shows the whole knowledge base — pitfalls scoped to ANY repo,
+      // incl. global ones the per-repo view hides. For code/lineage it prompts to pick a repo.
+      var g = document.createElement('option'); g.value = ''; g.textContent = 'All repos (global)'; sel.appendChild(g);
       (d.repos || []).forEach(function (r) {
         var o = document.createElement('option'); o.value = r.id; o.textContent = r.name; sel.appendChild(o);
       });
+      // Default to the first real repo (so the code graph loads); fall back to global when none indexed.
       if (d.repos && d.repos.length) { state.repo = d.repos[0].id; sel.value = state.repo; }
-      else { var o = document.createElement('option'); o.textContent = '(no indexed repos)'; sel.appendChild(o); }
+      else { state.repo = ''; sel.value = ''; }
       sel.addEventListener('change', function () { state.repo = sel.value; load(); });
       load();
     });
