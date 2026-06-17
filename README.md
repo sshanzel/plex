@@ -5,6 +5,7 @@ Plex is a local-first code reviewer that works through the coding agent you alre
 - **Unbiased.** Review runs in a fresh, separate context, so it never anchors on the reasoning of whoever wrote the code, even across several rounds.
 - **Grounded.** A blast-radius map of your codebase (git co-change, imports, and precise TypeScript edges) shows what else a change can break, not just the lines in the diff.
 - **Compounding.** Review knowledge accumulates both globally (across your repos) and per project, reweighted by your verdicts and learned from your PR review history.
+- **Remembers where it bit you.** Every past concern is anchored to the exact code it was about. Touch that code again and Plex surfaces its history — loudest when you're changing something it flagged and you already *fixed* (a regression a stateless linter has no memory to catch). Concerns even propagate along how your code co-changes. This is the difference between a checker and a reviewer with memory ([code-path memory](docs/design/code-path-memory.md)).
 - **One stream.** First-principles reasoning, learned pitfalls, and deterministic checks are merged into a single list, ranked by severity, confidence, and blast radius.
 
 The reasoning still comes from the frontier model. Plex's job is to feed it the right context and remember what it learns.
