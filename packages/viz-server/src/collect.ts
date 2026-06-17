@@ -103,8 +103,15 @@ export async function collectCode(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Prom
       const ranked = [...files].sort((a, b) => (degree.get(str(b.id)) ?? 0) - (degree.get(str(a.id)) ?? 0));
       for (const f of ranked) {
         if (included.size >= CODE_LANDING_CAP) break;
-        included.add(str(f.id));
-        for (const nb of adj.get(str(f.id)) ?? []) {
+        const fid = str(f.id);
+        if (included.has(fid)) continue;
+        const nbs = [...(adj.get(fid) ?? [])];
+        // A hub WITH neighbours must land together with at least one of them — adding it as the very
+        // last node (no room left for a neighbour) would leave the isolated dot this scheme avoids. A
+        // degree-0 file has no edge to show anyway, so it can fill the final slot solo.
+        if (nbs.length > 0 && included.size >= CODE_LANDING_CAP - 1) continue;
+        included.add(fid);
+        for (const nb of nbs) {
           if (included.size >= CODE_LANDING_CAP) break;
           included.add(nb);
         }
@@ -142,9 +149,13 @@ export async function collectCode(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Prom
     };
     for (const e of rawEdges) addEdge(e.s, e.t, e.label, e.undirected);
 
-    const note = landing
-      ? `Showing the ${slice.length} most-connected files of ${files.length} — double-click a file to expand its neighbours, or search to load any file.`
-      : undefined;
+    // Honest note: only claim "most-connected" when there ARE coupling edges to rank by; an edgeless
+    // graph (e.g. a repo with no resolvable imports/co-change yet) just shows the first N files.
+    const note = !landing
+      ? undefined
+      : rawEdges.length === 0
+        ? `Showing ${slice.length} of ${files.length} files (no import/co-change edges indexed yet) — search to load any file.`
+        : `Showing the ${slice.length} most-connected files of ${files.length} — double-click a file to expand its neighbours, or search to load any file.`;
     return withCounts({ graph: 'code', nodes, edges, truncated: landing, counts: {}, note });
   });
 }
