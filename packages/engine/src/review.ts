@@ -39,7 +39,7 @@ import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
 import { recordableHeadSha, priorRoundHeadSha } from './guards';
-import { createEmbeddingProvider } from '@plex/knowledge';
+import { createEmbeddingProvider, buildKnowledgeGraph } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady, knowledgeStore } from './knowledge';
@@ -777,7 +777,8 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // against the symbols this diff actually touches (+ their co-change neighbours). A direct hit at a
   // symbol with a prior `fixed`/accepted outcome is a REGRESSION SENTINEL. Pure JS over the JSON store
   // + the already-computed neighbourhood — no extra Kùzu open (ADR-17), works without embeddings.
-  const cp = matchCodePath(retrieved, await knowledgeStore(opts.config).incidents(), nb.changed, nb.neighbors);
+  const kg = buildKnowledgeGraph(retrieved.map((r) => r.pitfall), await knowledgeStore(opts.config).incidents());
+  const cp = matchCodePath(retrieved, kg, nb.changed, nb.neighbors);
   const knowledge = applyCodePathBoost(retrieved, cp.boostByPitfall);
   const sentinelCount = cp.alerts.filter((a) => a.regressionSentinel).length;
 

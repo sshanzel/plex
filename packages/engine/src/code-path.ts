@@ -4,10 +4,9 @@ import {
   type Incident,
   type IncidentOutcome,
   type NeighborEntry,
-  type Pitfall,
 } from '@plex/core';
 import { rangesOverlap } from '@plex/neighborhood';
-import type { RetrievedPitfall } from '@plex/knowledge';
+import { historyOf, type KnowledgeGraph, type RetrievedPitfall } from '@plex/knowledge';
 
 /**
  * Code-path memory — the location-aware overlay on semantic retrieval (ADR — code-path memory).
@@ -81,14 +80,13 @@ const strongestOutcome = (incs: Incident[]): IncidentOutcome | undefined => {
  */
 export function matchCodePath(
   retrieved: RetrievedPitfall[],
-  incidents: Incident[],
+  graph: KnowledgeGraph,
   changed: CodeLocation[],
   neighbors: NeighborEntry[],
   opts: { maxIncidentsPerAlert?: number; couplingWeight?: number } = {},
 ): CodePathResult {
   const maxIds = opts.maxIncidentsPerAlert ?? 5;
   const couplingWeight = opts.couplingWeight ?? DEFAULT_COUPLING_WEIGHT;
-  const byId = new Map(incidents.map((i) => [i.id, i] as const));
 
   const changedFiles = new Set(changed.map((c) => c.file));
   const neighborScore = new Map<string, number>(); // coupled file → best PPR score (changed files excluded)
@@ -106,9 +104,7 @@ export function matchCodePath(
 
   for (const { pitfall } of retrieved) {
     if ((pitfall.polarity ?? 'positive') === 'negative') continue; // suppression owns its own (negative-knowledge) path
-    const incs = (pitfall.incidentIds ?? [])
-      .map((id) => byId.get(id))
-      .filter((i): i is Incident => i != null);
+    const incs = historyOf(graph, pitfall.id); // both link directions, via the in-memory graph
     if (incs.length === 0) continue;
 
     // DIRECT — the symbols this diff actually touches.

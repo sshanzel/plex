@@ -1,6 +1,7 @@
 import type { Incident, Pitfall } from '@plex/core';
 import type { KnowledgeStore } from './store';
 import { wilsonLowerBound, recencyWeight } from './stats';
+import { buildKnowledgeGraph, historyOf } from './graph';
 
 /** Decay knobs consolidation needs (a subset of `config.decay`). */
 export interface DecayParams {
@@ -85,19 +86,17 @@ export async function consolidatePitfalls(
   const nowMs = now.getTime();
   const pitfalls = await store.pitfalls();
   const incidents = await store.incidents();
-  const byPitfall = new Map<string, Incident[]>();
-  for (const i of incidents) {
-    if (!i.pitfallId) continue;
-    const list = byPitfall.get(i.pitfallId) ?? [];
-    list.push(i);
-    byPitfall.set(i.pitfallId, list);
-  }
+  // Group via the in-memory graph, which UNIONS both link directions — so a pitfall's incidents are
+  // seen whether linked forward (`incidentIds`, analyzed/distilled) or reverse (`incident.pitfallId`,
+  // live accepts). Previously this read only the reverse side, so analyzed pitfalls (whose incidents
+  // carry no `pitfallId`) were never reinforced/decayed here. (graph.ts)
+  const g = buildKnowledgeGraph(pitfalls, incidents);
 
   let reinforced = 0;
   let pruned = 0;
   const next: Pitfall[] = [];
   for (const p of pitfalls) {
-    const inc = byPitfall.get(p.id) ?? [];
+    const inc = historyOf(g, p.id);
     if (inc.length === 0) {
       next.push(p); // no outcomes yet → keep the prior confidence; never pruned (ADR-11)
       continue;

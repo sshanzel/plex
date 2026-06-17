@@ -50,6 +50,20 @@ describe('consolidatePitfalls', () => {
     expect(byId['p1']!.incidentIds).toEqual(['i1', 'i2']);
   });
 
+  it('consolidates a pitfall linked only by incidentIds (forward link; incidents carry no pitfallId)', async () => {
+    // The analyzed/distilled case: the Pitfall→Incident edge lives on `pitfall.incidentIds`, and the
+    // incidents have NO `pitfallId`. Pre-fix, consolidation grouped by `incident.pitfallId` only, so
+    // these were invisible (kept prior). Now the graph unions both directions → they're consolidated.
+    dir = mkdtempSync(join(tmpdir(), 'kp-fwd-'));
+    const store = new KnowledgeStore(dir);
+    await store.addPitfall(pf({ id: 'pa', confidence: 0.4, incidentIds: ['i1', 'i2'] }));
+    await store.addIncident({ id: 'i1', source: 'analyzed', outcome: 'fixed', ts: 't' });
+    await store.addIncident({ id: 'i2', source: 'analyzed', outcome: 'fixed', ts: 't' });
+    const res = await consolidatePitfalls(store, DECAY);
+    expect(res.reinforced).toBe(1); // was 0 before the two-way-link fix
+    expect((await store.pitfalls())[0]!.confidence).toBeCloseTo(wilsonLowerBound(2, 2), 10);
+  });
+
   it('treats reverted as a confirm (no special weighting — the 1.5 bonus was magic)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'kp-rev-'));
     const store = new KnowledgeStore(dir);

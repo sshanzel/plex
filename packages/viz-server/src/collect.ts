@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { CodeGraphDB } from '@plex/code-graph';
-import { KnowledgeStore } from '@plex/knowledge';
+import { KnowledgeStore, buildKnowledgeGraph, concernsAt, concernsInFile } from '@plex/knowledge';
 import { foldLineage, parseLineageEvents, symbolKey, type Pitfall, type Incident } from '@plex/core';
 import { type GraphPayload, type VizEdge, type VizNode, emptyPayload, withCounts } from './model';
 import type { RepoEntry } from './registry';
@@ -173,18 +173,20 @@ async function linkSymbolIncidents(
   knowledgeDir: string,
 ): Promise<void> {
   if (syms.length === 0) return;
-  let incidents: Incident[];
+  let graph;
   try {
-    incidents = (await new KnowledgeStore(knowledgeDir).incidents()).filter((i) => i.file === fileId);
+    graph = buildKnowledgeGraph([], await new KnowledgeStore(knowledgeDir).incidents());
   } catch {
     return; // knowledge store unreadable — the code-graph expand still stands
   }
-  if (incidents.length === 0) return;
+  const inFile = concernsInFile(graph, fileId);
+  if (inFile.length === 0) return;
   const emitted = new Set<string>();
   for (const s of syms) {
     const key = symbolKey(fileId, s.name);
-    const hits = incidents
-      .filter((i) => (i.symbol && i.symbol === key) || (i.line != null && i.line >= s.startLine && i.line <= s.endLine))
+    const keyed = new Set(concernsAt(graph, key).map((i) => i.id)); // exact symbol-key matches (solid edges)
+    const hits = inFile
+      .filter((i) => keyed.has(i.id) || (i.line != null && i.line >= s.startLine && i.line <= s.endLine))
       .slice(0, 8); // a busy symbol shouldn't fan out unboundedly
     for (const i of hits) {
       const incId = `inc:${i.id}`;
@@ -192,14 +194,14 @@ async function linkSymbolIncidents(
         emitted.add(incId);
         out.nodes.push(incidentVizNode(i));
       }
-      const keyed = i.symbol === key; // solid when keyed to this symbol; dashed when only line falls inside
+      const isKeyed = keyed.has(i.id); // solid when keyed to this symbol; dashed when only line falls inside
       out.edges.push({
         id: `concerns|${s.nodeId}|${i.id}`,
         source: s.nodeId,
         target: incId,
         label: 'concerns',
         graph: 'code',
-        ...(keyed ? {} : { inferred: true }),
+        ...(isKeyed ? {} : { inferred: true }),
       });
     }
   }
