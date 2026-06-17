@@ -510,6 +510,11 @@ export async function submitVerdict(
       file: input.file,
       // Code-path anchor (code-path memory): the `file#name` symbol key + line this concern lives at,
       // inherited from the brain finding so a later review can match it to the symbols a diff touches.
+      // Anchored for INFERRED (locality) accepts too — by design: the symbol comes from the FINDING
+      // (which was about that symbol), not the fuzzy locality match, so it's accurate provenance; and an
+      // inferred accept stays unlinked from any positive pitfall (pitfallId undefined above), so its
+      // incident never feeds a `codePathAlert` (matchCodePath only traverses pitfall-linked incidents) —
+      // it only enriches the viz "concern history at this symbol".
       line: acceptLine,
       symbol: acceptSymbol,
       snippet: input.title,

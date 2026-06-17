@@ -777,6 +777,10 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   // against the symbols this diff actually touches (+ their co-change neighbours). A direct hit at a
   // symbol with a prior `fixed`/accepted outcome is a REGRESSION SENTINEL. Pure JS over the JSON store
   // + the already-computed neighbourhood — no extra Kùzu open (ADR-17), works without embeddings.
+  // Built for `matchCodePath`, which only traverses `historyOf` by RETRIEVED-pitfall id — so building
+  // from the top-K pitfalls (not the whole store) is sufficient. NOTE: the symbol/file indexes
+  // (`concernsAt`/`concernsInFile`) are still incident-COMPLETE (every store incident), so they are NOT
+  // scoped to the retrieved/repo set — a future consumer reaching for them here must scope themselves.
   const kg = buildKnowledgeGraph(retrieved.map((r) => r.pitfall), await knowledgeStore(opts.config).incidents());
   const cp = matchCodePath(retrieved, kg, nb.changed, nb.neighbors);
   const knowledge = applyCodePathBoost(retrieved, cp.boostByPitfall);
