@@ -1,4 +1,4 @@
-export type { RawComment, DistillResult } from './types';
+export type { RawComment, DistillResult, LearnedLesson } from './types';
 export { listPrs, fetchCommentsForPr, groupThreads } from './github';
 export type { PrRef } from './github';
 export { isSubstantive, categorize } from './classify';

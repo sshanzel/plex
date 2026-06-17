@@ -6,7 +6,7 @@ import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
 import { llmDistill, type ClusterInput } from './distill';
 import { createCompletionProvider } from './llm';
 import { outcomeFor } from './outcome';
-import type { RawComment, DistillResult } from './types';
+import type { RawComment, DistillResult, LearnedLesson } from './types';
 
 export interface DistillOptions {
   cwd: string;
@@ -136,6 +136,7 @@ export async function distillHistory(
   let pitfalls = 0;
   let reinforced = 0;
   let skipped = 0;
+  const learned: LearnedLesson[] = [];
   for (const cl of scan.clusters) {
     const pitfall = await llmDistill(cl, llm); // the LLM decides what's worth storing
     if (!pitfall) {
@@ -144,9 +145,12 @@ export async function distillHistory(
     }
     // Semantic match-or-reinforce (replaces exact-title dedup): a re-phrased recurrence of an
     // existing principle reinforces it instead of minting a near-duplicate (the 322-pitfall fix).
-    const { action } = await addOrReinforcePitfall(store, pitfall);
-    if (action === 'minted') pitfalls++;
+    const r = await addOrReinforcePitfall(store, pitfall);
+    if (r.action === 'minted') pitfalls++;
     else reinforced++;
+    // Payoff: the CANONICAL stored lesson + its TOTAL evidence/file anchoring (from the store, so a
+    // reinforce reports the established title and the unioned counts — not this run's candidate).
+    learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
   }
 
   return {
@@ -160,6 +164,7 @@ export async function distillHistory(
       skipped,
       incidents: scan.incidents,
       distiller: llm.name,
+      learned,
     },
     scannedPrs: scan.scannedPrs,
   };

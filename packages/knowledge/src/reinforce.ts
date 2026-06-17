@@ -11,6 +11,15 @@ const LEXICAL_FLOOR = 0.45;
 export interface AddOrReinforceResult {
   action: 'minted' | 'reinforced';
   pitfallId: string;
+  /** The CANONICAL stored title — on a reinforce this is the EXISTING pitfall's title, not the
+   *  candidate's (the established principle wins), so a payoff summary shows what's actually stored. */
+  title: string;
+  scope: 'global' | 'repo';
+  /** Provenance incidents on the stored pitfall AFTER this op — the UNION on a reinforce, not just
+   *  this run's sighting (so "N comments" isn't undercounted for a recurring lesson). */
+  incidents: number;
+  /** Distinct source files those incidents concern — the honest "anchored to N files" denominator. */
+  files: number;
 }
 
 const hasVector = (p: Pitfall): boolean => Array.isArray(p.embedding) && p.embedding.length > 0;
@@ -85,6 +94,12 @@ export async function addOrReinforcePitfall(
   // Re-read every call: call sites loop and `replacePitfalls` rewrites the whole file, so a snapshot
   // cached across iterations would clobber an earlier iteration's reinforce/mint.
   const pitfalls = await store.pitfalls();
+  // Incidents are read once and reused (the reinforce branch needs them for confidence anyway). The
+  // payoff summary's `files`/`incidents` are derived HERE — the one place that knows the canonical
+  // stored shape — so the CLI/MCP never re-derive a candidate-based (wrong, for reinforce) count.
+  const incidentsById = new Map((await store.incidents()).map((i) => [i.id, i] as const));
+  const fileCount = (ids: string[]): number => new Set(ids.map((id) => incidentsById.get(id)?.file).filter((f): f is string => !!f)).size;
+  const normScope = (s: Pitfall['scope']): 'global' | 'repo' => (s === 'global' ? 'global' : 'repo');
   const candPolarity = candidate.polarity ?? 'positive';
   const eligible = pitfalls.filter(
     (p) =>
@@ -97,16 +112,18 @@ export async function addOrReinforcePitfall(
   const matched = findMatch(candidate, eligible);
   if (!matched) {
     await store.addPitfall(candidate);
-    return { action: 'minted', pitfallId: candidate.id };
+    return {
+      action: 'minted', pitfallId: candidate.id, title: candidate.title, scope: normScope(candidate.scope),
+      incidents: candidate.incidentIds.length, files: fileCount(candidate.incidentIds),
+    };
   }
 
   const incidentIds = [...new Set([...matched.incidentIds, ...candidate.incidentIds])];
-  const byId = new Map((await store.incidents()).map((i) => [i.id, i] as const));
-  const confidence = confidenceFromOutcomes(incidentIds.map((id) => byId.get(id)?.outcome));
+  const confidence = confidenceFromOutcomes(incidentIds.map((id) => incidentsById.get(id)?.outcome));
   // Newest evidence timestamp drives the retrieval recency tilt (mirrors `consolidatePitfalls`).
   let lastMs = 0;
   for (const id of incidentIds) {
-    const ts = byId.get(id)?.ts;
+    const ts = incidentsById.get(id)?.ts;
     const ms = ts ? Date.parse(ts) : NaN;
     if (Number.isFinite(ms) && ms > lastMs) lastMs = ms;
   }
@@ -116,5 +133,8 @@ export async function addOrReinforcePitfall(
   // established principle wins; the new sighting only grows evidence + confidence.
   const reinforced: Pitfall = { ...matched, incidentIds, confidence, lastReinforcedAt };
   await store.replacePitfalls(pitfalls.map((p) => (p.id === matched.id ? reinforced : p)));
-  return { action: 'reinforced', pitfallId: matched.id };
+  return {
+    action: 'reinforced', pitfallId: matched.id, title: matched.title, scope: normScope(matched.scope),
+    incidents: incidentIds.length, files: fileCount(incidentIds),
+  };
 }

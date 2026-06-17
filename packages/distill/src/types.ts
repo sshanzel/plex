@@ -30,6 +30,19 @@ export interface RawComment {
   replies?: { author?: string; body: string }[];
 }
 
+/** A lesson learned this run — the payoff a user actually wants to SEE (titles + where it's anchored
+ *  in their code), not just a count. `files` is the distinct source files the lesson's comments touched
+ *  (mined incidents anchor to a file/line; symbol-level memory accrues from live-review accepts, ADR-47). */
+export interface LearnedLesson {
+  title: string;
+  scope: 'global' | 'repo';
+  /** Provenance comments backing the lesson (the cluster size). */
+  incidents: number;
+  /** Distinct source files those comments concern — "anchored to N files of your code". */
+  files: number;
+  action: 'minted' | 'reinforced';
+}
+
 export interface DistillResult {
   prsScanned: number;
   comments: number;
@@ -44,4 +57,6 @@ export interface DistillResult {
   incidents: number;
   /** Name of the LLM distiller that ran (claude-cli, anthropic, openai, …). */
   distiller: string;
+  /** What was learned this run (titles + code-anchoring) — for a tangible payoff summary. */
+  learned: LearnedLesson[];
 }

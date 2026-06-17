@@ -54,6 +54,10 @@ describe('addOrReinforcePitfall', () => {
 
     expect(res.action).toBe('reinforced');
     expect(res.pitfallId).toBe('a'); // the established principle, not the new candidate id
+    // The result reports the CANONICAL stored shape (for the cold-start payoff), not the candidate:
+    // the established title and the UNIONED incident count — never the new sighting's title/size.
+    expect(res.title).toBe('Validate the tenant id filter');
+    expect(res.incidents).toBe(2); // union of i1 + i2, not the candidate's lone i2
     const pitfalls = await store.pitfalls();
     expect(pitfalls.length).toBe(1); // no duplicate minted
     expect(pitfalls[0]!.incidentIds.sort()).toEqual(['i1', 'i2']); // provenance unioned

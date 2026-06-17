@@ -30,6 +30,7 @@ import {
   writeHomeConfig,
   homeConfigPath,
   type ReviewContext,
+  type LearnedLesson,
 } from '@plex/engine';
 import type { VerdictKind, WaiverScope } from '@plex/core';
 import { parse, finiteFlag } from './parse';
@@ -134,6 +135,22 @@ function printReview(ctx: ReviewContext): void {
   process.stdout.write(out.join('\n') + '\n');
 }
 
+/** The tangible cold-start payoff: WHAT Plex learned + how much of YOUR code it's anchored to —
+ *  so "it learned from our history" is visible, not just a count. (Mined lessons anchor to files;
+ *  symbol-level memory accrues from live-review accepts, ADR-47.) Empty → ''. */
+function formatLearned(learned: LearnedLesson[], limit = 6): string {
+  if (!learned.length) return '';
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const top = [...learned].sort((a, b) => b.incidents - a.incidents).slice(0, limit);
+  const lines = top.map((l) => {
+    const anchor = l.files ? ` · ${plural(l.files, 'file')}` : '';
+    return `  • ${l.title}  (${plural(l.incidents, 'comment')}${anchor})`;
+  });
+  const more = learned.length - top.length;
+  if (more > 0) lines.push(`  …and ${more} more.`);
+  return `Learned from your review history (anchored to your code):\n${lines.join('\n')}\n`;
+}
+
 function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a.trim()); }));
@@ -233,9 +250,10 @@ async function runInit(repoPath: string): Promise<number> {
           () => analyzeRepo(repoPath, loadConfig(), { state: 'merged', limit: INIT_SEED_PRS }),
         );
         out.write(
-          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n` +
-            'Run `plex analyze` anytime to continue with older PRs.\n',
+          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
         );
+        out.write(formatLearned(res.learned));
+        out.write('Run `plex analyze` anytime to continue with older PRs.\n');
       } catch (e) {
         // Degrade clearly: most commonly no LLM distiller (claude CLI / API key) or `gh` unavailable.
         out.write(
@@ -420,6 +438,7 @@ async function main(): Promise<number> {
           `${res.comments} comments → ${res.substantive} substantive → ${res.clusters} clusters → ` +
           `+${res.pitfalls} new pitfalls, ${res.reinforced} reinforced, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
       );
+      process.stdout.write(formatLearned(res.learned));
       return 0;
     }
     case 'consolidate': {

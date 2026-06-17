@@ -62,6 +62,9 @@ describe('distillHistory (offline, LLM-only)', () => {
     expect(result.pitfalls).toBe(1);
     expect(result.distiller).toBe('fake-llm');
     expect(scannedPrs).toEqual([1, 2]);
+    // The payoff summary: WHAT was learned (title + provenance), for a tangible cold-start report.
+    expect(result.learned).toHaveLength(1);
+    expect(result.learned[0]).toMatchObject({ title: 'Validate tenant id on every query', action: 'minted', incidents: 3, scope: 'repo' });
 
     const pitfalls = await store.pitfalls();
     expect(pitfalls).toHaveLength(1);
@@ -92,6 +95,25 @@ describe('distillHistory (offline, LLM-only)', () => {
     const pitfalls = await store.pitfalls();
     expect(pitfalls).toHaveLength(1);
     expect(pitfalls[0]!.incidentIds.length).toBe(3); // all three sightings' provenance unioned
+  });
+
+  it('reports the lesson anchored to the distinct files its comments concern', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'distill-files-'));
+    const store = new KnowledgeStore(dir);
+    const embed = new FakeEmbeddingProvider();
+    // Three tenant-id comments (one cluster) across TWO distinct files (one repeated) → files: 2.
+    const withPaths = {
+      listPrs: async (): Promise<PrRef[]> => [{ number: 1, mergedAt: '2026-01-01' }],
+      fetchCommentsForPr: async (): Promise<RawComment[]> => [
+        { id: 'a', prNumber: 1, prMerged: true, body: 'Validate the tenant id on this database query or it leaks across tenants', path: 'src/db.ts' },
+        { id: 'b', prNumber: 1, prMerged: true, body: 'Missing tenant id validation on the query here, add the tenant filter', path: 'src/db.ts' },
+        { id: 'c', prNumber: 1, prMerged: true, body: 'This query needs a tenant id filter and validation to avoid cross tenant leaks', path: 'src/api.ts' },
+      ],
+    };
+    const { result } = await distillHistory(store, embed, config, { cwd: '.', repoName: 'r', fetch: withPaths, llm: fakeLlm });
+    expect(result.learned).toHaveLength(1);
+    expect(result.learned[0]!.files).toBe(2); // src/db.ts + src/api.ts, deduped
+    expect(result.learned[0]!.incidents).toBe(3);
   });
 
   it('scans by order + limit and advances the cursor (chronological analysis)', async () => {
