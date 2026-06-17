@@ -59,8 +59,18 @@ export class CodeGraphDB {
     if (rows.length === 0) return;
     try {
       const prepared = await this.conn.prepare(stmt);
-      for (const r of rows) {
-        await this.conn.execute(prepared, r as Record<string, never>);
+      // ONE transaction for the whole batch. Without it Kùzu auto-commits every statement (an fsync
+      // per row), so a large first index was ~14k serial round-trips — most of a ~70s wait on a
+      // ~1.3k-file repo. A single commit is a large speedup AND makes the batch atomic: a failure rolls
+      // back instead of leaving a half-written graph (safe now that symbol ids are collision-proof, so
+      // no mid-batch PK abort). The connection already holds the single writer, so there's no nesting.
+      await this.conn.query('BEGIN TRANSACTION');
+      try {
+        for (const r of rows) await this.conn.execute(prepared, r as Record<string, never>);
+        await this.conn.query('COMMIT');
+      } catch (e) {
+        await this.conn.query('ROLLBACK').catch(() => {}); // best-effort; surface the original error
+        throw e;
       }
     } catch (e) {
       this.rethrow(e);
