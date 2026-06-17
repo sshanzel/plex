@@ -75,6 +75,23 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     expect(incs.every((i) => i.note?.startsWith('reject'))).toBe(true);
   });
 
+  it('captures the dismissal reasoning (verdict note) in the suppression why + incident note', async () => {
+    const config = cfg();
+    const why = 'console is intentional here — CLI entrypoint logger';
+    await learnSuppression(config, 'myrepo', { kind: 'waive', findingId: 'det:no-console:a.ts:1', file: 'a.ts', note: why }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    expect(neg.why).toContain(why); // the real reason, not the boilerplate template
+    const inc = (await knowledgeStore(config).incidents()).find((i) => i.pitfallId === neg.id)!;
+    expect(inc.note).toContain(why); // reasoning is on the incident provenance too
+  });
+
+  it('falls back to the boilerplate why when no reasoning is supplied', async () => {
+    const config = cfg();
+    await reject(config);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    expect(neg.why).toContain('Learned suppression');
+  });
+
   it('a correction (the user fixes it) pulls it back out of suppression', async () => {
     const config = cfg();
     for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) await reject(config, f);
