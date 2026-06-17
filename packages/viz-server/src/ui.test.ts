@@ -36,6 +36,13 @@ describe('renderAppHtml', () => {
     expect(html).toContain('d.parent = n.parent'); // incident nested via Cytoscape compound parent
   });
 
+  it('renders a cold-start empty state (centered CTA) instead of a black void', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain('id="empty"'); // the centered overlay element
+    expect(html).toContain('function showEmptyState'); // toggled on a 0-node payload
+    expect(html).toContain('plex analyze'); // the knowledge CTA points at the seed path
+  });
+
   it('escapes the version so it cannot break out of the markup', () => {
     const html = renderAppHtml('</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain('<img src=x');

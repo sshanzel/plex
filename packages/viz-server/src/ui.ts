@@ -49,6 +49,11 @@ export function renderAppHtml(version: string): string {
   #panel dd { margin:0; word-break:break-word; }
   #panel .hint { color:var(--muted); }
   #legend { position:absolute; left:10px; bottom:10px; background:rgba(23,26,33,.92); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12px; display:flex; gap:12px; flex-wrap:wrap; max-width:70%; }
+  /* Centered empty-state — what a cold-start (no knowledge / no repo selected) user sees instead of a black void. */
+  #empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center; padding:0 24px; pointer-events:none; }
+  #empty .ttl { font-size:15px; color:var(--fg); max-width:560px; }
+  #empty .cta { font-size:13px; color:var(--muted); max-width:560px; }
+  #empty code { background:rgba(255,255,255,.07); padding:1px 5px; border-radius:4px; }
   #legend .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
   .note { color:#ffd43b; font-size:12px; }
   .err { color:#ff8787; }
@@ -72,6 +77,7 @@ export function renderAppHtml(version: string): string {
   </header>
   <main>
     <div id="cy"></div>
+    <div id="empty" hidden><div class="ttl"></div><div class="cta"></div></div>
     <div id="legend"></div>
     <aside id="panel"><p class="hint">Pick a node to inspect it. Double-click a file to expand its symbols and neighbors.</p></aside>
   </main>
@@ -292,6 +298,21 @@ const CLIENT_JS = String.raw`
     applyEdgeFilter();
     var note = data.note ? (data.note) : (data.nodes.length + ' nodes · ' + data.edges.length + ' edges');
     setStatus(note, data.note ? 'note' : 'hint');
+    showEmptyState(data);
+  }
+
+  // Cold-start / empty graph: a centered message + call-to-action instead of a black void, so a
+  // brand-new user (no learned knowledge yet) sees what to do, not a blank screen. textContent only.
+  function showEmptyState(data) {
+    var el = $('empty');
+    if (data.nodes.length > 0) { el.hidden = true; return; }
+    el.querySelector('.ttl').textContent = data.note || 'Nothing to show here yet.';
+    var cta = '';
+    if (state.graph === 'knowledge') cta = 'Seed lessons from your merged PR history with \`plex analyze\`, or just review — Plex learns from every finding you accept.';
+    else if (state.graph === 'lineage') cta = 'Run a review on this repo and the comment → finding → verdict history will appear here.';
+    else if (state.graph === 'code') cta = 'Index a repo (\`plex index\`) or pick one above to explore its files and coupling.';
+    el.querySelector('.cta').textContent = cta;
+    el.hidden = false;
   }
 
   function api(path) {
