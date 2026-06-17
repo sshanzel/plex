@@ -29,7 +29,7 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 npx @sshanzel/plex init
 ```
 
-It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. Want a CLI for full visibility (`doctor`, `eval`, analysis, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
+It saves the key to `~/.plex/config.json` (you can also create that file yourself), offers to index the current repo, and offers to **seed Plex from your merged PR history** — `plex analyze` distills your past review comments into lessons anchored to your code, so the reviewer is sharp from day one instead of learning from scratch (the fastest way to a useful Plex; see [Bootstrap from your PR history](#bootstrap-from-your-pr-history)). Want a CLI for full visibility (`doctor`, `eval`, analysis, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 

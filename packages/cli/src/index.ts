@@ -52,7 +52,7 @@ const USAGE = `plex, local-first code review context
 Run inside your repo. Commands default to the current git repo (an explicit [repoPath] still works).
 
 Usage:
-  plex init                                              # setup (run in your repo): embedding key + offer to index
+  plex init                                              # setup (run in your repo): embedding key + offer to index + seed from PR history
   plex doctor [repoPath]                                 # check embeddings + graph
   plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
@@ -212,6 +212,31 @@ async function runInit(repoPath: string): Promise<number> {
       () => indexRepo(repoPath, loadConfig()),
     );
     out.write(`Indexed ${res.files} files, ${res.symbols} symbols, ${res.coChangePairs} co-change pairs.\n`);
+  }
+
+  // 3. Cold-start accelerator: seed knowledge from merged PR history NOW, so Plex's learned lessons
+  //    (and the code-path memory anchored to your symbols) are alive on day one instead of week three.
+  //    Needs embeddings (clustering) + an LLM distiller + `gh` against a GitHub repo with merged PRs.
+  if (isGitRepo(repoPath)) {
+    if (!embeddingReady(loadConfig())) {
+      out.write('\nTip: add an embedding key (re-run `plex init`) and run `plex analyze` to seed Plex from your\nmerged PR history — it analyzes past review comments into lessons anchored to your code, so the\nreviewer is sharp from day one instead of learning from scratch.\n');
+    } else if ((await ask('\nSeed Plex from your merged PR history now? Analyzes past review comments into lessons\nanchored to your code (uses `gh`; can take a few minutes on a large history). [y/N]: ')).toLowerCase() === 'y') {
+      try {
+        const res = await withSpinner(
+          'Analyzing merged PR history (fetching via `gh`, distilling review comments into lessons)',
+          () => analyzeRepo(repoPath, loadConfig(), { state: 'merged' }),
+        );
+        out.write(
+          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
+        );
+      } catch (e) {
+        // Degrade clearly: most commonly no LLM distiller (claude CLI / API key) or `gh` unavailable.
+        out.write(
+          `\nCouldn't seed automatically: ${e instanceof Error ? e.message : String(e)}\n` +
+            'No worries — your agent can seed from PR history later (it has the LLM), or run `plex analyze` once an LLM distiller is available. Plex also learns from every review you run.\n',
+        );
+      }
+    }
   }
 
   out.write('\nDone. Install the Plex plugin if you have not, then run `/plex:review` in your agent (or say "review my changes with Plex").\n');
