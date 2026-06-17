@@ -92,6 +92,10 @@ test('gitignore-robust', 'code-graph: skips .gitignored files + survives duplica
     writeFileSync(join(repo, 'report/ignored.ts'), 'export function secret() {}\n');
     git(repo, 'add', '-A');
     git(repo, 'commit', '-q', '-m', 'init');
+    // An UNTRACKED but NOT-ignored source file (created mid-feature, not yet `git add`ed) — must STILL
+    // be indexed (`git ls-files --others --exclude-standard`), so a review's blast radius isn't empty
+    // for its own new files. Left uncommitted on purpose.
+    writeFileSync(join(repo, 'src/fresh.ts'), 'export function brandNew() {}\n');
 
     const res = await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }); // must NOT throw on the dup PK
     const db = new CodeGraphDB(dbDir);
@@ -100,7 +104,9 @@ test('gitignore-robust', 'code-graph: skips .gitignored files + survives duplica
       assert.deepEqual(dup.sort(), ['h', 'h'], `both duplicate symbols survived: ${dup.join(',')}`);
       // The gitignored file is absent: no File node, no `secret` symbol anywhere.
       assert.equal((await getSymbolsInFile(db, 'report/ignored.ts')).length, 0, 'gitignored file not indexed');
-      assert.ok(!res.files || res.files === 1, `only the tracked src file indexed (got ${res.files})`);
+      // The untracked-not-ignored file IS indexed (working tree minus ignores, not tracked-only).
+      assert.deepEqual((await getSymbolsInFile(db, 'src/fresh.ts')).map((s) => s.name), ['brandNew'], 'untracked-not-ignored file indexed');
+      assert.equal(res.files, 2, `tracked dup.js + untracked fresh.ts indexed, report/ excluded (got ${res.files})`);
     } finally {
       await db.close();
     }

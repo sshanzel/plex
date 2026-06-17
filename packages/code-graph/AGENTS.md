@@ -69,11 +69,15 @@ History is read via `git log --no-merges --name-only` with an SOH (0x01) record 
 (`discoverFiles`), inserts Files → Symbols/Declares → Imports → Refs → fileSet-filtered CoChange
 pairs, then stamps `Meta.headSha` + `Meta.repo`. Co-change is best-effort: a non-git dir simply has no
 co-change layer. **File discovery respects `.gitignore`:** in a git repo `discoverFiles` uses
-`git ls-files` (TRACKED files only), so build output like `playwright-report/`, `dist/`, vendored
-bundles — anything ignored — is never indexed (the principled fix vs. a hardcoded skip-list, and
-consistent with co-change being git-based). A **non-git** directory falls back to a filesystem walk
-(`SKIP_DIRS` + dot-dirs). Both apply the same `indexable` filter (supported ext, not `.d.ts`, not a
-generated artifact). The incremental path already respects ignores (`git diff` never reports ignored files).
+`listWorktreeFiles` (`git ls-files --cached --others --exclude-standard`) = the working tree **minus
+ignored** paths, so build output like `playwright-report/`, `dist/`, vendored bundles, the self-ignored
+`.plex` is never indexed — **while a brand-new uncommitted source file still IS** (its blast radius
+isn't empty mid-feature). The principled fix vs. a hardcoded skip-list, consistent with co-change being
+git-based. A **non-git** directory falls back to a filesystem walk (`SKIP_DIRS` + dot-dirs); the two
+branches diverge only on committed dot-directory source (`.storybook/*.ts`), which the git path indexes
+as real code and the fallback skips — git is authoritative. Both apply the same `indexable` filter
+(supported ext, not `.d.ts`, not a generated artifact). The incremental path already respects ignores
+(`git diff` never reports ignored files).
 
 **Incremental update (`updateCodeGraph`, ADR-25/26).** Diffs `storedSha..HEAD`
 (`git diff --name-status -M`; renames split into delete(old)+add(new)). Then:

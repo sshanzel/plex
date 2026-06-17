@@ -4,7 +4,7 @@ import { isGeneratedArtifact, type CoChangeConfig } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
 import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
-import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince, listTrackedFiles } from './co-change';
+import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince, listWorktreeFiles } from './co-change';
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
 import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
@@ -83,15 +83,19 @@ const indexable = (relOrName: string): boolean =>
   isSupportedSource(relOrName) && !relOrName.endsWith('.d.ts') && !isGeneratedArtifact(relOrName);
 
 /**
- * The source files to index. A **git repo** is the source of truth: `git ls-files` lists only TRACKED
- * files, so `.gitignore`d build output (a `playwright-report/` of minified bundles, `dist/`, vendored
- * artifacts) is never indexed — the principled fix vs. a hardcoded skip-list, and consistent with
- * co-change being git-based. A non-git directory falls back to a filesystem walk (SKIP_DIRS + dot-dirs).
+ * The source files to index. A **git repo** is the source of truth: `listWorktreeFiles` returns the
+ * working tree minus `.gitignore`d paths (tracked + untracked-not-ignored), so build output (a
+ * `playwright-report/` of minified bundles, `dist/`, vendored artifacts, the self-ignored `.plex`) is
+ * never indexed — the principled fix vs. a hardcoded skip-list, consistent with co-change being
+ * git-based — while a brand-new uncommitted source file IS still indexed (its blast radius isn't empty
+ * mid-feature). A non-git directory falls back to a filesystem walk (SKIP_DIRS + dot-dirs); the two
+ * branches diverge only on committed dot-directory source (`.storybook/*.ts` etc.), which the git path
+ * indexes as real code and the fallback skips — git is authoritative, the walk is best-effort.
  * Both paths return ABSOLUTE paths and apply the same `indexable` filter (supported ext, not `.d.ts`,
  * not a generated artifact).
  */
 async function discoverFiles(root: string): Promise<string[]> {
-  const tracked = await listTrackedFiles(root);
+  const tracked = await listWorktreeFiles(root);
   if (tracked) return tracked.filter(indexable).map((rel) => path.join(root, rel));
 
   const out: string[] = [];

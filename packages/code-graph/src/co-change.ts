@@ -146,16 +146,19 @@ export async function headSha(cwd: string): Promise<string> {
 }
 
 /**
- * Tracked files as `git ls-files` reports them — repo-relative POSIX paths (git always uses `/`, so
- * they already match `File.id`). This is how indexing **respects `.gitignore`**: ignored/untracked
- * files (build output like `playwright-report/`, vendored bundles, generated reports) are simply not
- * tracked, so they never reach the graph — no whack-a-mole skip-list, and consistent with co-change
- * being git-history-based. `-z` (NUL-delimited) survives paths with spaces/newlines. Returns null when
- * `cwd` isn't a git repo (or git is unavailable) → the caller falls back to a filesystem walk.
+ * Working-tree source files git does NOT ignore — repo-relative POSIX paths (git always uses `/`, so
+ * they already match `File.id`). `--cached` (tracked) **+ `--others`** (untracked) **+
+ * `--exclude-standard`** (apply `.gitignore` / `.git/info/exclude` / global ignores) = "everything in
+ * the working tree except what's ignored". This is how indexing **respects `.gitignore`** (build output
+ * like `playwright-report/`, vendored bundles, the self-ignored `.plex` dir never reach the graph) WHILE
+ * still indexing a brand-new file the author hasn't committed yet — so a mid-feature review's blast
+ * radius isn't empty for its own new files. No whack-a-mole skip-list. `-z` (NUL-delimited) survives
+ * paths with spaces/newlines and avoids git's octal-quoting of unusual names. Returns null when `cwd`
+ * isn't a git repo (or git is unavailable) → the caller falls back to a filesystem walk.
  */
-export async function listTrackedFiles(cwd: string): Promise<string[] | null> {
+export async function listWorktreeFiles(cwd: string): Promise<string[] | null> {
   try {
-    const { stdout } = await pexec('git', ['ls-files', '-z'], { cwd, maxBuffer: GIT_MAX_BUFFER });
+    const { stdout } = await pexec('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd, maxBuffer: GIT_MAX_BUFFER });
     return stdout.split('\0').filter(Boolean);
   } catch {
     return null;
