@@ -380,6 +380,7 @@ export async function collectKnowledge(
     nodes.push(node);
   };
 
+  const crossLinked = new Set<string>(); // `${pitfallId}|${incidentId}` pairs already drawn cross-cluster
   for (const p of pitfallSlice) {
     for (const incId of p.incidentIds ?? []) {
       if (!incidentById.has(incId)) continue;
@@ -387,15 +388,17 @@ export async function collectKnowledge(
       // Containment expresses the primary `from`; only draw an edge when THIS pitfall isn't the container.
       if (parentOf.get(incId) !== `pf:${p.id}`) {
         edges.push({ id: `pf-inc|${p.id}|${incId}`, source: `pf:${p.id}`, target: `inc:${incId}`, label: 'from', graph: 'knowledge' });
+        crossLinked.add(`${p.id}|${incId}`);
       }
     }
   }
   // Incidents that reference a pitfall by id (orphan provenance) — nested when this pitfall is their
-  // container, otherwise a cross-cluster `about` edge, so the provenance view stays complete.
+  // container, otherwise a cross-cluster `about` edge, so the provenance view stays complete. Skip when
+  // a `from` edge already links this exact (pitfall, incident) pair — they're the same link, one arrow.
   for (const i of incidents) {
     if (i.pitfallId && pitfallNodeIds.has(`pf:${i.pitfallId}`)) {
       incidentNode(i);
-      if (parentOf.get(i.id) !== `pf:${i.pitfallId}`) {
+      if (parentOf.get(i.id) !== `pf:${i.pitfallId}` && !crossLinked.has(`${i.pitfallId}|${i.id}`)) {
         edges.push({ id: `inc-pf|${i.id}`, source: `inc:${i.id}`, target: `pf:${i.pitfallId}`, label: 'about', graph: 'knowledge' });
       }
     }

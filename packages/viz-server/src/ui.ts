@@ -105,8 +105,8 @@ const CLIENT_JS = String.raw`
   var $ = function (id) { return document.getElementById(id); };
   function setStatus(msg, cls) { var s = $('status'); s.textContent = msg || ''; s.className = cls || 'hint'; }
 
-  function styleFor() {
-    return [
+  function styleFor(graph) {
+    var rules = [
       { selector:'node', style:{ 'label':'data(label)','font-size':8,'color':'#e6e8ee','text-wrap':'ellipsis','text-max-width':110,
         'background-color':function(n){ return TYPE_COLORS[n.data('type')] || '#adb5bd'; },
         'text-valign':'bottom','text-margin-y':3,'width':18,'height':18 } },
@@ -118,10 +118,6 @@ const CLIENT_JS = String.raw`
         'padding':14,'text-valign':'top','text-margin-y':-3,'font-size':9,'text-max-width':180 } },
       { selector:'node[type="Target"]', style:{ 'shape':'round-rectangle','width':34,'height':22,'font-size':10 } },
       { selector:'node[type="File"]', style:{ 'width':'mapData(symbols,0,40,14,40)','height':'mapData(symbols,0,40,14,40)' } },
-      // Incident dots are "history" inside a lesson box — their file-path labels collide when packed,
-      // and the box title + outcome ring already carry the meaning; show the label on hover/select only.
-      { selector:'node[type="Incident"]', style:{ 'text-opacity':0 } },
-      { selector:'node[type="Incident"]:selected', style:{ 'text-opacity':1 } },
       // Outcome encoding: a finding/incident that was acted on (resolved) vs dismissed — read at a glance.
       { selector:'node[outcomeClass="resolved"]', style:{ 'border-width':3,'border-color':'#69db7c' } },
       { selector:'node[outcomeClass="dismissed"]', style:{ 'border-width':2,'border-color':'#ff6b6b','opacity':0.7 } },
@@ -140,6 +136,16 @@ const CLIENT_JS = String.raw`
       { selector:'edge[?inferred]', style:{ 'line-style':'dashed','line-color':'#f783ac','target-arrow-color':'#f783ac','text-opacity':1,'color':'#f783ac' } },
       { selector:'edge:selected', style:{ 'line-color':'#fff','target-arrow-color':'#fff','text-opacity':1 } }
     ];
+    // Incident dots are "history" packed inside a lesson box — their file-path labels collide there, and
+    // the box title + outcome ring carry the meaning, so hide the label (shown on select). KNOWLEDGE
+    // VIEW ONLY: the same Incident node type also appears in the code-graph symbol↔incident expand and
+    // in Lineage (it always carries graph:'knowledge', so this can't be node-scoped) — those views want
+    // the label, so gate on the CURRENT graph, not the node.
+    if (graph === 'knowledge') {
+      rules.push({ selector:'node[type="Incident"]', style:{ 'text-opacity':0 } });
+      rules.push({ selector:'node[type="Incident"]:selected', style:{ 'text-opacity':1 } });
+    }
+    return rules;
   }
   function layoutFor(graph) {
     if (graph === 'code') return { name:'cose', animate:false, nodeRepulsion:6000, idealEdgeLength:70, padding:30 };
@@ -257,7 +263,11 @@ const CLIENT_JS = String.raw`
       else if (n.parent().length === 0) cells.push(cy.collection(n));   // a childless pitfall / orphan incident
     });
     var cols = Math.max(1, Math.ceil(Math.sqrt(cells.length)));
-    var CELL_W = 360, CELL_H = 250, GAP = 34, pos = {};
+    // Size the uniform cell from the LARGEST box (+ title/padding) so a high-incident pitfall packs its
+    // mini-grid without spilling into the row below and overlapping a neighbour (positions are fixed).
+    var GAP = 34, maxKids = cells.reduce(function (m, k) { return Math.max(m, k.length); }, 1);
+    var maxSide = Math.ceil(Math.sqrt(maxKids)) * GAP;
+    var CELL_W = Math.max(360, maxSide + 90), CELL_H = Math.max(250, maxSide + 100), pos = {};
     cells.forEach(function (kids, idx) {
       var cx = (idx % cols) * CELL_W, cy0 = Math.floor(idx / cols) * CELL_H;
       var kc = Math.max(1, Math.ceil(Math.sqrt(kids.length)));
@@ -273,7 +283,7 @@ const CLIENT_JS = String.raw`
   function draw(data) {
     state.raw = data;
     if (state.cy) { state.cy.destroy(); state.cy = null; }
-    state.cy = cytoscape({ container:$('cy'), elements:toElements(data), style:styleFor(), layout:{ name:'preset' }, wheelSensitivity:0.2 });
+    state.cy = cytoscape({ container:$('cy'), elements:toElements(data), style:styleFor(state.graph), layout:{ name:'preset' }, wheelSensitivity:0.2 });
     runLayout();
     state.cy.on('tap', 'node', function (evt) { showDetail(evt.target); });
     state.cy.on('dbltap', 'node[type="File"]', function (evt) { expandFile(evt.target); });

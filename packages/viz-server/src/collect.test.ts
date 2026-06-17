@@ -60,6 +60,22 @@ describe('collectKnowledge', () => {
     );
   });
 
+  it('does not draw both a `from` and an `about` for the same cross-cluster (pitfall, incident) pair', async () => {
+    const store = new KnowledgeStore(dir);
+    // `shared` is contained by p1 (first citer), but ALSO cited by p2 AND carries pitfallId p2 — the
+    // `from` (p2→shared) and `about` (shared→p2) would be duplicate arrows for one link; keep one.
+    await store.addIncident(incident({ id: 'shared', file: 'a.ts', pitfallId: 'p2' }));
+    await store.addPitfall(pitfall({ id: 'p1', incidentIds: ['shared'] }));
+    await store.addPitfall(pitfall({ id: 'p2', title: 'second', incidentIds: ['shared'] }));
+
+    const payload = await collectKnowledge(dir);
+    const between = payload.edges.filter(
+      (e) => (e.source === 'pf:p2' && e.target === 'inc:shared') || (e.source === 'inc:shared' && e.target === 'pf:p2'),
+    );
+    expect(between).toHaveLength(1);
+    expect(between[0]!.label).toBe('from');
+  });
+
   it('never leaks the embedding vector into node props', async () => {
     const store = new KnowledgeStore(dir);
     await store.addPitfall(pitfall({ id: 'p1', embedding: [0.1, 0.2, 0.3], incidentIds: [] }));
