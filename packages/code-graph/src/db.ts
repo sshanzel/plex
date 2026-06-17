@@ -55,21 +55,42 @@ export class CodeGraphDB {
     }
   }
 
+  /**
+   * Bulk insert under explicit transactions — a PERFORMANCE fix. Without a transaction Kùzu
+   * auto-commits (fsyncs) EVERY row, so a large first index was ~14k serial commit round-trips (most
+   * of a ~70s wait on a ~1.3k-file repo). Committing per CHUNK instead drops that to a handful of
+   * commits (~17× on that repo). Chunking (vs one giant transaction) bounds the WAL/undo buffer so a
+   * huge monorepo can't balloon memory — playright's largest batch (<5k rows) still commits once, so
+   * normal repos are unaffected; only >`CHUNK`-row batches split.
+   *
+   * NOT an atomicity guarantee: a chunk commits as it fills, and callers issue several `insertMany`s
+   * (and, on the incremental path, a prior auto-committed `DETACH DELETE`) that this does NOT wrap into
+   * one unit — a mid-build failure can leave a partial graph, recovered by the next full rebuild (the
+   * sweep's GraphFreshness job / a fresh `index`). ROLLBACK on error closes the open transaction so the
+   * REUSED long-lived connection isn't left mid-transaction (which would make the next `insertMany`'s
+   * BEGIN fail with an unrelated "active transaction" error); the ORIGINAL error is surfaced.
+   */
   async insertMany(stmt: string, rows: Params[]): Promise<void> {
     if (rows.length === 0) return;
+    const CHUNK = 10_000;
     try {
       const prepared = await this.conn.prepare(stmt);
-      // ONE transaction for the whole batch. Without it Kùzu auto-commits every statement (an fsync
-      // per row), so a large first index was ~14k serial round-trips — most of a ~70s wait on a
-      // ~1.3k-file repo. A single commit is a large speedup AND makes the batch atomic: a failure rolls
-      // back instead of leaving a half-written graph (safe now that symbol ids are collision-proof, so
-      // no mid-batch PK abort). The connection already holds the single writer, so there's no nesting.
-      await this.conn.query('BEGIN TRANSACTION');
+      let inTxn = false;
       try {
-        for (const r of rows) await this.conn.execute(prepared, r as Record<string, never>);
-        await this.conn.query('COMMIT');
+        for (let i = 0; i < rows.length; i++) {
+          if (i % CHUNK === 0) {
+            await this.conn.query('BEGIN TRANSACTION');
+            inTxn = true;
+          }
+          await this.conn.execute(prepared, rows[i] as Record<string, never>);
+          if (i % CHUNK === CHUNK - 1) {
+            await this.conn.query('COMMIT');
+            inTxn = false;
+          }
+        }
+        if (inTxn) await this.conn.query('COMMIT');
       } catch (e) {
-        await this.conn.query('ROLLBACK').catch(() => {}); // best-effort; surface the original error
+        if (inTxn) await this.conn.query('ROLLBACK').catch(() => {}); // close the txn; surface the original error
         throw e;
       }
     } catch (e) {
