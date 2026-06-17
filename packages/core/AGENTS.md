@@ -34,6 +34,10 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   `LineageEvent` types + `foldLineage` (round/finding/verdict/comment/outcome events → current state,
   last-write-wins per id, outcome tracked orthogonally so a re-raised finding never resets a `fixed`
   outcome) + `parseLineageEvents`. Shared by the engine `Brain` and the viz-server so both agree.
+- `src/code-path.ts` — `symbolKey(file, name)` = `file#name`, the drift-tolerant stable symbol key for
+  code-path memory (ADR-47). Single source of truth so capture (engine accept path), match
+  (`matchCodePath`), and the viz join never disagree on "same symbol". `Incident` gains `line`/`symbol`
+  and the lineage `finding` event gains `symbol` to carry it.
 - `src/index.ts` — barrel.
 
 ## How config is actually resolved

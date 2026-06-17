@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, appendFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, resolve } from 'node:path';
-import { resolveConfig, type NormalizedDiff } from '@plex/core';
+import { resolveConfig, symbolKey, type NormalizedDiff } from '@plex/core';
 import {
   buildCodeGraph,
   updateCodeGraph,
@@ -823,15 +823,31 @@ test('knowledge', 'engine: stored pitfall -> review retrieves it -> learn on acc
       tier: 'judgmental', confidence: 0.6, scope: 'global', incidentIds: [], embedding: vec,
     });
 
+    // Code-path memory (ADR-47): anchor a PRIOR FIXED incident to `updateUserInput` (the function
+    // appended + staged above, so it's in the review's changed-symbol set) and link it to the pitfall.
+    const store = knowledgeStore(config);
+    await store.addIncident({
+      id: 'inc:cp', source: 'review', repo: 'r', file: 'src/user.ts',
+      symbol: symbolKey('src/user.ts', 'updateUserInput'), outcome: 'fixed', ts: '2026-01-01T00:00:00Z',
+    });
+    await store.replacePitfalls(
+      (await store.pitfalls()).map((p) => (p.id === 'pf:validate-input' ? { ...p, incidentIds: ['inc:cp'] } : p)),
+    );
+
     await indexRepo(repo, config);
     const ctx = await assembleReviewContext({ repoPath: repo, config, mode: 'staged' });
     assert.ok(ctx.knowledge.length >= 1, 'retrieved at least one relevant pitfall');
     assert.ok(ctx.knowledge[0]!.pitfall.title.toLowerCase().includes('validate'), 'retrieved the validation pitfall');
+    // The diff touches updateUserInput, which has a prior FIXED incident → a regression-sentinel alert.
+    assert.ok(ctx.codePathAlerts && ctx.codePathAlerts.length >= 1, 'a code-path alert surfaced');
+    assert.ok(
+      ctx.codePathAlerts!.some((a) => a.regressionSentinel && a.symbol === 'updateUserInput'),
+      'regression sentinel at the touched symbol',
+    );
 
     await submitVerdict(repo, { findingId: 'f1', kind: 'accept', file: 'src/user.ts', title: 'validate input' }, config);
     const incidents = await knowledgeStore(config).incidents();
-    assert.equal(incidents.length, 1);
-    assert.equal(incidents[0]!.outcome, 'accepted');
+    assert.ok(incidents.some((i) => i.outcome === 'accepted'), 'accept recorded an incident');
   } finally {
     rmSync(repo, { recursive: true, force: true });
     rmSync(knowledgeDir, { recursive: true, force: true });

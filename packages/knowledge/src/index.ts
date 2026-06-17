@@ -10,6 +10,8 @@ export { KnowledgeStore } from './store';
 export { retrieveRelevant, retrieveRelevantLexical, lexicalScores, lexicalTokens } from './retrieve';
 export type { RetrievedPitfall } from './retrieve';
 export { recordIncident } from './incidents';
+export { buildKnowledgeGraph, historyOf, concernsAt, concernsInFile, pitfallsOf } from './graph';
+export type { KnowledgeGraph } from './graph';
 export { addOrReinforcePitfall } from './reinforce';
 export type { AddOrReinforceResult } from './reinforce';
 export { consolidatePitfalls } from './promotion';

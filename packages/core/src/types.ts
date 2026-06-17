@@ -323,6 +323,16 @@ export interface Incident {
   source: IncidentSource;
   repo?: string;
   file?: string;
+  /**
+   * Code-path anchor (ADR — code-path memory): WHERE this concern was raised. `line` is the 1-based
+   * line (mined: the comment's line; live-accept: the finding's line); `symbol` is the drift-tolerant
+   * `symbolKey(file, name)` = `file#name` resolved from the brain finding at accept time (absent on
+   * mined incidents in v1 — no graph at analyze time). Together they let a review match a pitfall's
+   * history to the symbols a diff is touching (`matchCodePath`) — the "this was fixed HERE before"
+   * signal. Optional/best-effort; never affects confidence math.
+   */
+  line?: number;
+  symbol?: string;
   snippet?: string;
   outcome?: IncidentOutcome;
   /**

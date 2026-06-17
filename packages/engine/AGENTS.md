@@ -22,6 +22,7 @@ the PR brain. Read the root `AGENTS.md` first; decisions live in [`docs/adr/READ
 **Review context & indexing**
 - `src/review.ts` — `indexRepo` (full/incremental/worktree-seeded, ADR-32), `assembleReviewContext` (the heart — see below), `blastRadius`.
 - `src/viz.ts` — `reviewContextToHtml`: self-contained Cytoscape HTML of the neighborhood (`plex review --html`).
+- `src/code-path.ts` — **code-path memory** (ADR-47), PURE (no Kùzu/embeddings): `matchCodePath` intersects retrieved pitfalls' incident history against the diff's changed symbols (`nb.changed`) + co-change neighbours (`nb.neighbors`) — symbol-key (`file#name`) → line-overlap → file → coupled ladder; a prior `fixed`/accepted at a touched symbol is a `regressionSentinel`. Returns `CodePathAlert[]` + `applyCodePathBoost` (folds a bounded boost into the retrieval ranking). Called in `assembleReviewContext` after knowledge retrieval; the accept path in `knowledge.ts` anchors the incident's `symbol`/`line` from the brain finding.
 
 **PR brain & reconcile**
 - `src/brain.ts` — the durable JSONL **lineage layer** (ADR-46, replaces the Kùzu brain): append-only event log per target under the base repo's `lineage/`, folded by `@plex/core` `foldLineage`; round state, finding/verdict writes, `rankingSamples`, `openTargets` (the sweep's work list — open non-`awareness` findings + latest round head/baseRef).

@@ -77,6 +77,10 @@ export async function scanHistory(
       source: 'analyzed',
       repo: opts.repoName,
       file: c.path,
+      // Code-path anchor (code-path memory): the comment's line. No `symbol` for mined incidents in
+      // v1 — there's no code graph open at analyze time and a historical line may not map to a current
+      // symbol; the review-time match uses line-overlap against the changed symbols' ranges instead.
+      ...(c.line != null ? { line: c.line } : {}),
       snippet: c.body.slice(0, 300),
       outcome: outcomeFor(c),
       ts: c.createdAt ?? '',

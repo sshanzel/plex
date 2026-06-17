@@ -1,13 +1,32 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { CodeGraphDB } from '@plex/code-graph';
-import { KnowledgeStore } from '@plex/knowledge';
-import { foldLineage, parseLineageEvents, type Pitfall, type Incident } from '@plex/core';
+import { KnowledgeStore, buildKnowledgeGraph, concernsAt, concernsInFile } from '@plex/knowledge';
+import { foldLineage, parseLineageEvents, symbolKey, type Pitfall, type Incident } from '@plex/core';
 import { type GraphPayload, type VizEdge, type VizNode, emptyPayload, withCounts } from './model';
 import type { RepoEntry } from './registry';
 
 const str = (v: unknown): string => (v == null ? '' : String(v));
 const num = (v: unknown): number => Number(v) || 0;
+
+/** The Incident viz node — shared by the knowledge graph and the code-graph symbol↔incident join, so
+ *  both render an incident identically (same id, so dedup works across a merged view). */
+function incidentVizNode(i: Incident): VizNode {
+  return {
+    id: `inc:${i.id}`,
+    label: i.note || i.file || i.id,
+    type: 'Incident',
+    graph: 'knowledge',
+    props: {
+      source: i.source, outcome: i.outcome ?? '', repo: i.repo ?? '', file: i.file ?? '',
+      // Code-path anchor (code-path memory): where this concern was raised.
+      symbol: i.symbol ?? '', line: i.line ?? -1,
+      verb: i.verb ?? '', ts: i.ts, snippet: (i.snippet ?? '').slice(0, 200),
+      // Tier-2 provenance (ADR-46): the review event this came from — drives a recorded lineage edge.
+      findingId: i.findingId ?? '', target: i.target ?? '',
+    },
+  };
+}
 
 /** Per-graph node cap — keeps a huge monorepo's payload (and the browser) responsive. Hitting it
  *  sets `truncated`, which the UI surfaces, so a partial graph never silently reads as complete. */
@@ -91,12 +110,25 @@ export async function collectCode(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Prom
   });
 }
 
-/** Expand one File: its symbols (+ Declares edges) and immediate file neighbors, for click-to-walk. */
-export async function expandCodeFile(repo: RepoEntry, fileId: string): Promise<{ nodes: VizNode[]; edges: VizEdge[] }> {
+interface SymbolDesc {
+  nodeId: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+}
+
+/** Expand one File: its symbols (+ Declares edges), immediate file neighbors, and — when a knowledge
+ *  dir is given — the recorded concerns anchored at each symbol (code-path memory). For click-to-walk. */
+export async function expandCodeFile(
+  repo: RepoEntry,
+  fileId: string,
+  knowledgeDir?: string,
+): Promise<{ nodes: VizNode[]; edges: VizEdge[] }> {
   if (!repo.hasGraph || !existsSync(repo.graphDir)) return { nodes: [], edges: [] };
-  return withGraph(repo.graphDir, async (db) => {
+  const { nodes, edges, syms } = await withGraph(repo.graphDir, async (db) => {
     const nodes: VizNode[] = [];
     const edges: VizEdge[] = [];
+    const syms: SymbolDesc[] = [];
     const symbols = await db.run(
       'MATCH (s:Symbol {file:$file}) RETURN s.id AS id, s.name AS name, s.kind AS kind, s.startLine AS startLine, s.endLine AS endLine, s.exported AS exported',
       { file: fileId },
@@ -111,6 +143,7 @@ export async function expandCodeFile(repo: RepoEntry, fileId: string): Promise<{
         props: { kind: str(r.kind), startLine: num(r.startLine), endLine: num(r.endLine), exported: Boolean(r.exported) },
       });
       edges.push({ id: `decl|${fileId}|${str(r.id)}`, source: `f:${fileId}`, target: id, label: 'declares', graph: 'code' });
+      syms.push({ nodeId: id, name: str(r.name), startLine: num(r.startLine), endLine: num(r.endLine) });
     }
     // Immediate file neighbors (any provenance) so a click keeps the walk going.
     for (const r of await db.run(
@@ -122,8 +155,58 @@ export async function expandCodeFile(repo: RepoEntry, fileId: string): Promise<{
       nodes.push({ id: `f:${nb}`, label: nb, type: 'File', graph: 'code', props: { path: str(r.path) || nb, lang: str(r.lang) } });
       edges.push({ id: `nbr|${fileId}|${nb}`, source: `f:${fileId}`, target: `f:${nb}`, label: 'coupled', graph: 'code' });
     }
-    return { nodes, edges };
+    return { nodes, edges, syms };
   });
+  // Symbol↔incident join (code-path memory) — runs AFTER the Kùzu handle is closed (no held lock):
+  // bridge each symbol to the recorded concerns at it, by `file#name` key (solid) or line-overlap (dashed).
+  if (knowledgeDir) await linkSymbolIncidents({ nodes, edges }, fileId, syms, knowledgeDir);
+  return { nodes, edges };
+}
+
+/** Per symbol-of-a-file, add Incident nodes + `concerns` edges for the incidents anchored there.
+ *  Pure-ish (only reads the JSON knowledge store). Solid edge on a `file#name` key match; dashed
+ *  (`inferred`) on a line-overlap-only match (e.g. a mined incident with a line but no symbol key). */
+async function linkSymbolIncidents(
+  out: { nodes: VizNode[]; edges: VizEdge[] },
+  fileId: string,
+  syms: SymbolDesc[],
+  knowledgeDir: string,
+): Promise<void> {
+  if (syms.length === 0) return;
+  let graph;
+  try {
+    graph = buildKnowledgeGraph([], await new KnowledgeStore(knowledgeDir).incidents());
+  } catch {
+    return; // knowledge store unreadable — the code-graph expand still stands
+  }
+  const inFile = concernsInFile(graph, fileId);
+  if (inFile.length === 0) return;
+  const emitted = new Set<string>();
+  for (const s of syms) {
+    const key = symbolKey(fileId, s.name);
+    const keyed = new Set(concernsAt(graph, key).map((i) => i.id)); // exact symbol-key matches (solid edges)
+    const hits = inFile
+      // exact key (solid) OR — only for an incident with NO symbol key — line falls in this symbol's
+      // span (dashed). An incident keyed to a DIFFERENT symbol must not drift here on line alone.
+      .filter((i) => keyed.has(i.id) || (!i.symbol && i.line != null && i.line >= s.startLine && i.line <= s.endLine))
+      .slice(0, 8); // a busy symbol shouldn't fan out unboundedly
+    for (const i of hits) {
+      const incId = `inc:${i.id}`;
+      if (!emitted.has(incId)) {
+        emitted.add(incId);
+        out.nodes.push(incidentVizNode(i));
+      }
+      const isKeyed = keyed.has(i.id); // solid when keyed to this symbol; dashed when only line falls inside
+      out.edges.push({
+        id: `concerns|${s.nodeId}|${i.id}`,
+        source: s.nodeId,
+        target: incId,
+        label: 'concerns',
+        graph: 'code',
+        ...(isKeyed ? {} : { inferred: true }),
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,15 +351,7 @@ export async function collectKnowledge(
     const id = `inc:${i.id}`;
     if (emitted.has(id)) return;
     emitted.add(id);
-    nodes.push({
-      id, label: i.note || i.file || i.id, type: 'Incident', graph: 'knowledge',
-      props: {
-        source: i.source, outcome: i.outcome ?? '', repo: i.repo ?? '', file: i.file ?? '',
-        verb: i.verb ?? '', ts: i.ts, snippet: (i.snippet ?? '').slice(0, 200),
-        // Tier-2 provenance (ADR-46): the review event this came from — drives a recorded lineage edge.
-        findingId: i.findingId ?? '', target: i.target ?? '',
-      },
-    });
+    nodes.push(incidentVizNode(i));
   };
 
   for (const p of pitfalls.slice(0, cap)) {
