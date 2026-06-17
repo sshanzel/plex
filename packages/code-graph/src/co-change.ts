@@ -145,6 +145,23 @@ export async function headSha(cwd: string): Promise<string> {
   }
 }
 
+/**
+ * Tracked files as `git ls-files` reports them — repo-relative POSIX paths (git always uses `/`, so
+ * they already match `File.id`). This is how indexing **respects `.gitignore`**: ignored/untracked
+ * files (build output like `playwright-report/`, vendored bundles, generated reports) are simply not
+ * tracked, so they never reach the graph — no whack-a-mole skip-list, and consistent with co-change
+ * being git-history-based. `-z` (NUL-delimited) survives paths with spaces/newlines. Returns null when
+ * `cwd` isn't a git repo (or git is unavailable) → the caller falls back to a filesystem walk.
+ */
+export async function listTrackedFiles(cwd: string): Promise<string[] | null> {
+  try {
+    const { stdout } = await pexec('git', ['ls-files', '-z'], { cwd, maxBuffer: GIT_MAX_BUFFER });
+    return stdout.split('\0').filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 /** Indexable source files added/modified/deleted between `sha` and HEAD (ADR-25). */
 export interface ChangedFiles {
   added: string[];

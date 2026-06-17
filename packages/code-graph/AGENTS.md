@@ -27,7 +27,10 @@ a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/gr
 ## The algorithm
 
 **Schema / ids.** `File.id` = the **repo-relative POSIX path** (`path.relative(...).split(sep).join('/')`),
-`Symbol.id` = `<file>#<name>#<startLine>`. Edges are unioned by provenance (ADR-06):
+`Symbol.id` = `<file>#<name>#<startLine>` — **collision-safe** (`uniqueSymbolId`): a minified/generated
+bundle can pack several declarations on one line (same name+line), duplicating that PK and crashing the
+WHOLE index; a stable `#<n>` suffix is appended on collision (deterministic extraction order ⇒ stable
+across re-indexes), so one pathological file can never abort indexing. Edges are unioned by provenance (ADR-06):
 `Imports` (relative resolver), `Refs` (precise, alias-aware), `CoChange {weight, cnt}` (git).
 `Meta` stores `headSha` (the indexed commit) and `repo`.
 
@@ -62,10 +65,15 @@ Pairs with `count < minPairCount` are dropped — kills singleton N² noise. Def
 History is read via `git log --no-merges --name-only` with an SOH (0x01) record marker;
 `old => new` rename artifacts keep the new path.
 
-**Full build (`buildCodeGraph`).** Wipes `dbDir` (unless `fresh: false`), walks the repo
-(skipping `SKIP_DIRS` + dot-dirs), inserts Files → Symbols/Declares → Imports → Refs →
-fileSet-filtered CoChange pairs, then stamps `Meta.headSha` + `Meta.repo`. Co-change is
-best-effort: a non-git dir simply has no co-change layer.
+**Full build (`buildCodeGraph`).** Wipes `dbDir` (unless `fresh: false`), discovers source files
+(`discoverFiles`), inserts Files → Symbols/Declares → Imports → Refs → fileSet-filtered CoChange
+pairs, then stamps `Meta.headSha` + `Meta.repo`. Co-change is best-effort: a non-git dir simply has no
+co-change layer. **File discovery respects `.gitignore`:** in a git repo `discoverFiles` uses
+`git ls-files` (TRACKED files only), so build output like `playwright-report/`, `dist/`, vendored
+bundles — anything ignored — is never indexed (the principled fix vs. a hardcoded skip-list, and
+consistent with co-change being git-based). A **non-git** directory falls back to a filesystem walk
+(`SKIP_DIRS` + dot-dirs). Both apply the same `indexable` filter (supported ext, not `.d.ts`, not a
+generated artifact). The incremental path already respects ignores (`git diff` never reports ignored files).
 
 **Incremental update (`updateCodeGraph`, ADR-25/26).** Diffs `storedSha..HEAD`
 (`git diff --name-status -M`; renames split into delete(old)+add(new)). Then:
@@ -117,7 +125,8 @@ meta (root `AGENTS.md` invariant).
   `maxCommitFiles` boundary, the `halfLifeDays ≤ 0` NaN guard, future-clock clamp),
   `src/extract-ts.test.ts`. Nothing here opens Kùzu — a `.test.ts` that does will crash
   vitest teardown (ADR-17).
-- **Integration:** scenarios live in `packages/engine/integration.mts` (`build`,
+- **Integration:** scenarios live in `packages/engine/integration.mts` (`gitignore-robust` —
+  .gitignored files skipped + duplicate symbol ids survive without crashing, `build`,
   `incremental`, `cochange-inc`, `cochange-weak`, `precise`, `worktree-seed`, …), run via
   `pnpm test:integration` — **one tsx process per scenario, ≤2 Kùzu opens each** (tsx
   SIGSEGVs after ~5 opens; ADR-17). Fixtures are real: a throwaway `git init` repo under
