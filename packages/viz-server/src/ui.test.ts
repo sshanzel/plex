@@ -14,6 +14,14 @@ describe('renderAppHtml', () => {
     expect(html).toContain('9.9.9');
   });
 
+  it('ships the outcome/sentinel legibility encoding (border styles + panel summary + legend key)', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain('outcomeClass'); // outcome lifted onto element data + styled
+    expect(html).toContain("node[?sentinel]"); // the regression-sentinel ring style
+    expect(html).toContain('summaryFor'); // the detail-panel one-line story header
+    expect(html).toContain('prior fix (regression risk)'); // the legend key
+  });
+
   it('escapes the version so it cannot break out of the markup', () => {
     const html = renderAppHtml('</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain('<img src=x');
