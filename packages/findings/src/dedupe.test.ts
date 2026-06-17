@@ -3,7 +3,7 @@ import type { Finding, Severity, FindingSource } from '@plex/core';
 import { normalizeTitle, dedupeKey, dedupeFindings } from './dedupe';
 
 // Complements rank.test.ts (which covers the headline cross-source merge): this file pins
-// normalizeTitle/dedupeKey and the merge details — severity ranking incl. `awareness`,
+// normalizeTitle/dedupeKey and the merge details — severity ranking incl. `note`,
 // max-blast, evidence concat, pitfallId/prevalence carry, and same-source de-duplication.
 let n = 0;
 const mk = (over: Partial<Finding> & { severity?: Severity; source?: FindingSource } = {}): Finding => {
@@ -52,21 +52,21 @@ describe('dedupeKey', () => {
 describe('dedupeFindings merge', () => {
   const loc = { repo: 'r', file: 'x.ts', startLine: 1, endLine: 1 };
 
-  it('keeps the highest severity, with awareness ranked LOWEST (never wins over a real defect)', () => {
+  it('keeps the highest severity, with note ranked LOWEST (never wins over a real defect)', () => {
     const merged = dedupeFindings([
-      mk({ title: 'dup', severity: 'awareness', source: 'first-principles', location: loc }),
+      mk({ title: 'dup', severity: 'note', source: 'first-principles', location: loc }),
       mk({ title: 'dup', severity: 'bug', source: 'deterministic', location: loc }),
     ]);
     expect(merged).toHaveLength(1);
     expect(merged[0]!.severity).toBe('bug');
   });
 
-  it('awareness only survives when it is the only severity present', () => {
+  it('note only survives when it is the only severity present', () => {
     const merged = dedupeFindings([
-      mk({ title: 'dup', severity: 'awareness', source: 'first-principles', location: loc }),
-      mk({ title: 'dup', severity: 'awareness', source: 'knowledge', location: loc }),
+      mk({ title: 'dup', severity: 'note', source: 'first-principles', location: loc }),
+      mk({ title: 'dup', severity: 'note', source: 'knowledge', location: loc }),
     ]);
-    expect(merged[0]!.severity).toBe('awareness');
+    expect(merged[0]!.severity).toBe('note');
   });
 
   it('takes the MAX blast radius and concatenates evidence across sources', () => {

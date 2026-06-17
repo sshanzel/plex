@@ -41,7 +41,7 @@ branch's own ephemeral graph/brain is never touched by the worker.
 each job wrapped in try/catch (one failing never blocks the next), persists per-job cursors, releases
 the lock. Each job is best-effort and idempotent:
 
-1. **Reconcile (loop closure).** `brain.openTargets()` (open, non-`awareness` findings + a recorded
+1. **Reconcile (loop closure).** `brain.openTargets()` (open, non-`note` findings + a recorded
    round) → `diffSourceFromTarget(target, baseRef)` → if the current head advanced past the per-target
    cursor → `reconcileOutcomes` (auto-accept → `submitVerdict` → `learnIncident` → global KB). The
    reliable replacement for the pr-responder's `reconcile_outcomes`.

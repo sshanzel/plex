@@ -194,7 +194,7 @@ server.tool(
       z.object({
         title: z.string(),
         body: z.string().optional(),
-        severity: z.enum(['bug', 'improvement', 'nit', 'awareness']),
+        severity: z.enum(['bug', 'improvement', 'nit', 'note']),
         confidence: z.number(),
         source: z.enum(['first-principles', 'knowledge', 'deterministic']).optional(),
         file: z.string(),
@@ -226,7 +226,7 @@ server.tool(
 
 server.tool(
   'record_outcome',
-  'Record the user\'s verdict on a finding (accept | reject | waive | acknowledge). `acknowledge` is for an `awareness` flag confirmed intentional — it stops re-surfacing UNLESS the situation materially changes, without down-weighting the reviewer (use this, not reject, for "good catch, intentional"). For waive/acknowledge pass the finding identity (file/line/title/pattern/category). Pass the same diff source (source/pr/mode/baseRef) you reviewed so it lands on the right PR brain.',
+  'Record the user\'s verdict on a finding (accept | reject | waive | acknowledge). `acknowledge` is for a `note` finding confirmed intentional — it stops re-surfacing UNLESS the situation materially changes, without down-weighting the reviewer (use this, not reject, for "good catch, intentional"). For waive/acknowledge pass the finding identity (file/line/title/pattern/category). Pass the same diff source (source/pr/mode/baseRef) you reviewed so it lands on the right PR brain.',
   {
     repoPath: z.string().optional(),
     // .min(1): an empty findingId can't key a brain Finding — its outcome projection silently no-ops and

@@ -15,7 +15,7 @@ const onChangedLine = (ranges: LineRange[] | undefined, line: number): boolean =
   !!ranges && ranges.some((r) => r.start <= line && line <= r.end);
 
 export interface ReviewPayload {
-  /** Review summary body — overview + awareness + findings not anchorable inline. */
+  /** Review summary body — overview + notes + findings not anchorable inline. */
   body: string;
   /** Inline comments on changed lines. */
   comments: PrReviewComment[];
@@ -28,7 +28,7 @@ export interface ReviewPayload {
  * - Never posts `suppressed`/waived findings; skips `nit`s when `skipNits`.
  * - Dedups against prior rounds' findings (post only what's new) — no round-2 spam.
  * - Anchors a finding inline when its line is in the diff; everything else (coupled /
- *   blast-radius files, awareness flags) folds into the summary body.
+ *   blast-radius files, notes) folds into the summary body.
  */
 export function buildReviewPayload(
   ranked: RankedFinding[],
@@ -44,13 +44,13 @@ export function buildReviewPayload(
 
   const comments: PrReviewComment[] = [];
   const elsewhere: string[] = [];
-  const awareness: string[] = [];
+  const notes: string[] = [];
   for (const f of fresh) {
     const head = `**[${f.severity}]** ${f.title}`;
     const at = `\`${f.location.file}:${f.location.startLine}\``;
     const tail = f.body ? `\n${f.body}` : '';
-    if (f.severity === 'awareness') {
-      awareness.push(`- ${head} — ${at}${tail}`);
+    if (f.severity === 'note') {
+      notes.push(`- ${head} — ${at}${tail}`);
     } else if (onChangedLine(opts.changed.get(f.location.file), f.location.startLine)) {
       comments.push({ path: f.location.file, line: f.location.startLine, body: `${head}${tail}\n\n_— Plex (${f.source})_` });
     } else {
@@ -60,7 +60,7 @@ export function buildReviewPayload(
 
   const parts: string[] = [`### Plex review — round ${opts.round}`, `${fresh.length} new finding(s).`];
   if (elsewhere.length) parts.push('', '**Coupled / not on changed lines:**', ...elsewhere);
-  if (awareness.length) parts.push('', '**Worth confirming (awareness — intentional? say so):**', ...awareness);
+  if (notes.length) parts.push('', '**Notes — worth confirming (intentional? say so):**', ...notes);
   parts.push('', '_Posted by Plex. Triage with `/pr-master:respond`; it closes the learning loop._');
   return { body: parts.join('\n'), comments, count: fresh.length };
 }

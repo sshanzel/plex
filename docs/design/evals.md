@@ -68,7 +68,7 @@ non-deterministic, so it's a per-release ritual, not CI:
    `source: 'pr'`). Do not hint at the answer key.
 3. **Score**: recall = planted defects found / N (count a hit when file+root cause match);
    precision = findings that are real / total submitted; bait-resistance = bait items NOT
-   flagged as defects (an `awareness` flag on bait counts as resistant). Record the three
+   flagged as defects (a `note` on bait counts as resistant). Record the three
    numbers + date + model in the PR or a `docs/design/eval-runs.md` log so drift is visible
    release over release.
 4. **Dogfooding counts**: every Plex-on-Plex review of a real PR is an uncontrolled run of

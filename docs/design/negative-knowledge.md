@@ -91,7 +91,7 @@ Distinguish the verbs by evidence weight (don't collapse them):
 |---|---|---|
 | `waive` | "false positive — this is wrong" | **strong** negative |
 | `reject` | "dismissed / not now" | **weak** negative (C1's case) |
-| `acknowledge` | "intentional `awareness` flag" | not suppression-learning — the ADR-31 suppress-until-materially-changed path, unchanged |
+| `acknowledge` | "intentional `note`" | not suppression-learning — the ADR-31 suppress-until-materially-changed path, unchanged |
 
 A later **accept/fix** of the same key is **negative-of-negative** evidence — the suppression was
 wrong; it should rapidly lose confidence (a strong corrective, like `outcome-signals.md`'s

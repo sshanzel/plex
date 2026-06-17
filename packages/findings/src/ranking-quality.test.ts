@@ -37,7 +37,7 @@ const CORPUS: { finding: Finding; outcome: string }[] = [
   { outcome: 'accepted', finding: F({ id: 'loop', title: 'await inside the export loop serializes uploads', severity: 'improvement', confidence: 0.7, location: { repo: 'r', file: 'loop.ts', startLine: 5, endLine: 5 } }) },
   { outcome: 'accepted', finding: F({ id: 'loop-det', title: 'await inside the export loop serializes uploads', severity: 'improvement', confidence: 0.7, source: 'deterministic', location: { repo: 'r', file: 'loop.ts', startLine: 5, endLine: 5 } }) },
   // a flag worth confirming — acknowledged, partial credit
-  { outcome: 'acknowledged', finding: F({ id: 'aware', title: 'the same analytics event is emitted from two surfaces', severity: 'awareness', confidence: 0.7 }) },
+  { outcome: 'acknowledged', finding: F({ id: 'aware', title: 'the same analytics event is emitted from two surfaces', severity: 'note', confidence: 0.7 }) },
   { outcome: 'rejected', finding: F({ id: 'style', title: 'prefer const over let here', severity: 'nit', confidence: 0.9, prevalence: 0.8 }) },
   { outcome: 'rejected', finding: F({ id: 'console', title: 'leftover console.log', severity: 'nit', confidence: 0.6 }) },
   { outcome: 'rejected', finding: F({ id: 'hunch', title: 'this allocation might possibly leak in some path', severity: 'bug', confidence: 0.15 }) }, // unverified hunch

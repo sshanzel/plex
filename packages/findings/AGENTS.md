@@ -31,14 +31,14 @@ via `engine/src/reconcile.ts`. Decision log: [`docs/adr/README.md`](../../docs/a
 **Dedup (ADR-03, `dedupe.ts`).** Identity is `dedupeKey = file:startLine:normalizeTitle(title)`
 (`normalizeTitle`: lowercase, strip non-`[a-z0-9 ]`, collapse whitespace). On a key collision the
 merged finding takes the **highest severity** (`SEVERITY_RANK`: bug 3 > improvement 2 > nit 1 >
-awareness 0), **noisy-OR confidence** `1 − (1−a)(1−b)` (independent sources agreeing raise it),
+note 0), **noisy-OR confidence** `1 − (1−a)(1−b)` (independent sources agreeing raise it),
 **max blastRadius**, first prevalence/pitfallId, concatenated evidence, and records each
 `agreedSources` entry — corroboration feeds the ranking.
 
 **Signal (ADR-04/05, `signal.ts`).** `signal = base × blast × deviation × agreement`:
 
 - `base = severityWeight × clamp01(confidence)` — `defaultWeights` are bug **1**, improvement
-  **0.5**, nit **0.2**; `awareness` is hardcoded **0.3** (it ranks only within its own triage bucket).
+  **0.5**, nit **0.2**; `note` is hardcoded **0.3** (it ranks only within its own triage bucket).
 - `blast = 0.5 + 0.5·clamp01(blastRadius ?? 0)` — a no-blast finding is *dampened, not zeroed*.
 - `deviation = 1` for bugs, else `1 − 0.8·clamp01(prevalence)` — prevalence demotes
   style/nits/improvements, **never bugs** (a common bug is systemic; handled by triage, ADR-05).
@@ -56,9 +56,9 @@ continuously in `deviation` (non-bugs only) and discretely in triage at
 widespread real bugs.
 
 **Triage + ordering (`rank.ts`).** waived/acknowledged → `suppressed`; a **learned-suppression**
-`suppress` decision → `suppressed`; severity `awareness` → `awareness` (its own bucket — surfaced,
+`suppress` decision → `suppressed`; severity `note` → `note` (its own bucket — surfaced,
 never a nit, ADR-31); prevalent → as above; a learned `demote` → `demoted`; else `surface`. Sort by
-`TRIAGE_PRIORITY` (surface 0, systemic-migration 1, awareness 2, convention 3, demoted 4,
+`TRIAGE_PRIORITY` (surface 0, systemic-migration 1, note 2, convention 3, demoted 4,
 suppressed 5), then signal descending. The `suppressions?: Map<tag, 'suppress'|'demote'>` option
 carries LEARNED dismissal decisions (computed upstream by `@plex/knowledge` `suppressionTier`, passed
 as a plain decision so this package stays dep-light — `learnedSuppression` picks the strongest across
@@ -97,7 +97,7 @@ surfaced as reconcile's `acceptedFindings` / the review context's `inferredAccep
 Without embeddings the vectors are empty → semantic never fires → **locality still reconciles**
 (ADR-36: a standalone install closes the accept-loop on re-review). The human-readable `reason`
 ("accepted M of N…", "no prior round recorded…") lives on the engine's `ReconcileResult`
-(`engine/src/reconcile.ts`), which also skips `awareness` findings — never auto-accepted (ADR-31).
+(`engine/src/reconcile.ts`), which also skips `note` findings — never auto-accepted (ADR-31).
 `classifyChanges` (default cosine threshold **0.55**) tags inter-round regions `feedback-driven`
 vs `unexplained` — embedding-based, not line-proximity (ADR-13).
 

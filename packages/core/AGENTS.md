@@ -8,7 +8,7 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
 
 - `src/types.ts` — domain types: `NormalizedDiff`/`DiffFile`/`DiffHunk` (ADR-14), graph
   nodes/edges with mandatory `provenance` + `weight` (ADR-06), `Finding`/`RankedFinding`
-  (severity and confidence are **separate axes**, ADR-04; `awareness` is its own intent, ADR-31),
+  (severity and confidence are **separate axes**, ADR-04; `note` is its own intent, ADR-31),
   `Verdict`/`Waiver` (ADR-10/27), `Pitfall`/`Incident` (ADR-08), brain primitives
   (`ReviewRound`, `PrComment`, `AttributedChange`).
 - `src/config.ts` — `ReviewerConfig` + `defaultConfig` + `resolveConfig(overrides)` (deep-merges

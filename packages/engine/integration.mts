@@ -601,7 +601,7 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
         { id: 'agent:0', title: 'alpha beta gamma', body: '', severity: 'bug', confidence: 0.6, source: 'first-principles', location: { repo: 'r', file: 'src/a.ts', startLine: 1, endLine: 1 }, signal: 0.4, agreedSources: ['first-principles'], triage: 'surface' },
         // An AWARENESS flag on the SAME lines whose text also matches the change — must NOT be
         // auto-accepted (ADR-31): only an explicit acknowledge resolves it.
-        { id: 'agent:1', title: 'alpha beta gamma awareness', body: '', severity: 'awareness', confidence: 0.5, source: 'first-principles', location: { repo: 'r', file: 'src/a.ts', startLine: 1, endLine: 1 }, signal: 0.3, agreedSources: ['first-principles'], triage: 'awareness' },
+        { id: 'agent:1', title: 'alpha beta gamma note', body: '', severity: 'note', confidence: 0.5, source: 'first-principles', location: { repo: 'r', file: 'src/a.ts', startLine: 1, endLine: 1 }, signal: 0.3, agreedSources: ['first-principles'], triage: 'note' },
       ]);
 
       // Push a fix whose tokens match the finding (fake embedder is bag-of-tokens).
@@ -611,7 +611,7 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
       const sha2 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
 
       const state = await brain.loadRoundState(target);
-      assert.equal(state.priorFindings.length, 2, 'two open findings before the fix (one bug, one awareness)');
+      assert.equal(state.priorFindings.length, 2, 'two open findings before the fix (one bug, one note)');
       const changed = await getChangedFileTexts(repo, sha1, sha2);
       const embedder = createEmbeddingProvider(config.embedding)!;
       const regionTexts = changed.map((c) => c.text);
@@ -621,11 +621,11 @@ test('reconcile', 'engine: a pushed fix auto-accepts the addressed finding (ADR-
       const findingEmb = state.priorFindings.map((_, i) => vecs[regionTexts.length + i]!);
 
       const accepted = await recordFixAccepts(repo, config, target, brain, state.priorFindings, findingEmb, regionEmb, changed);
-      assert.equal(accepted.length, 1, `only the bug is auto-accepted; the awareness flag is skipped (got ${accepted.length})`);
+      assert.equal(accepted.length, 1, `only the bug is auto-accepted; the note finding is skipped (got ${accepted.length})`);
       assert.ok(accepted[0]!.matchedBy === 'semantic' || accepted[0]!.matchedBy === 'locality', 'the accept names which signal matched');
       const remaining = (await brain.loadRoundState(target)).priorFindings;
-      assert.equal(remaining.length, 1, 'the awareness flag stays open for an explicit acknowledge');
-      assert.equal(remaining[0]!.severity, 'awareness', 'and it is the awareness one that remains');
+      assert.equal(remaining.length, 1, 'the note finding stays open for an explicit acknowledge');
+      assert.equal(remaining[0]!.severity, 'note', 'and it is the note one that remains');
     } finally {
       await brain.close();
     }

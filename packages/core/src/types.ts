@@ -117,12 +117,14 @@ export interface ReviewNeighborhood {
 // ---------------------------------------------------------------------------
 
 /**
- * `bug`/`improvement`/`nit` are the "fix this" axis (ordered by how bad). `awareness` is
+ * `bug`/`improvement`/`nit` are the "fix this" axis (ordered by how bad). `note` is
  * a different intent (ADR-31): "noticed, worth confirming" — surfacing it IS the value
  * even when nothing needs changing (e.g. two emit sites for the same event). It is never
- * a nit and is surfaced in its own bucket, not buried in the defect ranking.
+ * a nit and is surfaced in its own bucket, not buried in the defect ranking. (It was
+ * named `awareness` through M12; renamed to `note` — the displayed label — since "awareness"
+ * was vague and read like a severity rung. Severity and confidence stay separate axes, ADR-04.)
  */
-export type Severity = 'bug' | 'improvement' | 'nit' | 'awareness';
+export type Severity = 'bug' | 'improvement' | 'nit' | 'note';
 export type FindingSource = 'first-principles' | 'knowledge' | 'deterministic';
 
 export interface Finding {
@@ -153,8 +155,8 @@ export interface RankedFinding extends Finding {
   signal: number;
   /** Sources that independently agreed on this finding (cross-source confidence boost). */
   agreedSources: FindingSource[];
-  /** How it should surface. `awareness` = a flag worth confirming (ADR-31), its own bucket. */
-  triage: 'surface' | 'systemic-migration' | 'convention' | 'awareness' | 'demoted' | 'suppressed';
+  /** How it should surface. `note` = a point worth confirming (ADR-31), its own bucket. */
+  triage: 'surface' | 'systemic-migration' | 'convention' | 'note' | 'demoted' | 'suppressed';
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +164,9 @@ export interface RankedFinding extends Finding {
 // ---------------------------------------------------------------------------
 
 /**
- * `accept`/`reject`/`waive` are the defect verdicts. `acknowledge` (ADR-31) confirms an
- * `awareness` flag was a *good* catch but intentional this time: it suppresses the same
- * flag going forward (like a semantic waiver) WITHOUT down-weighting the knowledge that
+ * `accept`/`reject`/`waive` are the defect verdicts. `acknowledge` (ADR-31) confirms a
+ * `note` was a *good* catch but intentional this time: it suppresses the same
+ * note going forward (like a semantic waiver) WITHOUT down-weighting the knowledge that
  * raised it — so a *materially changed* instance (e.g. a 3rd site) re-surfaces.
  */
 export type VerdictKind = 'accept' | 'reject' | 'waive' | 'acknowledge';
