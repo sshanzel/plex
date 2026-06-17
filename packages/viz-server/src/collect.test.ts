@@ -24,7 +24,7 @@ describe('collectKnowledge', () => {
     expect(p.note).toMatch(/no learned pitfalls/i);
   });
 
-  it('builds Pitfall→Incident provenance edges and types negatives as Suppression', async () => {
+  it('nests incidents inside their pitfall (compound parent) and types negatives as Suppression', async () => {
     const store = new KnowledgeStore(dir);
     await store.addIncident(incident({ id: 'i1', file: 'a.ts', outcome: 'fixed' }));
     await store.addIncident(incident({ id: 'i2', file: 'b.ts' }));
@@ -33,13 +33,31 @@ describe('collectKnowledge', () => {
 
     const payload = await collectKnowledge(dir);
     expect(payload.counts).toEqual({ Pitfall: 1, Suppression: 1, Incident: 2 });
-    // two provenance edges from p1 to its incidents
-    const fromP1 = payload.edges.filter((e) => e.source === 'pf:p1');
-    expect(fromP1.map((e) => e.target).sort()).toEqual(['inc:i1', 'inc:i2']);
-    expect(fromP1.every((e) => e.label === 'from')).toBe(true);
+    // Clustering (ADR-45): each cited incident nests inside its pitfall via `parent` — containment
+    // replaces the `from` edge, so the same-container provenance is the box, not a crossing edge.
+    const i1 = payload.nodes.find((n) => n.id === 'inc:i1')!;
+    const i2 = payload.nodes.find((n) => n.id === 'inc:i2')!;
+    expect(i1.parent).toBe('pf:p1');
+    expect(i2.parent).toBe('pf:p1');
+    expect(payload.edges.filter((e) => e.source === 'pf:p1')).toEqual([]); // no redundant `from` edges
     const suppression = payload.nodes.find((n) => n.id === 'pf:p2')!;
     expect(suppression.type).toBe('Suppression');
     expect(suppression.props.polarity).toBe('negative');
+  });
+
+  it('keeps a cross-cluster `from` edge when an incident is cited by a SECOND pitfall', async () => {
+    const store = new KnowledgeStore(dir);
+    await store.addIncident(incident({ id: 'shared', file: 'a.ts' }));
+    await store.addPitfall(pitfall({ id: 'p1', incidentIds: ['shared'] }));
+    await store.addPitfall(pitfall({ id: 'p2', title: 'second', incidentIds: ['shared'] }));
+
+    const payload = await collectKnowledge(dir);
+    const shared = payload.nodes.find((n) => n.id === 'inc:shared')!;
+    expect(shared.parent).toBe('pf:p1'); // first citer is the container
+    // the second pitfall keeps a visible cross-cluster provenance edge (one Cytoscape parent only)
+    expect(payload.edges).toContainEqual(
+      expect.objectContaining({ source: 'pf:p2', target: 'inc:shared', label: 'from' }),
+    );
   });
 
   it('never leaks the embedding vector into node props', async () => {

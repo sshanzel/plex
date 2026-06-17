@@ -110,8 +110,18 @@ const CLIENT_JS = String.raw`
       { selector:'node', style:{ 'label':'data(label)','font-size':8,'color':'#e6e8ee','text-wrap':'ellipsis','text-max-width':110,
         'background-color':function(n){ return TYPE_COLORS[n.data('type')] || '#adb5bd'; },
         'text-valign':'bottom','text-margin-y':3,'width':18,'height':18 } },
+      // Compound container (a Pitfall/Suppression holding its Incidents, knowledge graph): a labelled
+      // tinted box in the lesson's type colour, label pinned top — turns the two-row hairball into
+      // "N lessons, each with its history". Children keep their own colour + outcome/sentinel borders.
+      { selector:':parent', style:{ 'shape':'round-rectangle','background-opacity':0.10,
+        'border-width':1.5,'border-opacity':0.55,'border-color':function(n){ return TYPE_COLORS[n.data('type')] || '#adb5bd'; },
+        'padding':14,'text-valign':'top','text-margin-y':-3,'font-size':9,'text-max-width':180 } },
       { selector:'node[type="Target"]', style:{ 'shape':'round-rectangle','width':34,'height':22,'font-size':10 } },
       { selector:'node[type="File"]', style:{ 'width':'mapData(symbols,0,40,14,40)','height':'mapData(symbols,0,40,14,40)' } },
+      // Incident dots are "history" inside a lesson box — their file-path labels collide when packed,
+      // and the box title + outcome ring already carry the meaning; show the label on hover/select only.
+      { selector:'node[type="Incident"]', style:{ 'text-opacity':0 } },
+      { selector:'node[type="Incident"]:selected', style:{ 'text-opacity':1 } },
       // Outcome encoding: a finding/incident that was acted on (resolved) vs dismissed — read at a glance.
       { selector:'node[outcomeClass="resolved"]', style:{ 'border-width':3,'border-color':'#69db7c' } },
       { selector:'node[outcomeClass="dismissed"]', style:{ 'border-width':2,'border-color':'#ff6b6b','opacity':0.7 } },
@@ -133,6 +143,7 @@ const CLIENT_JS = String.raw`
   }
   function layoutFor(graph) {
     if (graph === 'code') return { name:'cose', animate:false, nodeRepulsion:6000, idealEdgeLength:70, padding:30 };
+    // Knowledge is handled by knowledgeGrid (deterministic compound grid) via runLayout, not here.
     return { name:'breadthfirst', directed:true, padding:30, spacingFactor:1.1 };
   }
 
@@ -227,16 +238,43 @@ const CLIENT_JS = String.raw`
     var p = n.props || {};
     var oc = p.outcome ? (RESOLVED[p.outcome] ? 'resolved' : (p.outcome === 'rejected' ? 'dismissed' : '')) : '';
     var sentinel = oc === 'resolved' && !!p.symbol;
-    return { data:{ id:n.id, label:(sentinel ? '⚠ ' : '') + n.label, type:n.type, props:p, symbols:p.symbols||0,
-      outcome:p.outcome||'', outcomeClass:oc, sentinel:sentinel, severity:p.severity||'' } };
+    var d = { id:n.id, label:(sentinel ? '⚠ ' : '') + n.label, type:n.type, props:p, symbols:p.symbols||0,
+      outcome:p.outcome||'', outcomeClass:oc, sentinel:sentinel, severity:p.severity||'' };
+    if (n.parent) d.parent = n.parent; // Cytoscape compound nesting (knowledge: incident inside its pitfall)
+    return { data:d };
   }
   function edgeEl(e) { return { data:{ id:e.id, source:e.source, target:e.target, label:e.label, inferred:!!e.inferred, graph:e.graph||'' } }; }
   function toElements(data) { return data.nodes.map(nodeEl).concat(data.edges.map(edgeEl)); }
 
+  // Knowledge clusters are mostly edge-less compound boxes (a Pitfall/Suppression + its Incidents),
+  // which force layouts (cose) jam into an overlapping band. Place each lesson-box in a deterministic
+  // grid and pack its incidents in a mini-grid inside — a clean "N lessons, each with its history"
+  // wall, no extra layout dependency. Compound parents auto-bound their children (no position set).
+  function knowledgeGrid(cy) {
+    var cells = [];
+    cy.nodes().forEach(function (n) {
+      if (n.isParent()) cells.push(n.children());                       // a lesson box + its incidents
+      else if (n.parent().length === 0) cells.push(cy.collection(n));   // a childless pitfall / orphan incident
+    });
+    var cols = Math.max(1, Math.ceil(Math.sqrt(cells.length)));
+    var CELL_W = 360, CELL_H = 250, GAP = 34, pos = {};
+    cells.forEach(function (kids, idx) {
+      var cx = (idx % cols) * CELL_W, cy0 = Math.floor(idx / cols) * CELL_H;
+      var kc = Math.max(1, Math.ceil(Math.sqrt(kids.length)));
+      kids.forEach(function (k, j) { pos[k.id()] = { x: cx + (j % kc) * GAP, y: cy0 + Math.floor(j / kc) * GAP }; });
+    });
+    return { name:'preset', positions: pos, fit:true, padding:40, animate:false };
+  }
+  function runLayout() {
+    if (!state.cy) return;
+    state.cy.layout(state.graph === 'knowledge' ? knowledgeGrid(state.cy) : layoutFor(state.graph)).run();
+  }
+
   function draw(data) {
     state.raw = data;
     if (state.cy) { state.cy.destroy(); state.cy = null; }
-    state.cy = cytoscape({ container:$('cy'), elements:toElements(data), style:styleFor(), layout:layoutFor(state.graph), wheelSensitivity:0.2 });
+    state.cy = cytoscape({ container:$('cy'), elements:toElements(data), style:styleFor(), layout:{ name:'preset' }, wheelSensitivity:0.2 });
+    runLayout();
     state.cy.on('tap', 'node', function (evt) { showDetail(evt.target); });
     state.cy.on('dbltap', 'node[type="File"]', function (evt) { expandFile(evt.target); });
     renderLegend(data.counts || {});
@@ -326,7 +364,7 @@ const CLIENT_JS = String.raw`
     });
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.addEventListener('click', function () { setGraph(b.dataset.graph); }); });
     $('search').addEventListener('input', function (e) { doSearch(e.target.value); });
-    $('relayout').addEventListener('click', function () { if (state.cy) state.cy.layout(layoutFor(state.graph)).run(); });
+    $('relayout').addEventListener('click', runLayout);
   }
   init();
 })();

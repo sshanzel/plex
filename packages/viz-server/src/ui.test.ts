@@ -28,6 +28,14 @@ describe('renderAppHtml', () => {
     expect(html).toContain('prior fix (regression risk)'); // the legend key
   });
 
+  it('clusters the knowledge graph — compound parent style + a deterministic box grid (ADR-45)', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain("selector:':parent'"); // pitfall/suppression renders as a container box
+    expect(html).toContain('function knowledgeGrid'); // lesson-boxes laid in a deterministic grid
+    expect(html).toContain('isParent()'); // a box = a parent (pitfall) + its nested incidents
+    expect(html).toContain('d.parent = n.parent'); // incident nested via Cytoscape compound parent
+  });
+
   it('escapes the version so it cannot break out of the markup', () => {
     const html = renderAppHtml('</script><img src=x onerror=alert(1)>');
     expect(html).not.toContain('<img src=x');
