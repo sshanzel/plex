@@ -73,7 +73,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
     if (p === '/api/expand') {
       const node = url.searchParams.get('node') ?? '';
       // Only File nodes expand (their symbols + neighbors). `node` is prefixed `f:<fileId>`.
-      if (node.startsWith('f:')) return json(res, 200, await expandCodeFile(repo, node.slice(2)));
+      if (node.startsWith('f:')) return json(res, 200, await expandCodeFile(repo, node.slice(2), config.knowledgeDir));
       return json(res, 200, { nodes: [], edges: [] });
     }
   }

@@ -9,6 +9,7 @@ import {
   type LineageView,
   foldLineage,
   parseLineageEvents,
+  symbolKey,
 } from '@plex/core';
 import { mkdirSync, appendFileSync, readFileSync, readdirSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -65,6 +66,8 @@ export interface BrainFinding {
   severity?: string;
   /** Deterministic rule tag — lets an inferred accept refute a learned suppression (ADR-39). */
   rule?: string;
+  /** Stable `file#name` symbol key (code-path memory) — carried so an accept anchors its incident. */
+  symbol?: string;
 }
 
 /** One finding's ranking `signal` + features + resolved outcome — the offline ranking-eval row. */
@@ -197,7 +200,7 @@ export class Brain {
     ];
     const priorFindings: BrainFinding[] = v.findings
       .filter((f) => !v.outcomeOf(f.id)) // un-outcomed
-      .map((f) => ({ id: f.id, file: f.file || undefined, line: f.line < 0 ? undefined : f.line, title: f.title, severity: f.severity || undefined, rule: f.rule || undefined }))
+      .map((f) => ({ id: f.id, file: f.file || undefined, line: f.line < 0 ? undefined : f.line, title: f.title, severity: f.severity || undefined, rule: f.rule || undefined, symbol: f.symbol || undefined }))
       .filter((f) => f.id && f.title);
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
   }
@@ -278,6 +281,9 @@ export class Brain {
         prevalence: f.prevalence ?? 0,
         agreement: f.agreedSources?.length ?? 1,
         rule: f.tags?.[0] ?? '', // the deterministic rule tag — lets an inferred accept refute a suppression (ADR-39)
+        // Anchor the finding to its symbol (code-path memory) — an accept later inherits this so the
+        // incident knows WHICH symbol the concern was about. '' when the diff hit no named symbol.
+        symbol: f.location.symbol ? symbolKey(f.location.file, f.location.symbol) : '',
       })),
     );
   }

@@ -52,6 +52,12 @@ describe('Brain (durable JSONL lineage)', () => {
     expect(st.priorFindings).toHaveLength(0);
   });
 
+  it('carries the symbol key through writeFindings → loadRoundState (code-path memory, ADR-47)', async () => {
+    await brain.writeFindings(target, 1, [finding({ location: { repo: 'r', file: 'a.ts', startLine: 5, endLine: 9, symbol: 'leakyFn' } })]);
+    const st = await brain.loadRoundState(target);
+    expect(st.priorFindings[0]!.symbol).toBe('a.ts#leakyFn'); // the accept path reads this to anchor its incident
+  });
+
   it('#1: a genuine read fault surfaces — it does NOT masquerade as empty history', async () => {
     // Put a DIRECTORY where the target's .jsonl file should be → readFileSync throws EISDIR.
     const file = lineagePaths(dir, config.dataDir).fileFor(target);

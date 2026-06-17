@@ -42,7 +42,8 @@ import { recordableHeadSha, priorRoundHeadSha } from './guards';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
-import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady } from './knowledge';
+import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady, knowledgeStore } from './knowledge';
+import { matchCodePath, applyCodePathBoost, type CodePathAlert } from './code-path';
 import { loadWaivers } from './verdicts';
 import { cachedEmbed } from './embed-cache';
 import { recordFixAccepts, type AcceptedFix } from './reconcile';
@@ -360,8 +361,14 @@ export interface ReviewContext {
   blastRadius: NeighborEntry[];
   /** Codified (deterministic) findings on the changed lines — the agent should not re-derive these. */
   deterministic: Finding[];
-  /** Relevant pitfalls retrieved from the knowledge base (ADR-01). */
+  /** Relevant pitfalls retrieved from the knowledge base (ADR-01), boosted by code-path matches. */
   knowledge: RetrievedPitfall[];
+  /**
+   * Code-path memory (ADR — location-aware): pitfalls whose recorded history is at the symbols this
+   * diff touches (or their co-change neighbours). `regressionSentinel` flags a prior fix/accept at a
+   * symbol being changed again — the high-priority "don't regress this" signal. Ordered sentinels-first.
+   */
+  codePathAlerts?: CodePathAlert[];
   /** Stated motivation (PR title/body or commit subjects) — check the code against its claims. */
   changeContext?: ChangeContext;
   /** Set when the code graph is behind HEAD — the blast radius may be incomplete (ADR-25). */
@@ -765,7 +772,14 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const deterministic = detWaivers.length ? detRaw.filter((f) => !isWaived(f, detWaivers)) : detRaw;
 
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
-  const knowledge = await getRelevantKnowledge(opts.config, query, 5, repo);
+  const retrieved = await getRelevantKnowledge(opts.config, query, 5, repo);
+  // Code-path memory (ADR — location-aware retrieval): match the retrieved pitfalls' incident history
+  // against the symbols this diff actually touches (+ their co-change neighbours). A direct hit at a
+  // symbol with a prior `fixed`/accepted outcome is a REGRESSION SENTINEL. Pure JS over the JSON store
+  // + the already-computed neighbourhood — no extra Kùzu open (ADR-17), works without embeddings.
+  const cp = matchCodePath(retrieved, await knowledgeStore(opts.config).incidents(), nb.changed, nb.neighbors);
+  const knowledge = applyCodePathBoost(retrieved, cp.boostByPitfall);
+  const sentinelCount = cp.alerts.filter((a) => a.regressionSentinel).length;
 
   // PR brain (ADR-22/23/30): embedded Kùzu, always on — rounds, comments, findings, and the
   // semantic "changed-without-feedback" + fix-inference signals (the latter when embeddings
@@ -812,6 +826,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     blastRadius: nb.neighbors,
     deterministic,
     knowledge,
+    codePathAlerts: cp.alerts.length ? cp.alerts : undefined,
     changeContext,
     graphStale,
     target,
@@ -829,6 +844,15 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
         : [
             'Embeddings are OFF (no provider configured): lessons from review history were retrieved by keyword match only (weaker than semantic retrieval), and the semantic signals (change attribution, semantic waiver matching) were skipped. In your closing "what Plex brought" line you may note this and point them to `npx @sshanzel/plex init` (one short clause; never ask for the key in chat).',
           ]),
+      ...(cp.alerts.length
+        ? [
+            `Code-path memory: ${cp.alerts.length} retrieved lesson(s) have prior recorded history at code paths this diff touches` +
+              (sentinelCount
+                ? `, including ${sentinelCount} REGRESSION SENTINEL(s) — a concern previously fixed/accepted at a symbol you're changing AGAIN. Treat sentinels as high-priority "verify you are not regressing this"; cite the prior history. See codePathAlerts.`
+                : '. See codePathAlerts.') +
+              ` These are grounded in THIS repo's recorded review history at these exact symbols — not generic lints.`,
+          ]
+        : []),
       plan.strategy === 'parallel'
         ? `reviewPlan: PARALLEL — ${plan.reason}. Fan out one reviewer per unit (orchestrate with the plex-parallel-review skill); collect their findings into ONE submit_findings, then cross-check across units.`
         : `reviewPlan: single — ${plan.reason}. Review in one pass.`,

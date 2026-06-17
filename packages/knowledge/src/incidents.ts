@@ -7,7 +7,7 @@ import type { KnowledgeStore } from './store';
  */
 export async function recordIncident(
   store: KnowledgeStore,
-  input: { source?: IncidentSource; repo?: string; file?: string; snippet?: string; outcome?: Incident['outcome']; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string; ts: string },
+  input: { source?: IncidentSource; repo?: string; file?: string; line?: number; symbol?: string; snippet?: string; outcome?: Incident['outcome']; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string; ts: string },
 ): Promise<string> {
   // file (readable) + a content hash of the snippet (so distinct snippets never collide,
   // and a non-ASCII/empty snippet doesn't degrade to an empty, colliding segment).
@@ -18,6 +18,9 @@ export async function recordIncident(
     source: input.source ?? 'review',
     repo: input.repo,
     file: input.file,
+    // Code-path anchor (best-effort) — only when present, to keep older incidents byte-identical.
+    ...(input.line != null ? { line: input.line } : {}),
+    ...(input.symbol ? { symbol: input.symbol } : {}),
     snippet: input.snippet,
     outcome: input.outcome,
     ...(input.note ? { note: input.note } : {}),

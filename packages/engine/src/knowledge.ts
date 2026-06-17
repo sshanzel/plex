@@ -140,7 +140,7 @@ export async function inferPitfallId(
 /** Record a confirmed finding as an incident (feedback loop — ADR-10). */
 export async function learnIncident(
   config: ReviewerConfig,
-  input: { repo?: string; file?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string },
+  input: { repo?: string; file?: string; line?: number; symbol?: string; snippet?: string; outcome?: IncidentOutcome; pitfallId?: string; note?: string; verb?: 'reject' | 'waive'; findingId?: string; target?: string },
 ): Promise<string> {
   return recordIncident(knowledgeStore(config), {
     ...input,
@@ -470,6 +470,29 @@ export async function submitVerdict(
   // Negative-knowledge producer: a reject/waive confirms a repo-scoped suppression, an accept refutes
   // it — the same incident→consolidate loop as positives (docs/design/negative-knowledge.md, C1).
   await learnSuppression(config, repoName, input, firstOfKind);
+  // Resolve the code-path anchor (line + `file#name` symbol key) for an accept incident from the brain
+  // finding — the finding carried them when written (code-path memory); an accept inherits them so the
+  // incident knows WHICH symbol the concern was at, for the next review's location match. Open the
+  // brain once here (best-effort) and reuse it for the verdict projection below. No target (a CLI
+  // verdict) → file+line only.
+  const brain = target ? (sharedBrain ?? (await Brain.open(repoPath, config))) : undefined;
+  let lastN = 0;
+  let acceptLine = input.line;
+  let acceptSymbol: string | undefined;
+  if (brain && target) {
+    try {
+      const st = await brain.loadRoundState(target);
+      lastN = st.lastN;
+      const bf = input.findingId ? st.priorFindings.find((f) => f.id === input.findingId) : undefined;
+      if (bf) {
+        acceptLine = input.line ?? bf.line;
+        acceptSymbol = bf.symbol;
+      }
+    } catch {
+      /* best-effort: a brain read fault degrades the accept incident to file+line, round to 1 */
+    }
+  }
+
   if (input.kind === 'accept' && !alreadyAccepted) {
     // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by
     // similarity — so first-principles accepts (the common case) reinforce knowledge too.
@@ -485,6 +508,10 @@ export async function submitVerdict(
     await learnIncident(config, {
       repo: repoName,
       file: input.file,
+      // Code-path anchor (code-path memory): the `file#name` symbol key + line this concern lives at,
+      // inherited from the brain finding so a later review can match it to the symbols a diff touches.
+      line: acceptLine,
+      symbol: acceptSymbol,
       snippet: input.title,
       pitfallId,
       outcome: 'accepted',
@@ -496,11 +523,9 @@ export async function submitVerdict(
     });
   }
 
-  if (target) {
-    const brain = sharedBrain ?? (await Brain.open(repoPath, config));
-    let round = 1;
+  if (target && brain) {
+    const round = lastN || 1;
     try {
-      round = (await brain.loadRoundState(target)).lastN || 1;
       await brain.writeVerdict(target, {
         findingId: input.findingId, kind: input.kind, scope: input.scope,
         title: input.title, file: input.file, line: input.line, ts: stored.ts,

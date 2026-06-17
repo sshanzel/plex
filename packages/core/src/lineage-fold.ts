@@ -30,6 +30,8 @@ export type LineageEvent =
       prevalence: number;
       agreement: number;
       rule: string;
+      /** Stable `file#name` symbol key the finding sits in (ADR — code-path memory); '' when unknown. */
+      symbol: string;
     }
   | { k: 'comment'; target: string; id: string; body: string; author: string; file: string; line: number }
   | { k: 'verdict'; target: string; findingId: string; kind: string; scope: string; ts: string; title: string; file: string; line: number }
@@ -56,6 +58,8 @@ export interface FoldedFinding {
   prevalence: number;
   agreement: number;
   rule: string;
+  /** Stable `file#name` symbol key (ADR — code-path memory); '' when unknown (older records). */
+  symbol: string;
 }
 export interface FoldedComment {
   id: string;
@@ -102,6 +106,7 @@ export function foldLineage(events: LineageEvent[]): LineageView {
           id: e.id, title: e.title, severity: e.severity, confidence: e.confidence, signal: e.signal,
           source: e.source, file: e.file, line: e.line, triage: e.triage, round: e.round,
           blast: e.blast, prevalence: e.prevalence, agreement: e.agreement, rule: e.rule,
+          symbol: e.symbol ?? '', // tolerate pre-code-path records that lack the field
         });
         break;
       case 'comment':

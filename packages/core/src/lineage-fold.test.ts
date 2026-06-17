@@ -3,7 +3,7 @@ import { foldLineage, parseLineageEvents, type LineageEvent } from './lineage-fo
 
 const finding = (id: string, over: Partial<Extract<LineageEvent, { k: 'finding' }>> = {}): LineageEvent => ({
   k: 'finding', target: 't', id, title: 'bug', severity: 'bug', confidence: 0.5, signal: 1, source: 'first-principles',
-  file: 'a.ts', line: 10, triage: 'show', round: 1, blast: 0, prevalence: 0, agreement: 1, rule: '', ...over,
+  file: 'a.ts', line: 10, triage: 'show', round: 1, blast: 0, prevalence: 0, agreement: 1, rule: '', symbol: '', ...over,
 });
 
 describe('foldLineage', () => {
