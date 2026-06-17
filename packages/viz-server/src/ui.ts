@@ -40,6 +40,10 @@ export function renderAppHtml(version: string): string {
   #panel { border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:14px; font-size:13px; }
   #panel h3 { margin:0 0 4px; font-size:15px; word-break:break-word; }
   #panel .type { display:inline-block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; }
+  #panel .summary { margin:0 0 10px; font-size:13px; color:var(--fg); }
+  #panel .sentinel { margin:0 0 10px; padding:6px 8px; font-size:12px; color:#ffd8a8; background:rgba(255,146,43,.12); border:1px solid #ff922b; border-radius:6px; }
+  #legend .sep { width:1px; align-self:stretch; background:var(--line); margin:0 2px; }
+  #legend .ring { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; background:transparent; border:2px solid #ff922b; }
   #panel dl { margin:0; display:grid; grid-template-columns:auto 1fr; gap:4px 10px; }
   #panel dt { color:var(--muted); white-space:nowrap; }
   #panel dd { margin:0; word-break:break-word; }
@@ -58,9 +62,8 @@ export function renderAppHtml(version: string): string {
     <select id="repo" title="Indexed repository"></select>
     <div class="tabs" id="tabs">
       <button class="tab active" data-graph="code">Code graph</button>
-      <button class="tab" data-graph="brain">PR brain</button>
       <button class="tab" data-graph="knowledge">Knowledge</button>
-      <button class="tab" data-graph="lineage">Lineage</button>
+      <button class="tab" data-graph="lineage">Review history</button>
     </div>
     <input type="search" id="search" placeholder="Search nodes…" />
     <div class="filters" id="filters"></div>
@@ -109,12 +112,21 @@ const CLIENT_JS = String.raw`
         'text-valign':'bottom','text-margin-y':3,'width':18,'height':18 } },
       { selector:'node[type="Target"]', style:{ 'shape':'round-rectangle','width':34,'height':22,'font-size':10 } },
       { selector:'node[type="File"]', style:{ 'width':'mapData(symbols,0,40,14,40)','height':'mapData(symbols,0,40,14,40)' } },
+      // Outcome encoding: a finding/incident that was acted on (resolved) vs dismissed — read at a glance.
+      { selector:'node[outcomeClass="resolved"]', style:{ 'border-width':3,'border-color':'#69db7c' } },
+      { selector:'node[outcomeClass="dismissed"]', style:{ 'border-width':2,'border-color':'#ff6b6b','opacity':0.7 } },
+      // Regression sentinel: a prior fix anchored to a code path — the "don't re-break this" money-shot.
+      { selector:'node[?sentinel]', style:{ 'border-width':5,'border-color':'#ff922b' } },
       { selector:'node:selected', style:{ 'border-width':3,'border-color':'#fff' } },
       { selector:'.faded', style:{ 'opacity':0.12 } },
       { selector:'.match', style:{ 'border-width':3,'border-color':'#ffd43b' } },
       { selector:'edge', style:{ 'label':'data(label)','font-size':6,'color':'#6b7280','curve-style':'bezier',
         'width':1,'line-color':'#3a4150','target-arrow-color':'#3a4150','target-arrow-shape':'triangle','arrow-scale':0.7,
         'text-rotation':'autorotate','text-opacity':0 } },
+      // The relationship graphs (brain/knowledge/lineage) are small — show their edge labels so the
+      // story reads (became / from / raised in / verdict on); the dense code graph keeps them on hover.
+      { selector:'edge[graph != "code"]', style:{ 'text-opacity':0.85 } },
+      { selector:'edge[label="concerns"]', style:{ 'text-opacity':0.85 } },
       { selector:'edge[?inferred]', style:{ 'line-style':'dashed','line-color':'#f783ac','target-arrow-color':'#f783ac','text-opacity':1,'color':'#f783ac' } },
       { selector:'edge:selected', style:{ 'line-color':'#fff','target-arrow-color':'#fff','text-opacity':1 } }
     ];
@@ -132,6 +144,20 @@ const CLIENT_JS = String.raw`
       span.appendChild(dot); span.appendChild(document.createTextNode(t + ' (' + counts[t] + ')'));
       el.appendChild(span);
     });
+    // Outcome / sentinel key — explains the node border encoding (only where outcomes appear).
+    if (state.graph !== 'code') {
+      el.appendChild(Object.assign(document.createElement('span'), { className: 'sep' }));
+      [['#69db7c', 'resolved'], ['#ff6b6b', 'dismissed']].forEach(function (o) {
+        var span = document.createElement('span');
+        var ring = document.createElement('span'); ring.className = 'dot'; ring.style.cssText = 'background:transparent;border:2px solid ' + o[0];
+        span.appendChild(ring); span.appendChild(document.createTextNode(o[1]));
+        el.appendChild(span);
+      });
+      var sent = document.createElement('span');
+      var sring = document.createElement('span'); sring.className = 'ring';
+      sent.appendChild(sring); sent.appendChild(document.createTextNode('⚠ prior fix (regression risk)'));
+      el.appendChild(sent);
+    }
   }
   function renderFilters(graph) {
     var el = $('filters'); el.innerHTML = '';
@@ -152,13 +178,33 @@ const CLIENT_JS = String.raw`
     });
   }
 
+  // A one-line, human summary per node type — so clicking a node reads as a sentence, not a prop dump.
+  function summaryFor(type, p) {
+    switch (type) {
+      case 'File': return (p.lang || 'file') + ' · ' + (p.symbols || 0) + ' symbol(s)';
+      case 'Symbol': return (p.kind || 'symbol') + (p.startLine ? ' · lines ' + p.startLine + '–' + p.endLine : '') + (p.exported ? ' · exported' : '');
+      case 'Finding': return (p.severity || 'finding') + ' · ' + (p.outcome || 'open') + (p.file ? ' · ' + p.file + (p.line > 0 ? ':' + p.line : '') : '');
+      case 'Incident': return (p.outcome || 'recorded') + ' concern' + (p.symbol ? ' at ' + p.symbol : (p.file ? ' in ' + p.file : ''));
+      case 'Pitfall': return (p.category || 'lesson') + (p.confidence != null && p.confidence !== '' ? ' · confidence ' + p.confidence : '') + (p.incidents ? ' · ' + p.incidents + ' incident(s)' : '');
+      case 'Suppression': return 'suppression' + (p.category ? ' · ' + p.category : '');
+      case 'Comment': return 'comment' + (p.author ? ' by ' + p.author : '') + (p.file ? ' · ' + p.file : '');
+      case 'Round': return 'round ' + (p.n || '?') + (p.headSha ? ' · ' + p.headSha : '');
+      case 'Verdict': return (p.kind || 'verdict') + ' verdict' + (p.scope ? ' · ' + p.scope : '');
+      case 'Target': return 'review target';
+      default: return '';
+    }
+  }
+
   // Build the detail panel with textContent only — never innerHTML of store data (XSS-safe).
   function showDetail(node) {
     var panel = $('panel'); panel.innerHTML = '';
     var h = document.createElement('h3'); h.textContent = node.data('label'); panel.appendChild(h);
     var t = document.createElement('span'); t.className = 'type'; t.textContent = node.data('type'); panel.appendChild(t);
-    var dl = document.createElement('dl');
     var props = node.data('props') || {};
+    var summary = summaryFor(node.data('type'), props);
+    if (summary) { var sm = document.createElement('p'); sm.className = 'summary'; sm.textContent = summary; panel.appendChild(sm); }
+    if (node.data('sentinel')) { var wn = document.createElement('p'); wn.className = 'sentinel'; wn.textContent = '⚠ Previously resolved at this code path — verify you are not regressing it.'; panel.appendChild(wn); }
+    var dl = document.createElement('dl');
     Object.keys(props).forEach(function (k) {
       var val = props[k];
       if (val === '' || val === null || val === undefined) return;
@@ -173,12 +219,19 @@ const CLIENT_JS = String.raw`
     }
   }
 
-  function toElements(data) {
-    var els = [];
-    data.nodes.forEach(function (n) { els.push({ data:{ id:n.id, label:n.label, type:n.type, props:n.props, symbols:(n.props&&n.props.symbols)||0 } }); });
-    data.edges.forEach(function (e) { els.push({ data:{ id:e.id, source:e.source, target:e.target, label:e.label, inferred: !!e.inferred } }); });
-    return els;
+  var RESOLVED = { fixed:1, accepted:1, reverted:1 };
+  // Lift outcome/sentinel onto element data so the stylesheet can encode them at a glance (the raw
+  // props stay for the detail panel). A sentinel = a resolved concern anchored to a symbol — i.e.
+  // "this code path was fixed before", the regression-risk signal.
+  function nodeEl(n) {
+    var p = n.props || {};
+    var oc = p.outcome ? (RESOLVED[p.outcome] ? 'resolved' : (p.outcome === 'rejected' ? 'dismissed' : '')) : '';
+    var sentinel = oc === 'resolved' && !!p.symbol;
+    return { data:{ id:n.id, label:(sentinel ? '⚠ ' : '') + n.label, type:n.type, props:p, symbols:p.symbols||0,
+      outcome:p.outcome||'', outcomeClass:oc, sentinel:sentinel, severity:p.severity||'' } };
   }
+  function edgeEl(e) { return { data:{ id:e.id, source:e.source, target:e.target, label:e.label, inferred:!!e.inferred, graph:e.graph||'' } }; }
+  function toElements(data) { return data.nodes.map(nodeEl).concat(data.edges.map(edgeEl)); }
 
   function draw(data) {
     state.raw = data;
@@ -201,7 +254,7 @@ const CLIENT_JS = String.raw`
   }
 
   function load() {
-    if (state.graph !== 'knowledge' && !state.repo) { setStatus('No indexed repo selected.', 'note'); return; }
+    if (state.graph !== 'knowledge' && !state.repo) { setStatus('Select a repo for this graph (Knowledge can show "All repos (global)").', 'note'); return; }
     setStatus('Loading…');
     var url = '/api/graph/' + state.graph + (state.repo ? '?repo=' + encodeURIComponent(state.repo) : '');
     api(url).then(function (data) {
@@ -216,8 +269,8 @@ const CLIENT_JS = String.raw`
     api(url).then(function (data) {
       if (!data || !data.nodes) return;
       var added = [];
-      data.nodes.forEach(function (n) { if (state.cy.getElementById(n.id).empty()) added.push({ data:{ id:n.id, label:n.label, type:n.type, props:n.props, symbols:(n.props&&n.props.symbols)||0 } }); });
-      data.edges.forEach(function (e) { if (state.cy.getElementById(e.id).empty()) added.push({ data:{ id:e.id, source:e.source, target:e.target, label:e.label } }); });
+      data.nodes.forEach(function (n) { if (state.cy.getElementById(n.id).empty()) added.push(nodeEl(n)); });
+      data.edges.forEach(function (e) { if (state.cy.getElementById(e.id).empty()) added.push(edgeEl(e)); });
       if (added.length) { state.cy.add(added); state.cy.layout(layoutFor(state.graph)).run(); applyEdgeFilter(); }
       setStatus('Expanded ' + node.data('label') + ' (+' + added.length + ')', 'hint');
     });
@@ -241,15 +294,34 @@ const CLIENT_JS = String.raw`
     load();
   }
 
+  // The code graph and Review history are per-repo; in "All repos (global)" mode they have no repo to
+  // show, so hide them and keep only Knowledge. Restores them when a real repo is selected.
+  function syncTabsToRepo() {
+    var global = !state.repo;
+    ['code', 'lineage'].forEach(function (g) {
+      var btn = document.querySelector('.tab[data-graph="' + g + '"]');
+      if (btn) btn.style.display = global ? 'none' : '';
+    });
+    if (global && state.graph !== 'knowledge') { // jumped to global while on a now-hidden tab → fall to Knowledge
+      state.graph = 'knowledge';
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.classList.toggle('active', b.dataset.graph === 'knowledge'); });
+    }
+  }
+
   function init() {
     api('/api/repos').then(function (d) {
       var sel = $('repo'); sel.innerHTML = '';
+      // "All repos (global)" (value '') shows the whole knowledge base — pitfalls scoped to ANY repo,
+      // incl. global ones the per-repo view hides. For code/lineage it prompts to pick a repo.
+      var g = document.createElement('option'); g.value = ''; g.textContent = 'All repos (global)'; sel.appendChild(g);
       (d.repos || []).forEach(function (r) {
         var o = document.createElement('option'); o.value = r.id; o.textContent = r.name; sel.appendChild(o);
       });
+      // Default to the first real repo (so the code graph loads); fall back to global when none indexed.
       if (d.repos && d.repos.length) { state.repo = d.repos[0].id; sel.value = state.repo; }
-      else { var o = document.createElement('option'); o.textContent = '(no indexed repos)'; sel.appendChild(o); }
-      sel.addEventListener('change', function () { state.repo = sel.value; load(); });
+      else { state.repo = ''; sel.value = ''; }
+      sel.addEventListener('change', function () { state.repo = sel.value; syncTabsToRepo(); load(); });
+      syncTabsToRepo();
       load();
     });
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.addEventListener('click', function () { setGraph(b.dataset.graph); }); });
