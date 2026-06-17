@@ -35,4 +35,13 @@ describe('analyzeSource', () => {
     expect(found.find((r) => r.rule === 'no-empty-catch')!.severity).toBe('improvement');
     expect(found.find((r) => r.rule === 'no-explicit-any')!.severity).toBe('nit');
   });
+
+  it('anchors a finding to its enclosing symbol (ADR-48) across declaration shapes', () => {
+    const sym = (src: string) => analyzeSource('h.ts', src).find((r) => r.rule === 'no-console')?.symbol;
+    expect(sym('export function run() {\n  console.log(1);\n}\n')).toBe('run'); // function decl
+    expect(sym('class C {\n  m() {\n    console.log(1);\n  }\n}\n')).toBe('m'); // method (nearest wins)
+    expect(sym('const f = () => {\n  console.log(1);\n};\n')).toBe('f'); // arrow binding
+    expect(sym('export const h = {\n  onTap: () => {\n    console.log(1);\n  },\n};\n')).toBe('onTap'); // object-literal property
+    expect(sym('console.log(1);\n')).toBeUndefined(); // module top level
+  });
 });

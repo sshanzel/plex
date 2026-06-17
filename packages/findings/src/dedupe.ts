@@ -47,6 +47,14 @@ export function dedupeFindings(findings: Finding[]): MergedFinding[] {
     cur.prevalence = cur.prevalence ?? f.prevalence;
     if (f.evidence?.length) cur.evidence = [...(cur.evidence ?? []), ...f.evidence];
     if (!cur.pitfallId && f.pitfallId) cur.pitfallId = f.pitfallId;
+    // Reconcile the code-path anchor (ADR-48): the merged finding keeps the first-inserted
+    // `location`, but an agent finding (usually symbol-less) is inserted before its colliding
+    // deterministic twin (`[...agent, ...det]`) — so without this the merged `no-console` loses the
+    // enclosing symbol and becomes unsuppressable. Prefer a present symbol over an absent one
+    // (order-independent), so symbol-scoped suppression still anchors after a cross-source merge.
+    if (!cur.location.symbol && f.location.symbol) {
+      cur.location = { ...cur.location, symbol: f.location.symbol };
+    }
   }
   return [...map.values()];
 }

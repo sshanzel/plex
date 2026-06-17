@@ -30,6 +30,25 @@ describe('dedupeFindings', () => {
     expect(merged[0]!.severity).toBe('bug');
     expect(merged[0]!.confidence).toBeCloseTo(1 - 0.4 * 0.3, 5);
   });
+
+  it('preserves the code-path symbol across a cross-source merge, regardless of order (ADR-48)', () => {
+    const loc = (symbol?: string) => ({ repo: 'r', file: 'src/cli.ts', startLine: 5, endLine: 5, symbol });
+    // Agent finding (no symbol) inserted FIRST, deterministic twin (with symbol) second — the engine's
+    // `[...agent, ...det]` order. The merged finding must keep the symbol or symbol-scoped suppression
+    // can't anchor it (the headline no-console case).
+    const a = dedupeFindings([
+      mk({ title: 'Leftover console call', source: 'first-principles', location: loc(undefined) }),
+      mk({ title: 'leftover console call', source: 'deterministic', tags: ['no-console'], location: loc('run') }),
+    ]);
+    expect(a).toHaveLength(1);
+    expect(a[0]!.location.symbol).toBe('run');
+    // And the reverse order is identical (order-independent).
+    const b = dedupeFindings([
+      mk({ title: 'leftover console call', source: 'deterministic', tags: ['no-console'], location: loc('run') }),
+      mk({ title: 'Leftover console call', source: 'first-principles', location: loc(undefined) }),
+    ]);
+    expect(b[0]!.location.symbol).toBe('run');
+  });
 });
 
 describe('computeSignal', () => {

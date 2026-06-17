@@ -43,7 +43,7 @@ function isNullish(node: ts.Expression): boolean {
 /**
  * The nearest enclosing named declaration of `node` — the symbol a finding lives in (ADR-48). Walks
  * up the parent chain to the closest function/method/accessor/class with an identifier name, or a
- * `const name = () => …` / `const name = function …` binding. Undefined at module top level.
+ * `const name = () => …` / object-property / class-field function binding. Undefined at module top level.
  */
 function enclosingSymbol(node: ts.Node): string | undefined {
   for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
@@ -59,11 +59,13 @@ function enclosingSymbol(node: ts.Node): string | undefined {
       return n.name.text;
     }
     if (
-      ts.isVariableDeclaration(n) &&
+      (ts.isVariableDeclaration(n) || ts.isPropertyAssignment(n) || ts.isPropertyDeclaration(n)) &&
       ts.isIdentifier(n.name) &&
       n.initializer &&
       (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
     ) {
+      // `const f = () => …`, an object-literal `{ handler: () => … }`, or a class field
+      // `f = () => …` — common in handler maps, so scope them like a named method.
       return n.name.text;
     }
   }
