@@ -186,9 +186,13 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** One-command setup: optional embedding key (saved to config), then offer to index. The MCP is
- *  provided by the Plex plugin, so init does NOT register one — that avoids a duplicate `plex`
- *  server now that the plugin is the install path. */
+/** How many recent merged PRs the onboarding seed analyzes — a fast first win, NOT the full history.
+ *  The analyze cursor advances, so `plex analyze` (default 100 newest, or `--oldest`/`--all`) continues. */
+const INIT_SEED_PRS = 25;
+
+/** One-command setup: optional embedding key (saved to config), then offer to index + seed from PR
+ *  history. The MCP is provided by the Plex plugin, so init does NOT register one — that avoids a
+ *  duplicate `plex` server now that the plugin is the install path. */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
   out.write('Plex setup (embedded: no Docker, no services).\n\n');
@@ -220,14 +224,17 @@ async function runInit(repoPath: string): Promise<number> {
   if (isGitRepo(repoPath)) {
     if (!embeddingReady(loadConfig())) {
       out.write('\nTip: add an embedding key (re-run `plex init`) and run `plex analyze` to seed Plex from your\nmerged PR history — it analyzes past review comments into lessons anchored to your code, so the\nreviewer is sharp from day one instead of learning from scratch.\n');
-    } else if ((await ask('\nSeed Plex from your merged PR history now? Analyzes past review comments into lessons\nanchored to your code (uses `gh`; can take a few minutes on a large history). [y/N]: ')).toLowerCase() === 'y') {
+    } else if ((await ask(`\nSeed Plex from your merged PR history now? Analyzes the most recent ~${INIT_SEED_PRS} merged PRs into\nlessons anchored to your code (uses \`gh\`; run \`plex analyze\` for the full history). [y/N]: `)).toLowerCase() === 'y') {
       try {
+        // Bound the onboarding seed to a fast slice — a quick first win, not a multi-minute job. The
+        // analyze cursor (analyze-state.json) advances, so a later `plex analyze` continues from here.
         const res = await withSpinner(
-          'Analyzing merged PR history (fetching via `gh`, distilling review comments into lessons)',
-          () => analyzeRepo(repoPath, loadConfig(), { state: 'merged' }),
+          `Analyzing the most recent ${INIT_SEED_PRS} merged PR(s) (fetching via \`gh\`, distilling review comments into lessons)`,
+          () => analyzeRepo(repoPath, loadConfig(), { state: 'merged', limit: INIT_SEED_PRS }),
         );
         out.write(
-          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
+          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n` +
+            'Run `plex analyze` anytime to continue with older PRs.\n',
         );
       } catch (e) {
         // Degrade clearly: most commonly no LLM distiller (claude CLI / API key) or `gh` unavailable.
