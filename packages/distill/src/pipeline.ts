@@ -145,12 +145,12 @@ export async function distillHistory(
     }
     // Semantic match-or-reinforce (replaces exact-title dedup): a re-phrased recurrence of an
     // existing principle reinforces it instead of minting a near-duplicate (the 322-pitfall fix).
-    const { action } = await addOrReinforcePitfall(store, pitfall);
-    if (action === 'minted') pitfalls++;
+    const r = await addOrReinforcePitfall(store, pitfall);
+    if (r.action === 'minted') pitfalls++;
     else reinforced++;
-    // Capture the payoff: the lesson + how much of YOUR code it's anchored to (distinct comment paths).
-    const files = new Set(cl.comments.map((c) => c.path).filter((p): p is string => !!p)).size;
-    learned.push({ title: pitfall.title, scope: pitfall.scope === 'global' ? 'global' : 'repo', incidents: cl.comments.length, files, action });
+    // Payoff: the CANONICAL stored lesson + its TOTAL evidence/file anchoring (from the store, so a
+    // reinforce reports the established title and the unioned counts — not this run's candidate).
+    learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
   }
 
   return {

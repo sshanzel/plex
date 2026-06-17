@@ -171,9 +171,9 @@ export async function addAnalyzedPitfalls(
   const embed = requireEmbeddings(config);
   // Map each provenance incident → its observed outcome (for the Wilson confidence) and its file (for
   // the "anchored to N files" payoff) in one pass over the store's incidents.
-  const incidents = await store.incidents();
-  const outcomeById = new Map(incidents.map((i) => [i.id, i.outcome]));
-  const fileById = new Map(incidents.map((i) => [i.id, i.file]));
+  // Outcome by id → the Wilson confidence default (the SAME estimator distill uses). `files`/`incidents`
+  // for the payoff come from `addOrReinforcePitfall` (the canonical stored shape), not re-derived here.
+  const outcomeById = new Map((await store.incidents()).map((i) => [i.id, i.outcome]));
   let added = 0;
   let reinforced = 0;
   const learned: LearnedLesson[] = [];
@@ -195,11 +195,10 @@ export async function addAnalyzedPitfalls(
       incidentIds,
       embedding,
     };
-    const { action } = await addOrReinforcePitfall(store, pitfall);
-    if (action === 'minted') added++;
+    const r = await addOrReinforcePitfall(store, pitfall);
+    if (r.action === 'minted') added++;
     else reinforced++;
-    const files = new Set(incidentIds.map((id) => fileById.get(id)).filter((f): f is string => !!f)).size;
-    learned.push({ title: p.title, scope, incidents: incidentIds.length, files, action: action === 'minted' ? 'minted' : 'reinforced' });
+    learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
   }
   return { added, reinforced, learned };
 }
