@@ -52,7 +52,7 @@ const USAGE = `plex, local-first code review context
 Run inside your repo. Commands default to the current git repo (an explicit [repoPath] still works).
 
 Usage:
-  plex init                                              # setup (run in your repo): embedding key + offer to index
+  plex init                                              # setup (run in your repo): embedding key + offer to index + seed from PR history
   plex doctor [repoPath]                                 # check embeddings + graph
   plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
   plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
@@ -186,9 +186,13 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** One-command setup: optional embedding key (saved to config), then offer to index. The MCP is
- *  provided by the Plex plugin, so init does NOT register one — that avoids a duplicate `plex`
- *  server now that the plugin is the install path. */
+/** How many recent merged PRs the onboarding seed analyzes — a fast first win, NOT the full history.
+ *  The analyze cursor advances, so `plex analyze` (default 100 newest, or `--oldest`/`--all`) continues. */
+const INIT_SEED_PRS = 25;
+
+/** One-command setup: optional embedding key (saved to config), then offer to index + seed from PR
+ *  history. The MCP is provided by the Plex plugin, so init does NOT register one — that avoids a
+ *  duplicate `plex` server now that the plugin is the install path. */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
   out.write('Plex setup (embedded: no Docker, no services).\n\n');
@@ -212,6 +216,34 @@ async function runInit(repoPath: string): Promise<number> {
       () => indexRepo(repoPath, loadConfig()),
     );
     out.write(`Indexed ${res.files} files, ${res.symbols} symbols, ${res.coChangePairs} co-change pairs.\n`);
+  }
+
+  // 3. Cold-start accelerator: seed knowledge from merged PR history NOW, so Plex's learned lessons
+  //    (and the code-path memory anchored to your symbols) are alive on day one instead of week three.
+  //    Needs embeddings (clustering) + an LLM distiller + `gh` against a GitHub repo with merged PRs.
+  if (isGitRepo(repoPath)) {
+    if (!embeddingReady(loadConfig())) {
+      out.write('\nTip: add an embedding key (re-run `plex init`) and run `plex analyze` to seed Plex from your\nmerged PR history — it analyzes past review comments into lessons anchored to your code, so the\nreviewer is sharp from day one instead of learning from scratch.\n');
+    } else if ((await ask(`\nSeed Plex from your merged PR history now? Analyzes the most recent ~${INIT_SEED_PRS} merged PRs into\nlessons anchored to your code (uses \`gh\`; run \`plex analyze\` for the full history). [y/N]: `)).toLowerCase() === 'y') {
+      try {
+        // Bound the onboarding seed to a fast slice — a quick first win, not a multi-minute job. The
+        // analyze cursor (analyze-state.json) advances, so a later `plex analyze` continues from here.
+        const res = await withSpinner(
+          `Analyzing the most recent ${INIT_SEED_PRS} merged PR(s) (fetching via \`gh\`, distilling review comments into lessons)`,
+          () => analyzeRepo(repoPath, loadConfig(), { state: 'merged', limit: INIT_SEED_PRS }),
+        );
+        out.write(
+          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n` +
+            'Run `plex analyze` anytime to continue with older PRs.\n',
+        );
+      } catch (e) {
+        // Degrade clearly: most commonly no LLM distiller (claude CLI / API key) or `gh` unavailable.
+        out.write(
+          `\nCouldn't seed automatically: ${e instanceof Error ? e.message : String(e)}\n` +
+            'No worries — your agent can seed from PR history later (it has the LLM), or run `plex analyze` once an LLM distiller is available. Plex also learns from every review you run.\n',
+        );
+      }
+    }
   }
 
   out.write('\nDone. Install the Plex plugin if you have not, then run `/plex:review` in your agent (or say "review my changes with Plex").\n');

@@ -785,6 +785,10 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   const cp = matchCodePath(retrieved, kg, nb.changed, nb.neighbors);
   const knowledge = applyCodePathBoost(retrieved, cp.boostByPitfall);
   const sentinelCount = cp.alerts.filter((a) => a.regressionSentinel).length;
+  // Cold-start nudge: only when nothing was retrieved AND the store is genuinely empty (one cheap read,
+  // skipped whenever a pitfall matched). Gated on embeddings because the seed path (`analyze`) needs them.
+  const coldKnowledge =
+    knowledge.length === 0 && embeddingReady(opts.config) && (await knowledgeStore(opts.config).pitfalls()).length === 0;
 
   // PR brain (ADR-22/23/30): embedded Kùzu, always on — rounds, comments, findings, and the
   // semantic "changed-without-feedback" + fix-inference signals (the latter when embeddings
@@ -849,6 +853,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
         : [
             'Embeddings are OFF (no provider configured): lessons from review history were retrieved by keyword match only (weaker than semantic retrieval), and the semantic signals (change attribution, semantic waiver matching) were skipped. In your closing "what Plex brought" line you may note this and point them to `npx @sshanzel/plex init` (one short clause; never ask for the key in chat).',
           ]),
+      ...(coldKnowledge
+        ? [
+            "Plex has no learned lessons for this repo yet (cold start). State briefly, as a fact (not a pitch), that Plex sharpens as it reviews — and that seeding it from the repo's merged PR history (run `plex analyze`, or ask the agent to analyze the PR history) jump-starts that by analyzing past review comments into lessons anchored to the code. Mention this once, in your closing 'what Plex brought' line.",
+          ]
+        : []),
       ...(cp.alerts.length
         ? [
             `Code-path memory: ${cp.alerts.length} retrieved lesson(s) have prior recorded history at code paths this diff touches` +
