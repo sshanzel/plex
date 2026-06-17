@@ -75,6 +75,25 @@ describe('distillHistory (offline, LLM-only)', () => {
     expect(second.result.pitfalls).toBe(0);
   });
 
+  it('reinforces a recurring lesson instead of minting duplicates (the 322-pitfall regression)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'distill-dedup-'));
+    const store = new KnowledgeStore(dir);
+    const embed = new FakeEmbeddingProvider();
+    // minClusterSize 1 + a high threshold ⇒ each of the 3 substantive tenant-id comments is its OWN
+    // cluster, so the same lesson is distilled three times across the run. Pre-fix this minted (or
+    // silently skipped) duplicates; now the first mints and the recurrences REINFORCE the one pitfall.
+    const cfg = resolveConfig({ analyze: { maxPrs: 100, clusterThreshold: 0.99, minClusterSize: 1 } });
+
+    const { result } = await distillHistory(store, embed, cfg, { cwd: '.', repoName: 'r', fetch: fakeFetch, llm: fakeLlm });
+
+    expect(result.clusters).toBe(3);
+    expect(result.pitfalls).toBe(1); // ONE principle minted
+    expect(result.reinforced).toBe(2); // the two recurrences reinforced it, not duplicated
+    const pitfalls = await store.pitfalls();
+    expect(pitfalls).toHaveLength(1);
+    expect(pitfalls[0]!.incidentIds.length).toBe(3); // all three sightings' provenance unioned
+  });
+
   it('scans by order + limit and advances the cursor (chronological analysis)', async () => {
     dir = mkdtempSync(join(tmpdir(), 'distill-ord-'));
     const store = new KnowledgeStore(dir);

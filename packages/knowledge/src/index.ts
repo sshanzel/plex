@@ -10,6 +10,8 @@ export { KnowledgeStore } from './store';
 export { retrieveRelevant, retrieveRelevantLexical, lexicalScores, lexicalTokens } from './retrieve';
 export type { RetrievedPitfall } from './retrieve';
 export { recordIncident } from './incidents';
+export { addOrReinforcePitfall } from './reinforce';
+export type { AddOrReinforceResult } from './reinforce';
 export { consolidatePitfalls } from './promotion';
 export type { ConsolidateResult } from './promotion';
 export { wilsonLowerBound, confidenceFromOutcomes, suppressionTier, recencyWeight, decayedCounts, Z_95, Z_68 } from './stats';

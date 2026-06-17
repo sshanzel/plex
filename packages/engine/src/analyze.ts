@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
 import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult } from '@plex/distill';
-import { confidenceFromOutcomes } from '@plex/knowledge';
+import { confidenceFromOutcomes, addOrReinforcePitfall } from '@plex/knowledge';
 import { knowledgeStore, requireEmbeddings } from './knowledge';
 import { repoPaths } from './paths';
 
@@ -156,15 +156,17 @@ export interface AgentPitfall {
 }
 
 /**
- * Store agent-distilled pitfalls (embedding computed here). Dedups by title. Pitfalls
- * default to `repo` scope (specific to this project) unless the agent marks them `global`;
- * `repo` is stamped so retrieval can scope them (ADR-21).
+ * Store agent-distilled pitfalls (embedding computed here). De-duplicates **semantically** at write
+ * time (`addOrReinforcePitfall`): a candidate whose principle matches an existing pitfall reinforces
+ * it (no duplicate) rather than minting a near-identical lesson. Pitfalls default to `repo` scope
+ * (specific to this project) unless the agent marks them `global`; `repo` is stamped so retrieval can
+ * scope them (ADR-21).
  */
 export async function addAnalyzedPitfalls(
   config: ReviewerConfig,
   pitfalls: AgentPitfall[],
   repo?: string,
-): Promise<{ added: number }> {
+): Promise<{ added: number; reinforced: number }> {
   const store = knowledgeStore(config);
   const embed = requireEmbeddings(config);
   // Map each provenance incident → its observed outcome, so a pitfall's default confidence is the
@@ -172,8 +174,8 @@ export async function addAnalyzedPitfalls(
   // magic default). The agent may still pass an explicit confidence to override.
   const outcomeById = new Map((await store.incidents()).map((i) => [i.id, i.outcome]));
   let added = 0;
+  let reinforced = 0;
   for (const p of pitfalls) {
-    if (await store.hasPitfallTitled(p.title)) continue;
     const [embedding] = await embed.embed([`${p.category}: ${p.title}\n${p.why}`]);
     const scope = p.scope ?? 'repo';
     const pitfall: Pitfall = {
@@ -190,8 +192,9 @@ export async function addAnalyzedPitfalls(
       incidentIds: p.incidentIds ?? [],
       embedding,
     };
-    await store.addPitfall(pitfall);
-    added++;
+    const { action } = await addOrReinforcePitfall(store, pitfall);
+    if (action === 'minted') added++;
+    else reinforced++;
   }
-  return { added };
+  return { added, reinforced };
 }

@@ -1,5 +1,5 @@
 import type { ReviewerConfig, EmbeddingProvider, Incident, CompletionProvider } from '@plex/core';
-import { KnowledgeStore } from '@plex/knowledge';
+import { KnowledgeStore, addOrReinforcePitfall } from '@plex/knowledge';
 import { listPrs, fetchCommentsForPr } from './github';
 import { isSubstantive, categorize } from './classify';
 import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
@@ -90,6 +90,10 @@ export async function scanHistory(
   // the small-batch fallback, not a per-model magic constant.
   const threshold = adaptiveCosineThreshold(vectors, { fallback: config.analyze.clusterThreshold });
   const clusters = greedyCluster(vectors, threshold)
+    // `minClusterSize` is an LLM-cost throttle, NOT a dedup mechanism (default 1 = no gate). Cross-run
+    // de-duplication is now semantic, at write time (`addOrReinforcePitfall`), so a lone comment can
+    // mint a low-confidence pitfall that later recurrences reinforce — raise this only to require
+    // within-batch corroboration before spending an LLM call.
     .filter((idx) => idx.length >= config.analyze.minClusterSize)
     .map((idx) => ({
       comments: idx.map((i) => substantive[i]!),
@@ -126,6 +130,7 @@ export async function distillHistory(
   }
 
   let pitfalls = 0;
+  let reinforced = 0;
   let skipped = 0;
   for (const cl of scan.clusters) {
     const pitfall = await llmDistill(cl, llm); // the LLM decides what's worth storing
@@ -133,9 +138,11 @@ export async function distillHistory(
       skipped++;
       continue;
     }
-    if (await store.hasPitfallTitled(pitfall.title)) continue;
-    await store.addPitfall(pitfall);
-    pitfalls++;
+    // Semantic match-or-reinforce (replaces exact-title dedup): a re-phrased recurrence of an
+    // existing principle reinforces it instead of minting a near-duplicate (the 322-pitfall fix).
+    const { action } = await addOrReinforcePitfall(store, pitfall);
+    if (action === 'minted') pitfalls++;
+    else reinforced++;
   }
 
   return {
@@ -145,6 +152,7 @@ export async function distillHistory(
       substantive: scan.substantive,
       clusters: scan.clusters.length,
       pitfalls,
+      reinforced,
       skipped,
       incidents: scan.incidents,
       distiller: llm.name,

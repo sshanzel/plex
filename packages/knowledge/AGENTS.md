@@ -17,6 +17,7 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | `src/embeddings.ts` | `EmbeddingProvider` impls (voyage / openai / gemini / ollama / fake) + `createEmbeddingProvider` (returns `null` when unusable) |
 | `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` applies the ADR-42 **recency tilt** AND the ADR-44 **confidence tilt** (`score *= max(tiltFloor, recencyWeight(…)) * max(tiltFloor, confidence ?? 1)`, undated/un-scored → 1) |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
+| `src/reinforce.ts` | `addOrReinforcePitfall` — **semantic** write-time dedup for mined pitfalls: match a candidate to an existing in-scope pitfall (cosine ≥ `adaptiveFloor(0.7,…)`, exact-title then lexical fallback) → REINFORCE (union incidents, recompute confidence inline, bump `lastReinforcedAt`) instead of minting a duplicate. Replaced exact-title `hasPitfallTitled` on both `analyze` write paths |
 | `src/promotion.ts` | `consolidatePitfalls(store, decay, now)` — **recency-decayed** Wilson confidence recompute from incident outcomes (all-abstain → keep prior, ADR-44) + sets `lastReinforcedAt` + **prunes** a decayed-stale pitfall (ADR-42; provenance Incidents survive) |
 | `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `confidenceFromOutcomes` (one Wilson confidence definition, ADR-44) + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
@@ -26,8 +27,11 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 **Store (`store.ts`).** Flat JSONL, parsed **per line** — a corrupt/truncated line is skipped, never
 discarding the whole store (a full-file `JSON.parse` would have let consolidation rewrite an *empty*
 log: silent total loss). `replacePitfalls` (consolidation's writer) is **atomic**: write
-`pitfalls.jsonl.tmp-<pid>`, then `rename` over the target. Dedupe primitive: `hasPitfallTitled` —
-**exact title equality**; every write path (analyzed, `add_pitfalls`) dedupes through it.
+`pitfalls.jsonl.tmp-<pid>`, then `rename` over the target. Write-time dedup is **semantic**
+(`reinforce.ts` `addOrReinforcePitfall`): both `analyze` write paths match a candidate to an existing
+in-scope pitfall by embedding cosine (exact-title + lexical fallbacks) and **reinforce** it rather
+than mint a near-duplicate. The legacy `hasPitfallTitled` (exact-title equality) remains as the
+strict-subset fallback inside that matcher.
 
 **Retrieval (`retrieve.ts`).** `retrieveRelevant(store, provider, queryText, topK = 5, minScore = 0.05, repo?)`:
 

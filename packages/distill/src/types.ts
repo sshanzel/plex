@@ -35,8 +35,10 @@ export interface DistillResult {
   comments: number;
   substantive: number;
   clusters: number;
-  /** Pitfalls the LLM judged worth storing. */
+  /** NEW pitfalls minted (a principle not already in the store). */
   pitfalls: number;
+  /** Existing pitfalls reinforced by a semantically-matching candidate (no duplicate minted). */
+  reinforced: number;
   /** Clusters the LLM judged NOT worth storing. */
   skipped: number;
   incidents: number;

@@ -386,7 +386,7 @@ async function main(): Promise<number> {
       process.stdout.write(
         `Analyzed ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +
           `${res.comments} comments → ${res.substantive} substantive → ${res.clusters} clusters → ` +
-          `+${res.pitfalls} pitfalls, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
+          `+${res.pitfalls} new pitfalls, ${res.reinforced} reinforced, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
       );
       return 0;
     }

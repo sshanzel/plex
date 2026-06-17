@@ -65,10 +65,19 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
    `judgmental`; **`scope` = `global` only on the exact string, else `repo`** (ADR-21 — project-specific
    lessons are kept, stamped with `repo`, and retrieval scopes them); id
    `pf:analyzed:<repo>:<title-slug>-<hashId(title)>`; `embedding` = the cluster **centroid**;
-   `incidentIds` = the `inc:analyzed:*` ids (provenance, mandatory). Storage dedupes by **exact title**
-   (`hasPitfallTitled`) — same in `addAnalyzedPitfalls` (the `add_pitfalls` path, which embeds
-   `` `${category}: ${title}\n${why}` `` server-side, defaults `scope` to `'repo'`, and derives
-   `confidence` the same Wilson way from the linked provenance incidents — no `0.6` magic default).
+   `incidentIds` = the `inc:analyzed:*` ids (provenance, mandatory). Storage de-duplicates
+   **semantically** via `@plex/knowledge` `addOrReinforcePitfall` (replaced the old exact-title
+   `hasPitfallTitled`): a candidate whose principle matches an existing in-scope pitfall (cosine ≥
+   `adaptiveFloor(0.7,…)` over stored vectors, like the live-review `inferPitfallId`; exact-title then
+   lexical fallback when vectorless) **REINFORCES** that pitfall — unions its provenance incidents,
+   recomputes confidence (inline Wilson — analyzed incidents carry no `pitfallId`, so `consolidate`
+   can't), bumps `lastReinforcedAt` — instead of minting a near-duplicate. `distillHistory` returns
+   `pitfalls` (minted) **and** `reinforced`. So a re-phrased recurrence of the same lesson across
+   PRs/runs converges on one pitfall whose confidence climbs (the 322-duplicate fix); `minClusterSize`
+   is now purely an LLM-cost throttle (default 1), not the dedup mechanism. Same path in
+   `addAnalyzedPitfalls` (the `add_pitfalls` path, which embeds `` `${category}: ${title}\n${why}` ``
+   server-side, defaults `scope` to `'repo'`, and derives `confidence` the same Wilson way from the
+   linked provenance incidents — no `0.6` magic default; returns `{ added, reinforced }`).
 
 **Outcome signal (ADR-44, observed not assumed)**: `outcomeFor(c)` = `c.outdated && c.prMerged ?
 'fixed' : undefined`. A **confirm** requires OBSERVED action — GitHub outdated the comment (`isOutdated`:
