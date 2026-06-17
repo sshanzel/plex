@@ -32,6 +32,12 @@ function incidentVizNode(i: Incident): VizNode {
  *  sets `truncated`, which the UI surfaces, so a partial graph never silently reads as complete. */
 const DEFAULT_NODE_CAP = 800;
 
+/** Code-graph LANDING size: how many files to show on first load of a big repo. The old behaviour
+ *  dumped the first 800 files (an unreadable wall); instead we land on the most-CONNECTED files — the
+ *  coupled spine of the codebase — and let the user double-click to expand neighbours or search to load
+ *  any specific file. Small enough to read the structure at a glance. */
+const CODE_LANDING_CAP = 80;
+
 /** A PR comment is linked to a finding in the same file when their lines are within this many rows
  *  (the brain stores no explicit comment→finding edge, so locality is the honest correlation). */
 const COMMENT_LINK_WINDOW = 25;
@@ -61,9 +67,50 @@ export async function collectCode(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Prom
   }
   return withGraph(repo.graphDir, async (db) => {
     const files = await db.run('MATCH (f:File) RETURN f.id AS id, f.path AS path, f.lang AS lang');
-    const truncated = files.length > cap;
-    const slice = files.slice(0, cap);
-    const included = new Set(slice.map((r) => str(r.id)));
+
+    // Pull the raw coupling edges first so we can rank files by DEGREE (how connected they are) and
+    // land on the hubs, not an arbitrary slice. Each entry is a directed/undirected file pair.
+    const rawEdges: { s: string; t: string; label: string; undirected: boolean }[] = [];
+    for (const r of await db.run('MATCH (a:File)-[:Imports]->(b:File) RETURN a.id AS s, b.id AS t')) {
+      rawEdges.push({ s: str(r.s), t: str(r.t), label: 'import', undirected: false });
+    }
+    for (const r of await db.run('MATCH (a:File)-[:Refs]->(b:File) RETURN a.id AS s, b.id AS t')) {
+      rawEdges.push({ s: str(r.s), t: str(r.t), label: 'ref', undirected: false });
+    }
+    for (const r of await db.run('MATCH (a:File)-[c:CoChange]->(b:File) RETURN a.id AS s, b.id AS t')) {
+      rawEdges.push({ s: str(r.s), t: str(r.t), label: 'co-change', undirected: true });
+    }
+    const degree = new Map<string, number>();
+    const adj = new Map<string, Set<string>>();
+    for (const e of rawEdges) {
+      if (e.s === e.t) continue;
+      degree.set(e.s, (degree.get(e.s) ?? 0) + 1);
+      degree.set(e.t, (degree.get(e.t) ?? 0) + 1);
+      (adj.get(e.s) ?? adj.set(e.s, new Set()).get(e.s)!).add(e.t);
+      (adj.get(e.t) ?? adj.set(e.t, new Set()).get(e.t)!).add(e.s);
+    }
+
+    // Landing selection: a small repo shows in full; a large one grows a CONNECTED neighbourhood from
+    // the densest hubs — each hub PLUS its neighbours — so the landing shows real coupling structure
+    // (top-degree-alone would be isolated dots: hubs connect to leaves, not each other). The rest are
+    // reachable via search + double-click-to-expand.
+    const landing = files.length > CODE_LANDING_CAP;
+    let included: Set<string>;
+    if (!landing) {
+      included = new Set(files.map((r) => str(r.id)));
+    } else {
+      included = new Set<string>();
+      const ranked = [...files].sort((a, b) => (degree.get(str(b.id)) ?? 0) - (degree.get(str(a.id)) ?? 0));
+      for (const f of ranked) {
+        if (included.size >= CODE_LANDING_CAP) break;
+        included.add(str(f.id));
+        for (const nb of adj.get(str(f.id)) ?? []) {
+          if (included.size >= CODE_LANDING_CAP) break;
+          included.add(nb);
+        }
+      }
+    }
+    const slice = files.filter((r) => included.has(str(r.id)));
 
     // Symbol count per file (for the panel + node sizing) — one grouped query, not per-file.
     const symCounts = new Map<string, number>();
@@ -93,20 +140,35 @@ export async function collectCode(repo: RepoEntry, cap = DEFAULT_NODE_CAP): Prom
       seen.add(key);
       edges.push({ id: key, source: `f:${a}`, target: `f:${b}`, label, graph: 'code' });
     };
-    for (const r of await db.run('MATCH (a:File)-[:Imports]->(b:File) RETURN a.id AS s, b.id AS t')) {
-      addEdge(str(r.s), str(r.t), 'import', false);
-    }
-    for (const r of await db.run('MATCH (a:File)-[:Refs]->(b:File) RETURN a.id AS s, b.id AS t')) {
-      addEdge(str(r.s), str(r.t), 'ref', false);
-    }
-    for (const r of await db.run('MATCH (a:File)-[c:CoChange]->(b:File) RETURN a.id AS s, b.id AS t')) {
-      addEdge(str(r.s), str(r.t), 'co-change', true);
-    }
+    for (const e of rawEdges) addEdge(e.s, e.t, e.label, e.undirected);
 
-    const note = truncated
-      ? `Showing ${cap} of ${files.length} files (capped). Use search to find a specific file.`
+    const note = landing
+      ? `Showing the ${slice.length} most-connected files of ${files.length} — double-click a file to expand its neighbours, or search to load any file.`
       : undefined;
-    return withCounts({ graph: 'code', nodes, edges, truncated, counts: {}, note });
+    return withCounts({ graph: 'code', nodes, edges, truncated: landing, counts: {}, note });
+  });
+}
+
+/** Find File nodes whose path matches `query` (case-insensitive substring) — so the code-graph search
+ *  can reach files NOT in the landing set. Parameterized (`$q`) — the query is user input and must
+ *  never be string-concatenated into Cypher (root convention / ADR security posture). The UI adds the
+ *  returned nodes to the graph; double-click then expands a match's neighbours. */
+export async function searchFiles(repo: RepoEntry, query: string, limit = 40): Promise<VizNode[]> {
+  const q = query.trim().toLowerCase();
+  if (!q || !repo.hasGraph || !existsSync(repo.graphDir)) return [];
+  return withGraph(repo.graphDir, async (db) => {
+    const rows = await db.run(
+      'MATCH (f:File) WHERE toLower(f.path) CONTAINS $q RETURN f.id AS id, f.path AS path, f.lang AS lang LIMIT $lim',
+      { q, lim: limit },
+    );
+    const symCounts = new Map<string, number>();
+    for (const r of await db.run('MATCH (s:Symbol) RETURN s.file AS file, count(s) AS c')) {
+      symCounts.set(str(r.file), num(r.c));
+    }
+    return rows.map((r): VizNode => {
+      const id = str(r.id);
+      return { id: `f:${id}`, label: id, type: 'File', graph: 'code', props: { path: str(r.path) || id, lang: str(r.lang), symbols: symCounts.get(id) ?? 0 } };
+    });
   });
 }
 

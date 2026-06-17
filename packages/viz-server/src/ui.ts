@@ -345,9 +345,7 @@ const CLIENT_JS = String.raw`
     });
   }
 
-  function doSearch(q) {
-    if (!state.cy) return;
-    q = (q || '').toLowerCase();
+  function highlightMatches(q) {
     state.cy.batch(function () {
       state.cy.nodes().forEach(function (n) {
         var hit = q && n.data('label').toLowerCase().indexOf(q) !== -1;
@@ -355,6 +353,26 @@ const CLIENT_JS = String.raw`
         n.toggleClass('faded', !!q && !hit);
       });
     });
+  }
+  var searchTimer = null;
+  function doSearch(q) {
+    if (!state.cy) return;
+    q = (q || '').toLowerCase();
+    highlightMatches(q); // instant: highlight/fade the LOADED nodes
+    // Code graph lands on the hub files only, so a wanted file may not be loaded — fetch it (debounced)
+    // and add it to the graph so search reaches the WHOLE repo, not just the landing set.
+    clearTimeout(searchTimer);
+    if (state.graph === 'code' && state.repo && q.length >= 2) {
+      searchTimer = setTimeout(function () { fetchSearch(q); }, 250);
+    }
+  }
+  function fetchSearch(q) {
+    api('/api/search?repo=' + encodeURIComponent(state.repo) + '&q=' + encodeURIComponent(q)).then(function (data) {
+      if (!data || !data.nodes || !state.cy) return;
+      var added = data.nodes.filter(function (n) { return state.cy.getElementById(n.id).empty(); }).map(nodeEl);
+      if (added.length) { state.cy.add(added); state.cy.layout(layoutFor('code')).run(); applyEdgeFilter(); }
+      highlightMatches(q); // re-highlight incl. any newly loaded files
+    }).catch(function () { /* search is best-effort; the loaded-node highlight already ran */ });
   }
 
   function setGraph(g) {

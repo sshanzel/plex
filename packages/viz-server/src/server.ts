@@ -3,7 +3,7 @@ import { AddressInfo } from 'node:net';
 import type { ReviewerConfig } from '@plex/core';
 import { RepoBusyError } from '@plex/core';
 import { listRepos, resolveRepo } from './registry';
-import { collectCode, collectBrain, collectKnowledge, collectLineage, expandCodeFile } from './collect';
+import { collectCode, collectBrain, collectKnowledge, collectLineage, expandCodeFile, searchFiles } from './collect';
 import { renderAppHtml } from './ui';
 import { DEFAULT_PORT, HOST, type DaemonInfo } from './daemon';
 
@@ -51,8 +51,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
     return json(res, 200, { repos });
   }
 
-  // Every /api/graph and /api/expand request carries a validated repo id (path-traversal gate).
-  if (p.startsWith('/api/graph/') || p === '/api/expand') {
+  // Every /api/graph, /api/expand, /api/search request carries a validated repo id (path-traversal gate).
+  if (p.startsWith('/api/graph/') || p === '/api/expand' || p === '/api/search') {
     const repoId = url.searchParams.get('repo') ?? '';
 
     // Knowledge is machine-global, but optionally scoped to the selected repo (by name).
@@ -75,6 +75,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
       // Only File nodes expand (their symbols + neighbors). `node` is prefixed `f:<fileId>`.
       if (node.startsWith('f:')) return json(res, 200, await expandCodeFile(repo, node.slice(2), config.knowledgeDir));
       return json(res, 200, { nodes: [], edges: [] });
+    }
+    if (p === '/api/search') {
+      // Reach any File (incl. ones outside the code-graph landing set). Query is parameterized downstream.
+      const nodes = await searchFiles(repo, url.searchParams.get('q') ?? '');
+      return json(res, 200, { nodes, edges: [] });
     }
   }
 

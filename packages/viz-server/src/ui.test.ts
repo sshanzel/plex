@@ -36,6 +36,12 @@ describe('renderAppHtml', () => {
     expect(html).toContain('d.parent = n.parent'); // incident nested via Cytoscape compound parent
   });
 
+  it('code-graph search reaches files beyond the landing set (server-backed)', () => {
+    const html = renderAppHtml('9.9.9');
+    expect(html).toContain('function fetchSearch'); // debounced server search
+    expect(html).toContain('/api/search?repo='); // loads matching files not in the landing set
+  });
+
   it('renders a cold-start empty state (centered CTA) instead of a black void', () => {
     const html = renderAppHtml('9.9.9');
     expect(html).toContain('id="empty"'); // the centered overlay element
