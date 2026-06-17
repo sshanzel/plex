@@ -318,7 +318,7 @@ export async function loadSuppressions(
 export async function learnSuppression(
   config: ReviewerConfig,
   repoName: string,
-  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string; title?: string },
+  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string; title?: string; note?: string },
   firstOfKind: boolean,
 ): Promise<void> {
   if (!firstOfKind) return;
@@ -335,6 +335,10 @@ export async function learnSuppression(
   //    existing embedding-keyed negatives by cosine (conservative ~0.82 — a wrong merge pollutes
   //    another suppression's evidence). Embedding-gated: no provider/title → no learning (degrade to
   //    deterministic-only). Both paths then share the dedup + incident record below.
+  // The dismisser's reasoning ("console is intentional here — it's the CLI logger"), if supplied on
+  // the verdict. Captured as readable provenance (the `why` + the incident note) — not just folded
+  // into the re-match embedding — so a suppression explains ITSELF instead of a boilerplate template.
+  const reason = (input.note ?? '').trim();
   let id: string;
   let existing: Pitfall | undefined;
   let toMint: Pitfall | undefined;
@@ -346,7 +350,7 @@ export async function learnSuppression(
     if (!existing) {
       toMint = {
         id, polarity: 'negative', suppressKey: key, title: `suppress:${key}@${repoName}`, trigger: key,
-        why: `Learned suppression — the \`${key}\` rule was dismissed in ${repoName}.`,
+        why: reason ? `Suppressed \`${key}\` in ${repoName} — ${reason}` : `Learned suppression — the \`${key}\` rule was dismissed in ${repoName}.`,
         category: 'suppression', tier: 'codifiable', confidence: 0, scope: 'repo', repo: repoName,
         language: languageOf(input.file), incidentIds: [],
       };
@@ -371,7 +375,7 @@ export async function learnSuppression(
       if (!existing) {
         toMint = {
           id, polarity: 'negative', title: `suppress(fp):${title.slice(0, 60)}@${repoName}`, trigger: title,
-          why: `Learned suppression — a first-principles finding ("${title.slice(0, 80)}") was dismissed in ${repoName}.`,
+          why: reason ? `Suppressed in ${repoName} — ${reason}` : `Learned suppression — a first-principles finding ("${title.slice(0, 80)}") was dismissed in ${repoName}.`,
           category: 'suppression', tier: 'judgmental', confidence: 0, scope: 'repo', repo: repoName,
           language: languageOf(input.file), embedding: vec, incidentIds: [],
         };
@@ -407,7 +411,7 @@ export async function learnSuppression(
     // The verb sets the recency-decay half-life (ADR-41): reject fades, waive persists. Authoritative
     // (outcome:'rejected' flattens the two); only dismissals carry it.
     verb: dismissal ? (input.kind === 'waive' ? 'waive' : 'reject') : undefined,
-    note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}`,
+    note: `${input.kind}${input.findingId ? ` ${input.findingId}` : ''}${reason ? ` — ${reason}` : ''}`,
   });
 }
 
