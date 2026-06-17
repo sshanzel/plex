@@ -294,6 +294,20 @@ const CLIENT_JS = String.raw`
     load();
   }
 
+  // The code graph and Review history are per-repo; in "All repos (global)" mode they have no repo to
+  // show, so hide them and keep only Knowledge. Restores them when a real repo is selected.
+  function syncTabsToRepo() {
+    var global = !state.repo;
+    ['code', 'lineage'].forEach(function (g) {
+      var btn = document.querySelector('.tab[data-graph="' + g + '"]');
+      if (btn) btn.style.display = global ? 'none' : '';
+    });
+    if (global && state.graph !== 'knowledge') { // jumped to global while on a now-hidden tab → fall to Knowledge
+      state.graph = 'knowledge';
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.classList.toggle('active', b.dataset.graph === 'knowledge'); });
+    }
+  }
+
   function init() {
     api('/api/repos').then(function (d) {
       var sel = $('repo'); sel.innerHTML = '';
@@ -306,7 +320,8 @@ const CLIENT_JS = String.raw`
       // Default to the first real repo (so the code graph loads); fall back to global when none indexed.
       if (d.repos && d.repos.length) { state.repo = d.repos[0].id; sel.value = state.repo; }
       else { state.repo = ''; sel.value = ''; }
-      sel.addEventListener('change', function () { state.repo = sel.value; load(); });
+      sel.addEventListener('change', function () { state.repo = sel.value; syncTabsToRepo(); load(); });
+      syncTabsToRepo();
       load();
     });
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) { b.addEventListener('click', function () { setGraph(b.dataset.graph); }); });
