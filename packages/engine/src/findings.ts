@@ -129,7 +129,11 @@ export async function rankReviewFindings(
     }
   }
   // Only the DETERMINISTIC (tag) suppressions go in the tag map; semantic ones ride the waiver path above.
-  const suppressionMap = new Map(suppressions.filter((d) => !d.embedding).map((d) => [d.key, d.tier] as const));
+  // Each entry carries the location scope (ADR-48) so the ranker suppresses a symbol-scoped rule only at
+  // the symbols it was dismissed at — not repo-wide.
+  const suppressionMap = new Map(
+    suppressions.filter((d) => !d.embedding).map((d) => [d.key, { tier: d.tier, repoWide: d.repoWide, symbols: d.symbols }] as const),
+  );
   const ranked = rankFindings(all, { waivers: waiversAll, semanticThreshold, suppressions: suppressionMap });
   // Record only the suppressions that ACTUALLY matched a finding this review (the ones that shaped
   // the output) as the audit-log provenance — not every active rule. Two paths: DETERMINISTIC ones

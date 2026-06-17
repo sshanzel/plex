@@ -1,5 +1,5 @@
 export { rankFindings } from './rank';
-export type { RankOptions } from './rank';
+export type { RankOptions, LearnedSuppression } from './rank';
 export { dedupeFindings, dedupeKey, normalizeTitle } from './dedupe';
 export type { MergedFinding } from './dedupe';
 export { computeSignal, severityWeight, defaultWeights } from './signal';

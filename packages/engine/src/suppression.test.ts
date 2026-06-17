@@ -176,6 +176,47 @@ describe('learnSuppression → loadSuppressions (C1: weighted, not a one-click k
     }
   });
 
+  it('ADR-48: dismissals at DIFFERENT symbols in the same file each count; the same symbol collapses', async () => {
+    const config = cfg();
+    // Two genuinely distinct console.log instances in one file → two votes (not drift).
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts', symbol: 'a.ts#foo' }, true);
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:9', file: 'a.ts', symbol: 'a.ts#bar' }, true);
+    // A repeat at an ALREADY-dismissed symbol carries no new info → dropped (drift dedup).
+    await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:2', file: 'a.ts', symbol: 'a.ts#foo' }, true);
+    const neg = (await knowledgeStore(config).pitfalls()).find((p) => p.polarity === 'negative')!;
+    const dismissals = (await knowledgeStore(config).incidents()).filter((i) => i.pitfallId === neg.id && i.outcome === 'rejected');
+    expect(dismissals).toHaveLength(2); // foo + bar, not 3
+    const d = (await loadSuppressions(config, 'myrepo')).find((x) => x.key === 'no-console')!;
+    expect(d.repoWide).toBe(false); // symbol-scoped — does NOT bury the rule repo-wide
+    expect([...(d.symbols ?? [])].sort()).toEqual(['a.ts#bar', 'a.ts#foo']);
+    expect(d.dismissals).toBeCloseTo(2, 4); // both symbol instances count toward Wilson
+  });
+
+  it('ADR-48: an explicit pattern/category scope is recorded symbol-less → repo-wide', async () => {
+    const config = cfg();
+    // The user said "this rule, everywhere" — even though a symbol resolves, the explicit scope wins:
+    // each dismissal is recorded symbol-less, so the decision is repo-wide despite the symbols passed.
+    for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) {
+      await learnSuppression(
+        config,
+        'myrepo',
+        { kind: 'reject', findingId: `det:no-console:${f}:1`, file: f, symbol: `${f}#fn`, scope: 'pattern-repo' },
+        true,
+      );
+    }
+    const d = (await loadSuppressions(config, 'myrepo')).find((x) => x.key === 'no-console')!;
+    expect(d.tier).toBe('suppress');
+    expect(d.repoWide).toBe(true);
+    expect(d.symbols).toBeUndefined();
+  });
+
+  it('ADR-48: a symbol-less dismissal (no resolved symbol) stays repo-wide (fail-open back-compat)', async () => {
+    const config = cfg();
+    for (const f of ['a.ts', 'b.ts', 'c.ts', 'd.ts']) await reject(config, f); // reject() passes no symbol
+    const d = (await loadSuppressions(config, 'myrepo')).find((x) => x.key === 'no-console')!;
+    expect(d.repoWide).toBe(true); // no symbols anchored → applies everywhere, as before ADR-48
+  });
+
   it('a retry (firstOfKind=false) does not double-count', async () => {
     const config = cfg();
     await learnSuppression(config, 'myrepo', { kind: 'reject', findingId: 'det:no-console:a.ts:1', file: 'a.ts' }, false);

@@ -1,5 +1,5 @@
 import type { Finding, Waiver } from '@plex/core';
-import { cosineSimilarity } from '@plex/core';
+import { cosineSimilarity, symbolKey } from '@plex/core';
 import { normalizeTitle } from './dedupe';
 
 /**
@@ -16,11 +16,18 @@ export function waiverMatches(f: Finding, w: Waiver, semanticThreshold = 1.01): 
     w.embedding != null &&
     f.embedding != null &&
     cosineSimilarity(w.embedding, f.embedding) >= semanticThreshold;
+  // Symbol gate (ADR-48): a file/line waiver carrying a `symbol` suppresses only a finding at the SAME
+  // `file#name` — so acknowledging one intentional instance doesn't silence the same kind of finding
+  // elsewhere in the file. A symbol-less waiver (no `findingId` resolved it, or a `reject`'s line
+  // waiver) keeps pure file/line matching (back-compat).
+  const symbolOk =
+    w.symbol == null ||
+    (f.location.symbol != null && symbolKey(f.location.file, f.location.symbol) === w.symbol);
   switch (w.scope) {
     case 'line':
-      return w.file === f.location.file && w.line === f.location.startLine;
+      return w.file === f.location.file && w.line === f.location.startLine && symbolOk;
     case 'file':
-      return w.file === f.location.file;
+      return w.file === f.location.file && symbolOk;
     case 'pattern-repo':
       return (
         semantic ||

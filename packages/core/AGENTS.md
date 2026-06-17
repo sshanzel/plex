@@ -37,7 +37,9 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
 - `src/code-path.ts` — `symbolKey(file, name)` = `file#name`, the drift-tolerant stable symbol key for
   code-path memory (ADR-47). Single source of truth so capture (engine accept path), match
   (`matchCodePath`), and the viz join never disagree on "same symbol". `Incident` gains `line`/`symbol`
-  and the lineage `finding` event gains `symbol` to carry it.
+  and the lineage `finding` event gains `symbol` to carry it. `Waiver` also gains `symbol?` (ADR-48) so
+  a file/line waiver scopes to the symbol it was recorded at (the negative twin — location-scoped
+  suppression).
 - `src/index.ts` — barrel.
 
 ## How config is actually resolved

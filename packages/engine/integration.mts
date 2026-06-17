@@ -36,6 +36,8 @@ import {
   recordFixAccepts,
   rankingQuality,
   reviewTarget,
+  reviewTargetFor,
+  loadSuppressions,
   Brain,
 } from './src/index';
 
@@ -789,6 +791,76 @@ test('ranking', 'engine: merged ranked stream (agent + deterministic + waiver)',
     assert.equal(reranked.find((r) => r.title === 'Possible null deref')!.triage, 'surface', 'the agent finding is unaffected');
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('suppress-scope', 'engine: a dismissal anchors to its symbol — suppression is symbol-scoped, not repo-wide (ADR-48)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-supp-'));
+  const knowledgeDir = mkdtempSync(join(tmpdir(), 'reviewer-supp-kdir-'));
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'README.md'), '# repo\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+    // Three functions, each with a `console.log` → three deterministic `no-console` findings, each
+    // anchored to its enclosing symbol (ADR-48 enclosing-symbol resolution). Added as a NEW staged
+    // file so every line is "changed" and all findings fire (the changed-ranges filter).
+    writeFileSync(
+      join(repo, 'src/cli.ts'),
+      'export function run() {\n  console.log("a");\n}\nexport function handler() {\n  console.log("b");\n}\nexport function extra() {\n  console.log("c");\n}\n',
+    );
+    git(repo, 'add', '-A');
+
+    const config = resolveConfig({ dataDir: '.plex', knowledgeDir }); // isolated KB; no embeddings needed
+    const target = reviewTargetFor(repo, { mode: 'staged' });
+
+    // Review 1: the deterministic no-console findings carry their enclosing symbol.
+    const { ranked } = await rankReviewFindings(repo, config, [], { mode: 'staged' });
+    for (const sym of ['run', 'handler', 'extra']) {
+      assert.ok(
+        ranked.some((r) => r.tags?.includes('no-console') && r.location.symbol === sym),
+        `a no-console finding anchored to symbol \`${sym}\``,
+      );
+    }
+
+    // The brain findings carry the `file#name` symbol so a dismissal can inherit it.
+    const brain = await Brain.open(repo, config);
+    let runBf, handlerBf;
+    try {
+      const st = await brain.loadRoundState(target);
+      runBf = st.priorFindings.find((f) => f.symbol === symbolKey('src/cli.ts', 'run'));
+      handlerBf = st.priorFindings.find((f) => f.symbol === symbolKey('src/cli.ts', 'handler'));
+    } finally {
+      await brain.close();
+    }
+    assert.ok(runBf && handlerBf, 'the brain findings carry their file#name symbols');
+
+    // Dismiss `run` and `handler` (two distinct instances → two Wilson votes) — passing each brain
+    // finding id so submitVerdict resolves the symbol, and `pattern` so it keys the no-console rule.
+    // `extra` is left undismissed.
+    for (const bf of [runBf!, handlerBf!]) {
+      await submitVerdict(
+        repo,
+        { findingId: bf.id, kind: 'reject', pattern: 'no-console', file: 'src/cli.ts', title: bf.title },
+        config,
+        target,
+      );
+    }
+
+    // The learned suppression is SYMBOL-SCOPED: it knows the dismissed symbols and is NOT repo-wide, so
+    // the same rule at the undismissed `extra` is never buried by dismissing `run`/`handler`.
+    const decision = (await loadSuppressions(config, basename(resolve(repo)))).find((d) => d.key === 'no-console');
+    assert.ok(decision, 'a no-console suppression decision was learned');
+    assert.equal(decision!.repoWide, false, 'symbol-scoped, not repo-wide');
+    assert.ok(decision!.symbols?.has(symbolKey('src/cli.ts', 'run')), 'scoped to the dismissed `run` symbol');
+    assert.ok(decision!.symbols?.has(symbolKey('src/cli.ts', 'handler')), 'scoped to the dismissed `handler` symbol');
+    assert.ok(!decision!.symbols?.has(symbolKey('src/cli.ts', 'extra')), 'NOT scoped to the undismissed `extra` symbol');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(knowledgeDir, { recursive: true, force: true });
   }
 });
 

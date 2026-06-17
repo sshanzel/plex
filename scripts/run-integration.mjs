@@ -28,6 +28,7 @@ const SCENARIOS = [
   'engine',
   'review-plan',
   'ranking',
+  'suppress-scope',
   'knowledge',
   'brain',
 ];

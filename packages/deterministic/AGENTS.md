@@ -49,6 +49,15 @@ Lines are 1-based via `getLineAndCharacterOfPosition`. `scriptKind` maps the ext
 /`.jsx`/plain JS parse correctly; `isSupportedSource` accepts
 `.ts .tsx .js .jsx .mts .cts .mjs .cjs` (`TS_EXTS`) — anything else is skipped.
 
+**Enclosing symbol (ADR-48).** Each `RawFinding` carries `symbol?` = the nearest enclosing named
+declaration (`enclosingSymbol` walks the parent chain: function/method/accessor/class, or a
+`const f = () => …` / `const f = function …` binding; undefined at top level) → `Finding.location.symbol`.
+This is what lets **location-scoped suppression** (ADR-48) scope a deterministic dismissal to its
+symbol — without it a `no-console` dismissal could only ever go repo-wide. The name is **stable across
+rounds** (re-derived from the same AST), which is all the symbol-scoping match needs; it intentionally
+does **not** mirror the code graph's `Class.method` qualification (a same-named method in two classes
+in one file could collide — rare, accepted).
+
 ## The runner (`src/runner.ts`)
 
 For each diff file (skipping `status === 'deleted'`, unsupported extensions, and generated
@@ -64,7 +73,8 @@ belt-and-suspenders for hand-built diffs; normalization already drops them):
    `onlyChangedRanges: false` disables the filter (whole-file scan).
 4. Convert to `Finding`: id `det:<rule>:<file>:<startLine>`, `source: 'deterministic'`,
    `tags: [rule]` — the tag is what a `pattern-repo` waiver's `pattern` matches against, so a user
-   can waive a whole rule (e.g. `no-console`) for the repo.
+   can waive a whole rule (e.g. `no-console`) for the repo. `location.symbol` carries `raw.symbol`
+   (the **enclosing-symbol** name, ADR-48) — see below.
 5. **Measured prevalence** (`rulePrevalence`, default on; only when something fired): each
    finding is stamped with its rule's repo prevalence = the fraction of sampled source files
    with ≥1 hit of the same rule (breadth-first sample, `prevalenceFileCap` default **400** —

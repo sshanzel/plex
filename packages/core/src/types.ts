@@ -210,6 +210,13 @@ export interface Waiver {
   /** Category tag for category-scope match. */
   category?: string;
   /**
+   * The `file#name` symbol key the waived finding was anchored to (ADR-48, code-path memory). When
+   * set, a `file`/`line`-scoped waiver matches ONLY a finding at the SAME symbol — so acknowledging
+   * one intentional instance doesn't silence the same kind of finding elsewhere in the file. Absent
+   * (no `findingId`/brain finding) ⇒ the waiver keeps pure file/line matching (back-compat).
+   */
+  symbol?: string;
+  /**
    * Embedding of the waived finding (set when a provider is configured). Lets pattern/
    * category-scoped waivers suppress the *same issue* across rounds by meaning, surviving
    * line drift and wording changes — not just exact title/line identity (ADR-27).

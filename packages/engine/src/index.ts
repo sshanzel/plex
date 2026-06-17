@@ -37,6 +37,7 @@ export {
   learnIncident,
   submitVerdict,
   consolidateKnowledge,
+  loadSuppressions,
 } from './knowledge';
 export { reviewContextToHtml } from './viz';
 export {
