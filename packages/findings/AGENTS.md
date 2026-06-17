@@ -59,10 +59,14 @@ widespread real bugs.
 `suppress` decision → `suppressed`; severity `note` → `note` (its own bucket — surfaced,
 never a nit, ADR-31); prevalent → as above; a learned `demote` → `demoted`; else `surface`. Sort by
 `TRIAGE_PRIORITY` (surface 0, systemic-migration 1, note 2, convention 3, demoted 4,
-suppressed 5), then signal descending. The `suppressions?: Map<tag, 'suppress'|'demote'>` option
-carries LEARNED dismissal decisions (computed upstream by `@plex/knowledge` `suppressionTier`, passed
-as a plain decision so this package stays dep-light — `learnedSuppression` picks the strongest across
-a finding's tags); an explicit waiver always outranks a learned `demote` (docs/design/negative-knowledge.md, C1).
+suppressed 5), then signal descending. The `suppressions?: Map<tag, LearnedSuppression>` option
+(`LearnedSuppression = {tier: 'suppress'|'demote', repoWide, symbols?}`) carries LEARNED dismissal
+decisions (computed upstream by `@plex/knowledge` `suppressionTier` + `loadSuppressions`, passed as a
+plain decision so this package stays dep-light — `learnedSuppression` picks the strongest across a
+finding's tags); an explicit waiver always outranks a learned `demote` (docs/design/negative-knowledge.md, C1).
+**Location scope (ADR-48):** `learnedSuppression` applies a matched decision only if it's `repoWide`
+OR the finding's own `file#name` (`symbolKey(f.location.file, f.location.symbol)`) is in the decision's
+`symbols` — so dismissing one `console.log` never silences the same rule at a different symbol.
 `rankFindings` also **strips the transient `embedding`**
 from the returned stream — it exists only so `isWaived` can match semantically; shipping a
 1024-float vector per finding floods the agent's context.
@@ -72,6 +76,13 @@ from the returned stream — it exists only so `isWaived` can match semantically
 - `pattern-repo`: semantic match, OR `pattern === pitfallId` / `pattern ∈ tags`, OR
   `normalizeTitle(w.title) === normalizeTitle(f.title)`.
 - `category-repo` / `category-global`: semantic match, OR `category ∈ tags`.
+
+**Symbol gate (ADR-48).** A `file`/`line`-scoped waiver carrying a `symbol` (`file#name`, set when an
+`acknowledge`/`waive` resolved its finding's symbol from the brain) matches only a finding at the SAME
+`symbolKey(f.location.file, f.location.symbol)` — so acknowledging one intentional instance doesn't
+silence the same kind of finding elsewhere in the file. A symbol-less waiver keeps pure file/line
+matching (back-compat); pattern/category semantic scopes are unaffected (they're "this kind of issue",
+repo-wide by intent).
 
 *Semantic* = both waiver and finding carry an `embedding` and `cosine ≥ semanticThreshold` —
 suppresses the same issue after wording/line drift. The default threshold is **1.01**, i.e.

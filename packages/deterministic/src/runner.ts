@@ -98,7 +98,7 @@ function toFinding(raw: RawFinding, repo: string, file: string): Finding {
     severity: raw.severity,
     confidence: raw.confidence,
     source: 'deterministic',
-    location: { repo, file, startLine: raw.startLine, endLine: raw.endLine },
+    location: { repo, file, startLine: raw.startLine, endLine: raw.endLine, symbol: raw.symbol },
     tags: [raw.rule],
   };
 }

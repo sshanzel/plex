@@ -10,6 +10,8 @@ export interface WaiverIdentity {
   title?: string;
   pattern?: string;
   category?: string;
+  /** The `file#name` symbol the waived finding was at (ADR-48) — scopes a file/line waiver to that symbol. */
+  symbol?: string;
   /** Embedding of the waived finding for semantic re-matching (ADR-27). */
   embedding?: number[];
 }
@@ -104,6 +106,7 @@ export async function loadWaivers(
       title: v.title,
       pattern: v.pattern,
       category: v.category,
+      symbol: v.symbol, // ADR-48: scopes a file/line waiver to the symbol it was recorded at
       embedding: v.embedding,
     }));
 }

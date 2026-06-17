@@ -231,7 +231,8 @@ partial blocks merge with defaults) or `PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS` /
   pitfall and the `(pitfall, file)` guard counts them once. That's not a leak — at that cosine they
   *are* "the same issue" by our matching definition, and the guard is the drift-stability that keeps a
   line-rekeyed or reworded finding from double-counting (same tradeoff as `inferPitfallId`). Accruing
-  to the `suppress` bar across *different files* is unaffected.
+  to the `suppress` bar across *different files* is unaffected. **(ADR-48 refines this dedup to
+  `(pitfall, file, symbol)`** — see below.)
 - **A first-principles suppression silently no-ops on a per-review embed failure (it doesn't degrade —
   it vanishes for that review).** The synthetic `pattern-repo` waiver carries *only* an embedding, so
   if `safeEmbed` returns nothing that round, findings go unembedded, `waiverMatches`'s semantic branch
@@ -239,3 +240,54 @@ partial blocks merge with defaults) or `PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS` /
   recover. There is no identity fallback because a first-principles suppression *is* its embedding
   (unlike a tag-keyed waiver). Deterministic suppression is unaffected — consistent with the
   embeddings-optional posture: off, not broken.
+
+## Location scope — symbol-scoped suppression (ADR-48)
+
+Everything above governs **whether** a rule is suppressed (the Wilson tier) and **how long**
+(recency decay). ADR-48 adds an orthogonal dimension: **where**. A dismissal is the *negative twin*
+of code-path memory (`docs/design/code-path-memory.md`) — it anchors to the `file#name` **symbol** it
+concerned, so suppression scopes to that location instead of becoming a repo-wide weight.
+
+The motivating bug: dismiss one intentional `console.log` ("it's the CLI logger") and the old
+repo-wide behavior demoted/suppressed `no-console` *everywhere* — the next genuinely-stray
+`console.log` was silently buried. The user's intent: *don't re-ask about that instance, but keep
+surfacing the rule elsewhere.*
+
+**How it works.**
+- **Capture.** `submitVerdict` resolves the dismissed finding's `symbol`+`line` from the brain
+  `Finding` (by `findingId`) — hoisted above `recordVerdict`/`learnSuppression` so reject/waive/
+  acknowledge all inherit it — and `learnSuppression` records the negative incident **with** that
+  symbol. An **explicit** repo-wide scope (`pattern-repo`/`category-*` — "this rule, everywhere") is
+  recorded **symbol-less** on purpose.
+- **Dedup → `(pitfall, file, symbol)`.** Both the write-side guard (`learnSuppression`) and the
+  read-side vote grouping (`countsOf`) key on the symbol now: line-drift within one symbol still
+  collapses to a single Wilson vote (the key is drift-tolerant), but two genuinely distinct instances
+  at different symbols in the same file each count. A symbol-less incident keys on `file\0` — identical
+  to the old per-file grouping, so legacy/repo-wide evidence is unchanged.
+- **Derive.** `loadSuppressions` puts `repoWide` + `symbols` on each `SuppressionDecision`. It's
+  `repoWide` iff **any** contributing incident is symbol-less (explicit scope, a legacy record, or a
+  `findingId`-less verdict) — **fail-open** to the pre-ADR-48 behavior, never more aggressive than
+  intended. Otherwise it's scoped to the collected `file#name` set. First-principles (embedding) and
+  cross-repo-promoted decisions stay repo-wide in v1.
+- **Apply.** `rankFindings`'s `learnedSuppression` suppresses a finding iff
+  `repoWide || symbols.has(symbolKey(f.location.file, f.location.symbol))`. A symbol-scoped decision
+  that doesn't match the finding's symbol leaves it surfacing.
+- **Deterministic findings now carry a symbol.** The TS-AST walker (`@plex/deterministic`
+  `analyzeSource`) resolves each finding's nearest enclosing named declaration (`enclosingSymbol`)
+  onto `Finding.location.symbol`. Without this the `no-console` rule — the motivating case — had no
+  symbol and would have stayed repo-wide. The name is stable across rounds (re-derived from the same
+  AST); it needn't match the code graph's `Class.method` qualification, only itself.
+- **The `acknowledge`/`waive` waiver path** is tightened the same way: `Waiver` gains `symbol?`,
+  `submitVerdict` persists it, and `waiverMatches` symbol-gates the `file`/`line` scopes (a
+  symbol-carrying waiver matches only the same `file#name`; a symbol-less one keeps pure file/line
+  matching; pattern/category semantic scopes are untouched).
+
+**Backward-compatible by construction.** Every pre-ADR-48 dismissal incident is symbol-less → reads as
+`repoWide`; a verdict with no resolvable symbol fails open the same way. No migration, no backfill. The
+Wilson "weighted, never a one-click kill" property is preserved — symbol-scoping rides *on top of* the
+tier, it doesn't lower the bar.
+
+**Deferred (v1 limits):** first-principles (embedding-keyed) and cross-repo C2 suppressions stay
+repo-wide (their identity is a title embedding / a cross-project rule, not a symbol); line-level
+granularity is out (symbol is the unit); the deterministic enclosing-symbol is the nearest named
+declaration (two same-named methods in one file could collide — rare, accepted).

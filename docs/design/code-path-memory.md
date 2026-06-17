@@ -136,6 +136,17 @@ from file locality to symbol identity.
   co-change graph is the upgrade if it earns its keep.
 - **Line-level granularity.** Out — symbol is the unit. Revisit only if a real case demands it.
 
+## The negative twin — location-scoped suppression (ADR-48)
+
+Code-path memory anchors *positive* incidents (a fix/accept) to a symbol so a prior fix re-surfaces
+as a regression sentinel. **Suppression** is the mirror: a *dismissal* (reject/waive/acknowledge) is
+anchored to the same `file#name` key so it scopes to **that instance** instead of becoming a repo-wide
+weight — dismiss one intentional `console.log` and the rule still surfaces at every other symbol. Same
+key (`symbolKey`), same brain-finding resolution in `submitVerdict`, opposite polarity. See
+[`negative-knowledge.md`](negative-knowledge.md) §"Location scope" and ADR-48. (One coupling worth
+naming: deterministic findings now carry their enclosing symbol — `@plex/deterministic`
+`enclosingSymbol` — so a codified rule like `no-console` can be symbol-scoped, not just agent findings.)
+
 ## The one-liner (for when you're explaining it)
 
 > A linter checks the code in front of it. Plex remembers what your team already learned about *this

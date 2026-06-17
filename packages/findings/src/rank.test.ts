@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Finding, FindingSource, Severity, Waiver } from '@plex/core';
-import { rankFindings } from './rank';
+import { rankFindings, type LearnedSuppression } from './rank';
 import { dedupeFindings } from './dedupe';
 import { computeSignal } from './signal';
 
@@ -63,9 +63,9 @@ describe('rankFindings triage', () => {
   });
 
   it('learned suppression: a rule tagged `suppress` → suppressed, `demote` → demoted (still visible)', () => {
-    const suppressions = new Map<string, 'suppress' | 'demote'>([
-      ['no-console', 'demote'],
-      ['no-await-in-loop', 'suppress'],
+    const suppressions = new Map<string, LearnedSuppression>([
+      ['no-console', { tier: 'demote', repoWide: true }],
+      ['no-await-in-loop', { tier: 'suppress', repoWide: true }],
     ]);
     const ranked = rankFindings(
       [
@@ -85,9 +85,40 @@ describe('rankFindings triage', () => {
   it('an explicit waiver still wins over a learned demote', () => {
     const ranked = rankFindings(
       [mk({ id: 'x', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'legacy.ts', startLine: 1, endLine: 1 } })],
-      { suppressions: new Map([['no-console', 'demote']]), waivers: [{ scope: 'file', file: 'legacy.ts' }] },
+      { suppressions: new Map([['no-console', { tier: 'demote', repoWide: true }]]), waivers: [{ scope: 'file', file: 'legacy.ts' }] },
     );
     expect(ranked[0]!.triage).toBe('suppressed'); // hard waiver, not the softer demote
+  });
+
+  it('location-scoped suppression: suppresses only at the dismissed symbol, surfaces the same rule elsewhere (ADR-48)', () => {
+    // `no-console` was dismissed at src/cli.ts#run — that ONE instance should stay quiet, but a
+    // console.log at a different symbol must still surface (the rule didn't become a repo-wide weight).
+    const suppressions = new Map<string, LearnedSuppression>([
+      ['no-console', { tier: 'suppress', repoWide: false, symbols: new Set(['src/cli.ts#run']) }],
+    ]);
+    const ranked = rankFindings(
+      [
+        mk({ id: 'dismissed', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'src/cli.ts', startLine: 5, endLine: 5, symbol: 'run' } }),
+        mk({ id: 'elsewhere', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'src/api.ts', startLine: 9, endLine: 9, symbol: 'handler' } }),
+        mk({ id: 'nosymbol', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'src/cli.ts', startLine: 40, endLine: 40 } }),
+      ],
+      { suppressions },
+    );
+    expect(ranked.find((f) => f.id === 'dismissed')!.triage).toBe('suppressed');
+    expect(ranked.find((f) => f.id === 'elsewhere')!.triage).toBe('surface'); // different symbol → still surfaces
+    expect(ranked.find((f) => f.id === 'nosymbol')!.triage).toBe('surface'); // no symbol to match → not suppressed
+  });
+
+  it('a repoWide decision suppresses every instance of the rule (back-compat)', () => {
+    const suppressions = new Map<string, LearnedSuppression>([['no-console', { tier: 'suppress', repoWide: true }]]);
+    const ranked = rankFindings(
+      [
+        mk({ id: 'a', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'src/cli.ts', startLine: 5, endLine: 5, symbol: 'run' } }),
+        mk({ id: 'b', severity: 'nit', tags: ['no-console'], location: { repo: 'r', file: 'src/api.ts', startLine: 9, endLine: 9, symbol: 'handler' } }),
+      ],
+      { suppressions },
+    );
+    expect(ranked.every((f) => f.triage === 'suppressed')).toBe(true);
   });
 
   it('suppresses waived findings and sorts them last', () => {

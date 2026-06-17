@@ -10,6 +10,14 @@ export interface RawFinding {
   body: string;
   severity: Severity;
   confidence: number;
+  /**
+   * The name of the nearest enclosing named declaration (function/method/class, or a `const f = () =>`
+   * binding) — undefined at top level. Becomes `Finding.location.symbol` so a dismissal is anchored to
+   * the SYMBOL it concerned (ADR-48): suppressing one `console.log` scopes to its function, not the
+   * whole rule. Stable across rounds (re-derived from the same AST), which is all the symbol-scoping
+   * match needs — it does NOT have to match the code graph's `Class.method` qualification.
+   */
+  symbol?: string;
 }
 
 const TS_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
@@ -33,6 +41,36 @@ function isNullish(node: ts.Expression): boolean {
 }
 
 /**
+ * The nearest enclosing named declaration of `node` — the symbol a finding lives in (ADR-48). Walks
+ * up the parent chain to the closest function/method/accessor/class with an identifier name, or a
+ * `const name = () => …` / `const name = function …` binding. Undefined at module top level.
+ */
+function enclosingSymbol(node: ts.Node): string | undefined {
+  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+    if (
+      (ts.isFunctionDeclaration(n) ||
+        ts.isMethodDeclaration(n) ||
+        ts.isGetAccessorDeclaration(n) ||
+        ts.isSetAccessorDeclaration(n) ||
+        ts.isClassDeclaration(n)) &&
+      n.name &&
+      ts.isIdentifier(n.name)
+    ) {
+      return n.name.text;
+    }
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer &&
+      (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
+    ) {
+      return n.name.text;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Deterministic checks over a single source file via the TS AST (ADR-03). The always-on
  * structural-pattern layer: 100% recall on each rule's pattern, ~free, reproducible — the
  * complement to the agent's judgment (and what feeds measured prevalence). Pure.
@@ -42,8 +80,8 @@ export function analyzeSource(file: string, text: string): RawFinding[] {
   const out: RawFinding[] = [];
   const start = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const end = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getEnd()).line + 1;
-  const add = (n: ts.Node, r: Omit<RawFinding, 'startLine' | 'endLine'>): void => {
-    out.push({ ...r, startLine: start(n), endLine: end(n) });
+  const add = (n: ts.Node, r: Omit<RawFinding, 'startLine' | 'endLine' | 'symbol'>): void => {
+    out.push({ ...r, startLine: start(n), endLine: end(n), symbol: enclosingSymbol(n) });
   };
 
   const visit = (node: ts.Node): void => {

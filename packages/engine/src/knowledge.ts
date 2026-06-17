@@ -190,6 +190,17 @@ export interface SuppressionDecision {
   pitfallId: string;
   /** Present for FIRST-PRINCIPLES suppressions (ADR-41) — match findings SEMANTICALLY (cosine), not by tag. */
   embedding?: number[];
+  /**
+   * Location scope (ADR-48, the negative twin of code-path memory). `true` ⇒ the decision applies
+   * REPO-WIDE — set when the dismissal was explicitly scoped (`pattern-repo`/`category-*`), when ANY
+   * contributing incident is symbol-less (a legacy/`findingId`-less dismissal — fail-open to today's
+   * behavior), or for cross-repo/first-principles decisions (v1). When `false`, the decision only
+   * matches a finding whose `file#name` symbol is in `symbols` — so dismissing one instance never
+   * silences the same rule at a different symbol.
+   */
+  repoWide: boolean;
+  /** The `file#name` symbol keys this rule was dismissed at (symbol-scoped decisions). */
+  symbols?: Set<string>;
 }
 
 /**
@@ -240,14 +251,18 @@ export async function loadSuppressions(
     // a `waive` escalation over a prior `reject` (ADR-41) upgrades to the persistent half-life rather
     // than double-counting. Belt-and-suspenders: this enforces the one-vote-per-file invariant on the
     // read side too, so even a stray duplicate dismissal can't inflate the Wilson bar.
-    const byFile = new Map<string, Incident[]>();
+    // Group by (file, SYMBOL) (ADR-48): line-drift within ONE symbol still collapses to one vote
+    // (the symbol key is drift-tolerant), but two GENUINELY distinct instances at different symbols in
+    // the same file each count. A symbol-less incident keys on `file\0` — identical to the old
+    // per-file grouping, so legacy/repo-wide evidence is unchanged.
+    const byInstance = new Map<string, Incident[]>();
     for (const i of inc) {
       if (i.outcome !== 'rejected') continue;
-      const f = i.file ?? '';
-      (byFile.get(f) ?? byFile.set(f, []).get(f)!).push(i);
+      const k = `${i.file ?? ''} ${i.symbol ?? ''}`;
+      (byInstance.get(k) ?? byInstance.set(k, []).get(k)!).push(i);
     }
     const dismissals: Dismissal[] = [];
-    for (const group of byFile.values()) {
+    for (const group of byInstance.values()) {
       const chosen = group.find((i) => (i.verb ?? 'reject') === 'waive') ?? group[0]!; // strongest verb wins
       const t = Date.parse(chosen.ts);
       const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000; // unparseable ts → full weight
@@ -255,6 +270,23 @@ export async function loadSuppressions(
     }
     const corrections = inc.filter((i) => i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted').length;
     return decayedCounts(dismissals, corrections, hl);
+  };
+
+  // Location scope (ADR-48): the `file#name` symbols this rule was dismissed AT. If ANY dismissal
+  // incident is symbol-less — a legacy record, a `findingId`-less verdict, or an explicit repo-wide
+  // scope routed symbol-less by `learnSuppression` — the decision is REPO-WIDE (fail-open to today's
+  // behavior; never more aggressive than intended). Otherwise it's symbol-scoped: it only suppresses a
+  // finding at one of these symbols, so dismissing one instance never silences the rule elsewhere.
+  const scopeOf = (p: Pitfall): { repoWide: boolean; symbols?: Set<string> } => {
+    const dismissals = (byPitfall.get(p.id) ?? []).filter((i) => i.outcome === 'rejected');
+    const symbols = new Set<string>();
+    let anySymbolless = false;
+    for (const i of dismissals) {
+      if (i.symbol) symbols.add(i.symbol);
+      else anySymbolless = true;
+    }
+    if (anySymbolless || symbols.size === 0) return { repoWide: true };
+    return { repoWide: false, symbols };
   };
 
   const rank = { none: 0, demote: 1, suppress: 2 } as const;
@@ -271,11 +303,13 @@ export async function loadSuppressions(
     const tier = suppressionTier(dismissals, corrections);
     if (tier !== 'none') {
       // First-principles (embedding-keyed) negatives use the pitfall id as `key` and carry the
-      // `embedding` so ranking matches findings SEMANTICALLY rather than by tag (ADR-41).
+      // `embedding` so ranking matches findings SEMANTICALLY rather than by tag (ADR-41); they stay
+      // REPO-WIDE in v1 (their identity is a title embedding, not a symbol — ADR-48 D3). Deterministic
+      // (keyed) negatives carry the symbol scope derived from their dismissal incidents.
       consider(
         p.suppressKey
-          ? { key: p.suppressKey, tier, dismissals, corrections, pitfallId: p.id }
-          : { key: p.id, tier, dismissals, corrections, pitfallId: p.id, embedding: p.embedding },
+          ? { key: p.suppressKey, tier, dismissals, corrections, pitfallId: p.id, ...scopeOf(p) }
+          : { key: p.id, tier, dismissals, corrections, pitfallId: p.id, embedding: p.embedding, repoWide: true },
       );
     }
   }
@@ -299,7 +333,8 @@ export async function loadSuppressions(
     }
     if (suppressingRepos.size >= PROMOTE_MIN_REPOS) {
       const k = group[0]!.suppressKey!;
-      consider({ key: k, tier: 'suppress', dismissals, corrections, pitfallId: `global@${group[0]!.language ?? ''}:${k}` });
+      // Cross-repo promotion stays REPO-WIDE in v1 (ADR-48): symbols don't generalize across repos.
+      consider({ key: k, tier: 'suppress', dismissals, corrections, pitfallId: `global@${group[0]!.language ?? ''}:${k}`, repoWide: true });
     }
   }
 
@@ -318,7 +353,10 @@ export async function loadSuppressions(
 export async function learnSuppression(
   config: ReviewerConfig,
   repoName: string,
-  input: { kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string; title?: string; note?: string },
+  input: {
+    kind: VerdictInput['kind']; findingId?: string; pattern?: string; file?: string; title?: string;
+    note?: string; scope?: VerdictInput['scope']; symbol?: string; line?: number;
+  },
   firstOfKind: boolean,
 ): Promise<void> {
   if (!firstOfKind) return;
@@ -328,6 +366,16 @@ export async function learnSuppression(
 
   const store = knowledgeStore(config);
   const key = suppressionKeyFor(input);
+
+  // Location scope (ADR-48, the negative twin of code-path memory). By DEFAULT a dismissal is anchored
+  // to the `file#name` symbol it concerned (from the brain finding) — so it suppresses only THAT
+  // instance and the same rule still surfaces at a different symbol. An EXPLICIT repo-wide scope
+  // (`pattern-repo`/`category-*` — the user saying "this rule, everywhere") records symbol-less, which
+  // `loadSuppressions` reads back as repo-wide. No symbol resolved (no `findingId`/brain finding) ⇒
+  // symbol-less ⇒ repo-wide too (fail-open to the pre-ADR-48 behavior).
+  const explicitRepoWide =
+    input.scope === 'pattern-repo' || input.scope === 'category-repo' || input.scope === 'category-global';
+  const anchorSymbol = explicitRepoWide ? undefined : input.symbol;
 
   // Resolve the negative pitfall this incident attaches to. Two identities:
   //  - DETERMINISTIC: a stable `suppressKey` (rule tag / explicit pattern) → keyed pitfall.
@@ -383,9 +431,12 @@ export async function learnSuppression(
     }
   }
 
-  // Drift-stable dedup (ADR-39): count at most ONE dismissal (and one correction) per (pitfall, file)
-  // — a line-rekeyed deterministic finding, or a reworded first-principles one that still matched the
-  // same negative, must not double-count toward the Wilson bar. `firstOfKind` covers same-line retries.
+  // Drift-stable dedup (ADR-39/48): count at most ONE dismissal (and one correction) per
+  // (pitfall, file, SYMBOL) — a line-rekeyed deterministic finding, or a reworded first-principles one
+  // that still matched the same negative, must not double-count toward the Wilson bar. The `symbol`
+  // dimension (ADR-48) lets dismissals at DIFFERENT symbols in the same file each count (they're
+  // distinct instances); symbol-less (repo-wide) incidents collapse exactly as before (the `?? ''`
+  // makes the symbol-less case count-preserving). `firstOfKind` covers same-line retries.
   // VERB UPGRADE (ADR-41): a dismissal isn't a flat dup — a `waive` ("this is wrong") is STRONGER than
   // a `reject` ("not now"). So a `waive` recorded over only prior `reject`(s) is allowed through (it
   // escalates the half-life from 30d to 365d); the read side (`countsOf`) then collapses the pair back
@@ -393,11 +444,12 @@ export async function learnSuppression(
   // carries no new information and is still dropped — so the upgrade is strictly monotone (never downgrades).
   if (existing) {
     const incs = await store.incidents();
+    const sameAnchor = (i: Incident): boolean => i.pitfallId === id && i.file === input.file && (i.symbol ?? '') === (anchorSymbol ?? '');
     if (dismissal) {
-      const prior = incs.filter((i) => i.pitfallId === id && i.file === input.file && i.outcome === 'rejected');
+      const prior = incs.filter((i) => sameAnchor(i) && i.outcome === 'rejected');
       const blocked = input.kind === 'waive' ? prior.some((i) => (i.verb ?? 'reject') === 'waive') : prior.length > 0;
       if (blocked) return;
-    } else if (incs.some((i) => i.pitfallId === id && i.file === input.file && (i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted'))) {
+    } else if (incs.some((i) => sameAnchor(i) && (i.outcome === 'accepted' || i.outcome === 'fixed' || i.outcome === 'reverted'))) {
       return;
     }
   }
@@ -405,6 +457,11 @@ export async function learnSuppression(
   await learnIncident(config, {
     repo: repoName,
     file: input.file,
+    // Code-path anchor (ADR-48): the `file#name` symbol + line this dismissal concerned, so
+    // `loadSuppressions` can scope the suppression to it. `anchorSymbol` is undefined for an explicit
+    // repo-wide scope (or when no brain finding resolved it) → recorded symbol-less → read as repo-wide.
+    symbol: anchorSymbol,
+    line: input.line,
     snippet: key ?? id,
     pitfallId: id,
     outcome: dismissal ? 'rejected' : 'accepted',
@@ -445,40 +502,14 @@ export async function submitVerdict(
   target?: string,
   sharedBrain?: Brain,
 ): Promise<StoredVerdict> {
-  // For waivers AND acknowledgments, embed the finding's title so it can be re-matched
-  // semantically next round (ADR-27/31) — best-effort: only when a real provider is configured.
-  let enriched = input;
-  if ((input.kind === 'waive' || input.kind === 'acknowledge') && input.embedding == null) {
-    const text = [input.title, input.note].filter(Boolean).join(' — ').trim();
-    if (text) {
-      const provider = createEmbeddingProvider(config.embedding);
-      if (provider) {
-        // safeEmbed: a transient embedding failure stores the waiver WITHOUT a vector (it still
-        // suppresses by identity; only semantic re-matching is lost) rather than failing the verdict.
-        const vecs = await safeEmbed(provider, [text]);
-        if (vecs?.[0]) enriched = { ...input, embedding: vecs[0] };
-      }
-    }
-  }
-  // Learning-side idempotency: a re-disposition of the same finding with the same verdict (an agent
-  // retry, or reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a
-  // second incident — duplicated evidence skews the Wilson confidence. Checked BEFORE the append
-  // below so the new verdict can't match itself; the verdict line itself is still recorded (the log
-  // is append-only bookkeeping). A finding with no id can't be deduped, so it always counts.
   const repoName = path.basename(path.resolve(repoPath));
-  const firstOfKind =
-    input.findingId == null ||
-    !(await readVerdicts(repoPath, config)).some((v) => v.kind === input.kind && v.findingId === input.findingId);
-  const alreadyAccepted = input.kind === 'accept' && !firstOfKind;
-  const stored = await recordVerdict(repoPath, enriched, config);
-  // Negative-knowledge producer: a reject/waive confirms a repo-scoped suppression, an accept refutes
-  // it — the same incident→consolidate loop as positives (docs/design/negative-knowledge.md, C1).
-  await learnSuppression(config, repoName, input, firstOfKind);
-  // Resolve the code-path anchor (line + `file#name` symbol key) for an accept incident from the brain
-  // finding — the finding carried them when written (code-path memory); an accept inherits them so the
-  // incident knows WHICH symbol the concern was at, for the next review's location match. Open the
-  // brain once here (best-effort) and reuse it for the verdict projection below. No target (a CLI
-  // verdict) → file+line only.
+  // Resolve the code-path anchor (line + `file#name` symbol key) from the brain finding FIRST — the
+  // finding carried them when written (code-path memory, ADR-47). Hoisted above `recordVerdict` /
+  // `learnSuppression` (ADR-48) because THREE consumers want it: (a) the waive/acknowledge verdict
+  // persists the symbol so its waiver scopes to that instance; (b) `learnSuppression` anchors the
+  // dismissal incident to the symbol so suppression is symbol-scoped, not repo-wide; (c) the accept
+  // incident below. Open the brain once here (best-effort) and reuse it for the verdict projection.
+  // No target (a CLI verdict) → file+line only → symbol-less → falls back to today's repo/file scope.
   const brain = target ? (sharedBrain ?? (await Brain.open(repoPath, config))) : undefined;
   let lastN = 0;
   let acceptLine = input.line;
@@ -493,9 +524,47 @@ export async function submitVerdict(
         acceptSymbol = bf.symbol;
       }
     } catch {
-      /* best-effort: a brain read fault degrades the accept incident to file+line, round to 1 */
+      /* best-effort: a brain read fault degrades the incident to file+line, round to 1 */
     }
   }
+
+  // For waivers AND acknowledgments, embed the finding's title so it can be re-matched
+  // semantically next round (ADR-27/31) — best-effort: only when a real provider is configured. Also
+  // attach the resolved `symbol` (ADR-48 E2) so the persisted waiver suppresses only the SAME symbol,
+  // not every finding in the file (`waiverMatches` symbol-gates the file/line scope when present).
+  let enriched = input;
+  if (input.kind === 'waive' || input.kind === 'acknowledge') {
+    const patch: Partial<VerdictInput> = {};
+    if (acceptSymbol && input.symbol == null) patch.symbol = acceptSymbol;
+    if (input.embedding == null) {
+      const text = [input.title, input.note].filter(Boolean).join(' — ').trim();
+      if (text) {
+        const provider = createEmbeddingProvider(config.embedding);
+        if (provider) {
+          // safeEmbed: a transient embedding failure stores the waiver WITHOUT a vector (it still
+          // suppresses by identity; only semantic re-matching is lost) rather than failing the verdict.
+          const vecs = await safeEmbed(provider, [text]);
+          if (vecs?.[0]) patch.embedding = vecs[0];
+        }
+      }
+    }
+    if (Object.keys(patch).length) enriched = { ...input, ...patch };
+  }
+  // Learning-side idempotency: a re-disposition of the same finding with the same verdict (an agent
+  // retry, or reconcile re-matching a finding someone record_outcome'd by hand) must NOT create a
+  // second incident — duplicated evidence skews the Wilson confidence. Checked BEFORE the append
+  // below so the new verdict can't match itself; the verdict line itself is still recorded (the log
+  // is append-only bookkeeping). A finding with no id can't be deduped, so it always counts.
+  const firstOfKind =
+    input.findingId == null ||
+    !(await readVerdicts(repoPath, config)).some((v) => v.kind === input.kind && v.findingId === input.findingId);
+  const alreadyAccepted = input.kind === 'accept' && !firstOfKind;
+  const stored = await recordVerdict(repoPath, enriched, config);
+  // Negative-knowledge producer: a reject/waive confirms a repo-scoped suppression, an accept refutes
+  // it — the same incident→consolidate loop as positives (docs/design/negative-knowledge.md, C1). The
+  // resolved `symbol`/`line` (ADR-48) anchor the dismissal incident so the suppression scopes to that
+  // instance; `input.scope` still routes an explicit pattern/category dismissal to a repo-wide record.
+  await learnSuppression(config, repoName, { ...input, symbol: acceptSymbol, line: acceptLine }, firstOfKind);
 
   if (input.kind === 'accept' && !alreadyAccepted) {
     // Link the accept to the pitfall it confirms: explicit `pattern` wins, else infer by

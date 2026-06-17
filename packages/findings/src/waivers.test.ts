@@ -48,6 +48,42 @@ describe('semantic waiver matching (ADR-27)', () => {
   });
 });
 
+describe('symbol-scoped waiver matching (ADR-48)', () => {
+  it('a file waiver carrying a symbol suppresses only the same symbol, not the whole file', () => {
+    const w: Waiver = { scope: 'file', file: 'src/venue.tsx', symbol: 'src/venue.tsx#onMount' };
+    const sameSymbol = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 80, endLine: 84, symbol: 'onMount' } });
+    const otherSymbol = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 200, endLine: 204, symbol: 'onUnmount' } });
+    expect(waiverMatches(sameSymbol, w)).toBe(true);
+    expect(waiverMatches(otherSymbol, w)).toBe(false); // same file, different symbol → still surfaces
+  });
+
+  it('a symbol-less file waiver still matches the whole file (back-compat)', () => {
+    const w: Waiver = { scope: 'file', file: 'src/venue.tsx' };
+    const f = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 200, endLine: 204, symbol: 'onUnmount' } });
+    expect(waiverMatches(f, w)).toBe(true);
+  });
+
+  it('a symbol waiver does not match a finding with no symbol (cannot confirm same instance)', () => {
+    const w: Waiver = { scope: 'file', file: 'src/venue.tsx', symbol: 'src/venue.tsx#onMount' };
+    const f = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 42, endLine: 42 } });
+    expect(waiverMatches(f, w)).toBe(false);
+  });
+
+  it('the symbol gate also narrows a line waiver', () => {
+    const w: Waiver = { scope: 'line', file: 'src/venue.tsx', line: 42, symbol: 'src/venue.tsx#onMount' };
+    const same = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 42, endLine: 42, symbol: 'onMount' } });
+    const other = finding({ location: { repo: 'r', file: 'src/venue.tsx', startLine: 42, endLine: 42, symbol: 'helper' } });
+    expect(waiverMatches(same, w)).toBe(true);
+    expect(waiverMatches(other, w)).toBe(false);
+  });
+
+  it('the symbol gate does not affect pattern/category semantic scopes', () => {
+    const w: Waiver = { scope: 'pattern-repo', title: 'x', symbol: 'src/venue.tsx#onMount', embedding: [1, 0, 0] };
+    const f = finding({ title: 'reworded', embedding: [0.96, 0.05, 0] }); // no symbol on the finding
+    expect(waiverMatches(f, w, 0.82)).toBe(true); // pattern/category match unchanged by symbol
+  });
+});
+
 describe('firedSemanticSuppressions — audit attribution (ADR-41)', () => {
   // Embedding-keyed suppression decisions (their `key` is the negative pitfall id, not a tag).
   const decision = (key: string, embedding: number[]) => ({ key, tier: 'suppress' as const, embedding });
