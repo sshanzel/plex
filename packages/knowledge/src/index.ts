@@ -16,5 +16,6 @@ export { addOrReinforcePitfall } from './reinforce';
 export type { AddOrReinforceResult } from './reinforce';
 export { consolidatePitfalls } from './promotion';
 export type { ConsolidateResult } from './promotion';
-export { wilsonLowerBound, confidenceFromOutcomes, suppressionTier, recencyWeight, decayedCounts, Z_95, Z_68 } from './stats';
+export { wilsonLowerBound, confidenceFromOutcomes, suppressionTier, recencyWeight, decayedCounts, CORROBORATED_WEIGHT, Z_95, Z_68 } from './stats';
+export { recurrenceWeight } from './retrieve';
 export type { SuppressionTier, DecayHalfLives, Dismissal } from './stats';

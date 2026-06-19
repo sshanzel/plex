@@ -37,6 +37,7 @@ import {
   scanForAnalysis,
   addAnalyzedPitfalls,
   analyzeRepo,
+  refreshAnalyzedOutcomes,
   embeddingReady,
   type SubmittedFinding,
   type AgentPitfall,
@@ -363,6 +364,16 @@ server.tool(
     limit: z.number().int().positive().optional(),
   },
   (a) => guard(() => analyzeRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'analyze_history'),
+);
+
+server.tool(
+  'refresh_outcomes',
+  "Backfill analyzed pitfalls' confidence from current GitHub state (ADR-50): re-fetch the scanned PRs' review threads, recompute each comment's observed outcome (code change → `fixed`; PR-author reply-agreement on a merged PR → weak `corroborated`), upgrade the matching analyzed incidents (never downgrades; never touches live `accept`s), then consolidate so well-corroborated lessons lift off confidence 0. No LLM, no re-clustering, no new pitfalls. Idempotent; a safe no-op (reports `repoReachable:false`) when the repo isn't checked out here / gh isn't authed. NOTE: age-decay caps how much OLD evidence lifts — its main value is prospective (fresh PRs).",
+  {
+    repoPath: z.string().optional(),
+    state: z.enum(['merged', 'all']).optional(),
+  },
+  (a) => guard(() => refreshAnalyzedOutcomes(a.repoPath ?? process.cwd(), config, { state: a.state }), 'refresh_outcomes'),
 );
 
 server.tool(

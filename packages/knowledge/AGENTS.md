@@ -15,12 +15,12 @@ The engine wraps everything in `packages/engine/src/knowledge.ts`. Decision log:
 | --- | --- |
 | `src/store.ts` | `KnowledgeStore`: two JSONL append logs (`pitfalls.jsonl`, `incidents.jsonl`) under a dir (default `~/.plex/knowledge`, `config.knowledgeDir`) |
 | `src/embeddings.ts` | `EmbeddingProvider` impls (voyage / openai / gemini / ollama / fake) + `createEmbeddingProvider` (returns `null` when unusable) |
-| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` applies the ADR-42 **recency tilt** AND the ADR-44 **confidence tilt** (`score *= max(tiltFloor, recencyWeight(…)) * max(tiltFloor, confidence ?? 1)`, undated/un-scored → 1) |
+| `src/retrieve.ts` | `retrieveRelevant` (hybrid cosine + lexical top-K) and `retrieveRelevantLexical` (no-embeddings path) — `rankAndSlim` ranks by `cosine × recency × confidence` (the **gate** tilts, ADR-42/44, both cut at `minScore`) then re-ranks survivors by `recurrence` (ADR-49, `max(tiltFloor, n/(n+1))`, `n = incidentIds.length`, positive-only, EXCLUDED from the `minScore` cut so a recurring lesson outranks a one-off without erasing it). `recurrenceWeight` is exported + unit-tested |
 | `src/incidents.ts` | `recordIncident` — a confirmed finding → provenance `Incident` (learning loop, ADR-10) |
 | `src/graph.ts` | `buildKnowledgeGraph` — assembles the flat records into an **in-memory graph** (ADR-47): one O(N) pass into adjacency maps + traversal helpers (`historyOf`/`concernsAt`/`concernsInFile`/`pitfallsOf`). The shared join the data is *graph-shaped but flat-stored* (ADR-18) — used by `consolidate`, `matchCodePath`, and the viz symbol↔incident bridge so none hand-roll it. **Reconciles the two-way Pitfall↔Incident link** (forward `incidentIds` ∪ reverse `incident.pitfallId`). |
 | `src/reinforce.ts` | `addOrReinforcePitfall` — **semantic** write-time dedup for mined pitfalls: match a candidate to an existing in-scope pitfall (cosine ≥ `adaptiveFloor(0.7,…)`, exact-title then lexical fallback) → REINFORCE (union incidents, recompute confidence inline, bump `lastReinforcedAt`) instead of minting a duplicate. Replaced exact-title `hasPitfallTitled` on both `analyze` write paths |
 | `src/promotion.ts` | `consolidatePitfalls(store, decay, now)` — **recency-decayed** Wilson confidence recompute from incident outcomes (all-abstain → keep prior, ADR-44) + sets `lastReinforcedAt` + **prunes** a decayed-stale pitfall (ADR-42; provenance Incidents survive) |
-| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `confidenceFromOutcomes` (one Wilson confidence definition, ADR-44) + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
+| `src/stats.ts` | Pure primitives: `wilsonLowerBound` + `confidenceFromOutcomes` (one Wilson confidence definition, ADR-44; weights the weak `corroborated` confirm fractionally, ADR-50) + `suppressionTier` (Wilson at `Z_95`/`Z_68`); `recencyWeight` + `decayedCounts` (suppression recency-decay, ADR-41) |
 | `src/index.ts` | Barrel. Types (`Pitfall`, `Incident`) live in `@plex/core` (`packages/core/src/types.ts`) |
 
 ## The algorithms
@@ -40,16 +40,24 @@ strict-subset fallback inside that matcher.
    i.e. `undefined` scope = global (back-compat); repo-scoped pitfalls surface only for their
    origin repo.
 2. Embed the query once; `score = cosineSimilarity(q, p.embedding)`, then `rankAndSlim` applies **two
-   bounded tilts** before the `minScore` cut: the ADR-42 recency tilt AND (ADR-44) a **confidence
-   tilt** `× max(tiltFloor, confidence ?? 1)` — so among similarly-relevant pitfalls the better-evidenced
-   one ranks higher, a missing confidence is neutral (1). The two tilts are independent axes that
-   **compound** (each floored at `tiltFloor`), so a *stale-AND-weak* pitfall loses up to `tiltFloor²`
-   (0.25) — intended; the floor bounds each axis not the product, so neither tilt zeroes a hit but a
-   low-cosine stale weak pitfall CAN drop below `minScore`. Pitfalls stored WITHOUT a vector (e.g. analyzed key-less)
-   are scored **lexically** in the same pass instead of being invisible; if the query embed
-   throws (provider outage) the whole batch degrades to lexical rather than failing the review.
-3. Keep `score >= minScore` (0.05), sort desc, slice `topK`, and **strip `embedding` from each
-   result** (a voyage-code-3 vector is ~16KB serialized; topK of them would bloat every review context).
+   GATE tilts** that both scale the score AND participate in the `minScore` cut: the ADR-42 recency tilt
+   AND (ADR-44) a **confidence tilt** `× max(tiltFloor, confidence ?? 1)` — so among similarly-relevant
+   pitfalls the better-evidenced one ranks higher, a missing confidence is neutral (1). The two gate
+   tilts are independent axes that **compound** (each floored at `tiltFloor`), so a *stale-AND-weak*
+   pitfall loses up to `tiltFloor²` (0.25) — intended; the floor bounds each axis not the product, so
+   neither tilt zeroes a hit but a low-cosine stale weak pitfall CAN drop below `minScore`. Pitfalls
+   stored WITHOUT a vector (e.g. analyzed key-less) are scored **lexically** in the same pass instead of
+   being invisible; if the query embed throws (provider outage) the whole batch degrades to lexical
+   rather than failing the review.
+3. A third **RE-RANK tilt** — recurrence (ADR-49) `× max(tiltFloor, n/(n+1))`, `n = incidentIds.length`,
+   positive-polarity only — scales the sort/returned score but is **excluded from the `minScore` gate**
+   (it gates on the pre-recurrence evidence score). Recurrence is decay-immune salience among VALID
+   lessons: a long-recurring lesson outranks a one-off, but a one-off is never *erased* for being rare
+   (gating on it would uniformly discount the whole corpus — every `n=1` sits at the floor — and push
+   borderline hits under `minScore`, regressing recall). Distinct from `Finding.prevalence` (a 0..1
+   repo-commonness that DEMOTES); recurrence is a historical count that PROMOTES.
+4. Keep `gate >= minScore` (0.05), sort desc by the recurrence-adjusted score, slice `topK`, and **strip
+   `embedding` from each result** (a voyage-code-3 vector is ~16KB serialized; topK would bloat context).
 
 No provider configured → the engine wrapper (`getRelevantKnowledge`) uses
 **`retrieveRelevantLexical`**: cosine over IDF-weighted token sets (`lexicalTokens`: camelCase

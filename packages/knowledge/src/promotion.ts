@@ -1,6 +1,6 @@
 import type { Incident, Pitfall } from '@plex/core';
 import type { KnowledgeStore } from './store';
-import { wilsonLowerBound, recencyWeight } from './stats';
+import { wilsonLowerBound, recencyWeight, CORROBORATED_WEIGHT } from './stats';
 import { buildKnowledgeGraph, historyOf } from './graph';
 
 /** Decay knobs consolidation needs (a subset of `config.decay`). */
@@ -43,14 +43,18 @@ function confirmsAndRefutes(
   nowMs: number,
   halfLifeDays: number,
 ): { confirms: number; refutes: number } {
-  const isAccepting = (o: Incident['outcome']): boolean => o === 'accepted' || o === 'fixed' || o === 'reverted';
+  // `corroborated` (ADR-50) is an accepting outcome too, but a WEAK one — fractionally weighted so a
+  // reply-agreement confirm tightens confidence less than an observed change. Every other outcome is 1.
+  const isAccepting = (o: Incident['outcome']): boolean =>
+    o === 'accepted' || o === 'fixed' || o === 'reverted' || o === 'corroborated';
+  const outcomeWeight = (o: Incident['outcome']): number => (o === 'corroborated' ? CORROBORATED_WEIGHT : 1);
   const negative = p.polarity === 'negative';
   let confirms = 0;
   let refutes = 0;
   for (const i of inc) {
     // Recency-weight (ADR-42): a lesson that stopped recurring fades. NaN ts → ageDays 0 → weight 1,
     // so undated incidents (e.g. test corpora) behave exactly as the old unweighted count.
-    const w = recencyWeight(ageDaysOf(i.ts, nowMs), halfLifeDays);
+    const w = recencyWeight(ageDaysOf(i.ts, nowMs), halfLifeDays) * outcomeWeight(i.outcome);
     const accepting = isAccepting(i.outcome);
     // negative: a dismissal (rejected) confirms suppression; an accept refutes it. positive: reverse.
     if (negative ? i.outcome === 'rejected' : accepting) confirms += w;

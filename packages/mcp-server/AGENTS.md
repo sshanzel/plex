@@ -8,10 +8,10 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 
 ## Module map
 
-- `src/index.ts` — the server: version/build-mtime capture, `McpServer` + `instructions`, the per-call `guard`, and all 15 tool registrations.
+- `src/index.ts` — the server: version/build-mtime capture, `McpServer` + `instructions`, the per-call `guard`, and all 16 tool registrations.
 - `src/doctor.ts` — `buildDoctorReport()`: pure staleness/health report (unit-tested in `doctor.test.ts`).
 
-## The 14 tools
+## The 16 tools
 
 | Tool | Engine call | Diff-source params |
 |---|---|---|
@@ -27,6 +27,7 @@ the root `AGENTS.md` first; decisions in [`docs/adr/README.md`](../../docs/adr/R
 | `analyze_scan` | `scanForAnalysis` | — (`reset`, `state`, `order`, `limit`) |
 | `add_pitfalls` | `addAnalyzedPitfalls` | — (`pitfalls[]`) |
 | `analyze_history` | `analyzeRepo` | — (`reset`, `state`, `order`, `limit`) |
+| `refresh_outcomes` | `refreshAnalyzedOutcomes` (ADR-50 outcome backfill — re-derive analyzed outcomes from GitHub, then consolidate) | — (`state`) |
 | `sweep_outcomes` | `sweepRepo` (ADR-43 maintenance worker — internal bookkeeping; normally auto-spawned) | — (`repoPath`) |
 | `doctor` | `buildDoctorReport` | — |
 

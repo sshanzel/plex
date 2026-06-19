@@ -2,7 +2,7 @@
 /**
  * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
  * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, consolidate, sweep, analyze (and an undocumented `review` — see the USAGE note).
+ * verdicts, consolidate, refresh-outcomes, sweep, analyze (and an undocumented `review` — see the USAGE note).
  *
  * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
  * making the published `bin` directly executable.
@@ -26,6 +26,7 @@ import {
   embeddingReady,
   reviewContextToHtml,
   analyzeRepo,
+  refreshAnalyzedOutcomes,
   readHomeConfig,
   writeHomeConfig,
   homeConfigPath,
@@ -62,6 +63,7 @@ Usage:
   plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
   plex verdicts [repoPath]
   plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
+  plex refresh-outcomes [repoPath] [--all]               # backfill analyzed pitfalls' confidence from current GitHub state (ADR-50)
   plex serve [--port <n>] [--stop] [--status]            # local web UI to explore the code graph, PR brain & knowledge (http://127.0.0.1:2288)
   plex sweep [repoPath]                                  # background maintenance: close loops + refresh main's graph + consolidate decay + analyze (ADR-43)
   plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
@@ -445,6 +447,24 @@ async function main(): Promise<number> {
       const c = await consolidateKnowledge(config);
       process.stdout.write(
         `Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes${c.pruned ? `, pruned ${c.pruned} stale` : ''}.\n`,
+      );
+      return 0;
+    }
+    case 'refresh-outcomes': {
+      // Backfill analyzed pitfalls' confidence from current GitHub state (ADR-50): re-fetch threads,
+      // recompute outcomes (incl. reply-agreement), upgrade analyzed incidents, consolidate.
+      const repoPath = positionals[1] ?? process.cwd();
+      const res = await refreshAnalyzedOutcomes(repoPath, config, { state: flags.all ? 'all' : 'merged' });
+      if (!res.repoReachable) {
+        process.stdout.write(`Refresh skipped — ${res.reason}.\n`);
+        return 0;
+      }
+      process.stdout.write(
+        `Refreshed outcomes across ${res.prsScanned} PR(s): ${res.matched}/${res.analyzedIncidents} analyzed incidents matched, ` +
+          `${res.upgraded} upgraded, ${res.confirms} now confirm.\n`,
+      );
+      process.stdout.write(
+        'Note: age-decay caps how much OLD evidence lifts confidence — the main payoff is prospective (fresh PRs).\n',
       );
       return 0;
     }

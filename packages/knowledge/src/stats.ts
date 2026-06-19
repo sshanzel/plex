@@ -40,15 +40,28 @@ export function wilsonLowerBound(successes: number, total: number, z = 1.96): nu
  * and `add_pitfalls` pitfalls are always positive ("remember this issue"); negative (suppression)
  * pitfalls are minted only by `learnSuppression` and get their tier from `suppressionTier`, never this.
  * Do NOT feed a negative pitfall's outcomes here — it would read a dismissal as a refute and invert. */
-export function confidenceFromOutcomes(outcomes: ReadonlyArray<IncidentOutcome | undefined>): number {
+export function confidenceFromOutcomes(
+  outcomes: ReadonlyArray<IncidentOutcome | undefined>,
+  corroboratedWeight: number = CORROBORATED_WEIGHT,
+): number {
   let confirms = 0;
   let refutes = 0;
   for (const o of outcomes) {
-    if (o === 'accepted' || o === 'fixed' || o === 'reverted') confirms++;
-    else if (o === 'rejected') refutes++;
+    if (o === 'accepted' || o === 'fixed' || o === 'reverted') confirms += 1;
+    else if (o === 'corroborated') confirms += corroboratedWeight; // weak confirm (ADR-50)
+    else if (o === 'rejected') refutes += 1;
   }
   return wilsonLowerBound(confirms, confirms + refutes);
 }
+
+/**
+ * Evidence weight of a `corroborated` confirm (ADR-50) — a reply-agreement signal mined from analysis,
+ * worth a fraction of an observed code change (`fixed`/`accepted`/`reverted`, weight 1). A SINGLE named
+ * constant, not a per-outcome table (ADR-44 deleted the magic `outcomeWeight` 1.5 bonus and we do not
+ * reintroduce one; strong confirms stay 1.0). Wilson takes the fractional count unchanged, so a noisy
+ * reply confirm tightens confidence less than a real fix. Graduate to config if tuning demands it.
+ */
+export const CORROBORATED_WEIGHT = 0.5;
 
 /** Standard-normal critical values — the two textbook confidence levels, NOT tuned knobs. */
 export const Z_95 = 1.96; // 95% — the level at which we commit to a repo-wide suppression

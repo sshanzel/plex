@@ -324,7 +324,17 @@ export interface AttributedChange extends ChangedRegion {
 }
 
 export type IncidentSource = 'review' | 'analyzed';
-export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted';
+/**
+ * The observed disposition of a flagged issue.
+ *  - `fixed`/`accepted`/`reverted` — a STRONG confirm (weight 1): observed code change, a live accept,
+ *    or a later revert. The reviewer was right.
+ *  - `corroborated` — a WEAK confirm (fractional, ADR-50): mined from analysis when the PR author
+ *    replied in agreement ("done"/"fixed") on a merged PR but no diff change was observed. Real but
+ *    softer evidence than `fixed`; weighted by `CORROBORATED_WEIGHT` in the Wilson confidence so a
+ *    noisier signal can't inflate confidence like an observed change.
+ *  - `rejected` — a refute: a human dismissed the finding in a live review (analysis never emits this).
+ */
+export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted' | 'corroborated';
 
 export interface Incident {
   id: string;

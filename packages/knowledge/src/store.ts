@@ -66,6 +66,20 @@ export class KnowledgeStore {
   addIncident(i: Incident): Promise<void> {
     return this.append(this.incidentsFile, i);
   }
+  /**
+   * Atomically rewrite the whole incident log — the outcome-backfill writer (ADR-50). Mirrors
+   * `replacePitfalls`: write a temp sibling, then `rename` over the target (atomic on POSIX, same
+   * filesystem), so a crash mid-write can't truncate `incidents.jsonl` and lose provenance. Callers
+   * MUST pass the FULL set read via `incidents()` (mutating only the records they intend) — a
+   * filter-then-replace would silently drop the rest, including the non-re-derivable live `accept`s.
+   */
+  async replaceIncidents(incidents: Incident[]): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true });
+    const body = incidents.length ? incidents.map((i) => JSON.stringify(i)).join('\n') + '\n' : '';
+    const tmp = `${this.incidentsFile}.tmp-${process.pid}`;
+    await fs.writeFile(tmp, body, 'utf8');
+    await fs.rename(tmp, this.incidentsFile);
+  }
   async hasPitfallTitled(title: string): Promise<boolean> {
     return (await this.pitfalls()).some((p) => p.title === title);
   }
