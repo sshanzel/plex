@@ -17,8 +17,10 @@ const pf = (over: Partial<Pitfall> & { id: string; title: string }): Pitfall => 
   ...over,
 });
 
-/** n distinct provenance incident ids — drives the recurrence tilt (ADR-49). */
-const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `inc-${i}`);
+/** n distinct ANALYZED provenance incident ids — what the recurrence tilt counts (ADR-49). */
+const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `inc:analyzed:${i}`);
+/** n live-accept (review) incident ids — unioned into incidentIds by consolidate, but recurrence must IGNORE them. */
+const reviewIds = (n: number): string[] => Array.from({ length: n }, (_, i) => `inc:src/a.ts:h${i}:t${i}`);
 
 /** Add pitfalls to a store, embedding their `category: title` text when a provider is given. */
 async function add(store: KnowledgeStore, provider: EmbeddingProvider | null, pitfalls: Pitfall[]): Promise<void> {
@@ -261,5 +263,20 @@ describe('retrieval recurrence tilt (ADR-49 — how often a lesson recurs, decay
     const neg = res.find((r) => r.pitfall.id === 'neg')!;
     const pos = res.find((r) => r.pitfall.id === 'pos')!;
     expect(neg.score).toBeGreaterThan(pos.score); // neg tilt 1 vs pos tilt max(.5, 1/2)=.5
+  });
+
+  it('counts ANALYZED incidents only — accept-union ids do not inflate recurrence (ADR-50 review)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec4-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // Both have 2 ANALYZED incidents; `inflated` also carries 20 live-accept (review) ids that
+    // `consolidate` would have unioned into incidentIds. Recurrence must score them EQUAL — the accepts
+    // belong to the confidence axis, not recurrence.
+    await store.addPitfall(pf({ id: 'lean', title: 'A', embedding: qv, confidence: 0.5, incidentIds: ids(2) }));
+    await store.addPitfall(pf({ id: 'inflated', title: 'B', embedding: qv, confidence: 0.5, incidentIds: [...ids(2), ...reviewIds(20)] }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const lean = res.find((r) => r.pitfall.id === 'lean')!;
+    const inflated = res.find((r) => r.pitfall.id === 'inflated')!;
+    expect(inflated.score).toBeCloseTo(lean.score, 6); // accept volume did not lift recurrence
   });
 });

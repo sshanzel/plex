@@ -72,7 +72,13 @@ const inScope = (p: Pitfall, repo?: string): boolean =>
  */
 export function recurrenceWeight(p: Pitfall, tiltFloor: number): number {
   if ((p.polarity ?? 'positive') !== 'positive') return 1;
-  const n = p.incidentIds?.length ?? 0;
+  // Count only ANALYZED-provenance incidents (`inc:analyzed:*`). `consolidatePitfalls` writes back the
+  // UNION of a pitfall's incidents (forward `incidentIds` ∪ reverse-linked live `accept` incidents), so
+  // a plain `incidentIds.length` would let accept VOLUME inflate recurrence — re-coupling it to the
+  // confidence axis it's meant to be independent of (a live accept is the confidence signal). Analyzed
+  // incidents are the independent "raised in history" events recurrence is about. (The `inc:analyzed:`
+  // prefix is the source marker minted in the analyze pipeline; a review incident is `inc:<slug>:…`.)
+  const n = (p.incidentIds ?? []).filter((id) => id.startsWith('inc:analyzed:')).length;
   return Math.max(tiltFloor, n / (n + 1));
 }
 
@@ -103,11 +109,14 @@ export function recurrenceWeight(p: Pitfall, tiltFloor: number): number {
 // but must never be *erased* for being a one-off (and one-offs are common — `n=1 → tilt floor`, so
 // gating on it would uniformly discount the whole corpus and push borderline-relevant hits under
 // `minScore`, regressing recall). So recurrence promotes; it never buries.
-//   • Recurrence (ADR-49): `max(tiltFloor, n/(n+1))` where `n = incidentIds.length` — how often this
-//     lesson was independently raised across history. UNLIKE confidence (did the fix land?), recurrence
-//     does NOT decay with age, so it's the axis that surfaces a long-recurring lesson in a cold-started
-//     historical KB where every confidence sits at the floor. n=0/1→floor, n=4→0.8, n=37→0.97
-//     (saturating: ≥1 comments-per-PR slightly inflate n, but saturation caps the effect). POSITIVE
+//   • Recurrence (ADR-49): `max(tiltFloor, n/(n+1))` where `n` = the count of ANALYZED-provenance
+//     incidents (`inc:analyzed:*`) — how often this lesson was independently raised across history.
+//     Analyzed-only on purpose: `consolidate` unions live `accept` incidents into `incidentIds`, so a
+//     raw length would let accept volume inflate recurrence and re-couple it to the confidence axis it
+//     must stay independent of. UNLIKE confidence (did the fix land?), recurrence does NOT decay with
+//     age, so it's the axis that surfaces a long-recurring lesson in a cold-started historical KB where
+//     every confidence sits at the floor. n=0/1→floor, n=4→0.8, n=37→0.97 (saturating: ≥1
+//     comments-per-PR slightly inflate n, but saturation caps the effect). POSITIVE
 //     pitfalls only — a negative/suppression pitfall's strength comes from `loadSuppressions` (engine,
 //     live decayed counts), never retrieval; a recurrence tilt there would double-count its dismissals.
 //     NOTE: distinct from `Finding.prevalence` (findings/signal.ts) — that is repo-commonness 0..1 and
