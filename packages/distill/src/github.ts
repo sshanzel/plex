@@ -8,6 +8,9 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 export interface PrRef {
   number: number;
   mergedAt: string | null;
+  /** PR author login (ADR-50) — the reply-agreement confirm requires the agreeing reply to come from
+   *  the PR author, not merely from someone other than the reviewer. Absent if `gh` didn't return it. */
+  author?: string;
 }
 interface GhComment {
   id: number;
@@ -56,7 +59,9 @@ export function parsePrList(stdout: string): PrRef[] {
     const preview = stdout.trim().slice(0, 200);
     throw new Error(`gh pr list did not return a JSON array (got: ${preview || '<empty>'}); is gh installed + authenticated?`);
   }
-  return parsed as PrRef[];
+  // gh returns `author` as an object ({login, …}); normalize it to the login string for PrRef.
+  type RawPr = { number: number; mergedAt: string | null; author?: { login?: string } | null };
+  return (parsed as RawPr[]).map((p) => ({ number: p.number, mergedAt: p.mergedAt, author: p.author?.login }));
 }
 
 /** List PRs (most recent first) via `gh`, run inside the target repo. */
@@ -69,7 +74,7 @@ export async function listPrs(opts: {
   const state = opts.state ?? 'merged';
   const { stdout } = await pexec(
     'gh',
-    ['pr', 'list', '--state', state, '--limit', String(opts.maxPrs || 100), '--json', 'number,mergedAt'],
+    ['pr', 'list', '--state', state, '--limit', String(opts.maxPrs || 100), '--json', 'number,mergedAt,author'],
     { cwd, maxBuffer: MAX_BUFFER },
   );
   return parsePrList(stdout);
@@ -118,6 +123,7 @@ export async function fetchCommentsForPr(cwd: string, pr: PrRef): Promise<RawCom
       id: String(c.id),
       prNumber: pr.number,
       prMerged: pr.mergedAt != null,
+      prAuthor: pr.author,
       path: c.path,
       line: c.line ?? c.original_line,
       outdated: isOutdated(c),

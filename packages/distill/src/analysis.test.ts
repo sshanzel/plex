@@ -46,6 +46,11 @@ describe('parsePrList', () => {
       { number: 8, mergedAt: null },
     ]);
   });
+  it('normalizes the gh `author` object to its login string (ADR-50 reply-agreement gate)', () => {
+    expect(parsePrList('[{"number":7,"mergedAt":null,"author":{"login":"pr-author","is_bot":false}}]')).toEqual([
+      { number: 7, mergedAt: null, author: 'pr-author' },
+    ]);
+  });
   it('throws a labeled error (naming gh) on non-JSON output', () => {
     expect(() => parsePrList('gh: To get started with GitHub CLI, please run: gh auth login')).toThrow(/gh pr list did not return a JSON array/);
   });

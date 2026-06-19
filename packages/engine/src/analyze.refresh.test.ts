@@ -31,7 +31,7 @@ const fakeFetch = {
   listPrs: async (): Promise<PrRef[]> => [{ number: 1, mergedAt: recentTs }],
   fetchCommentsForPr: async (): Promise<RawComment[]> => [
     { id: 'c1', prNumber: 1, prMerged: true, outdated: true, body: 'tenant filter missing' },
-    { id: 'c2', prNumber: 1, prMerged: true, outdated: false, author: 'reviewer', replies: [{ author: 'pr-author', body: 'done, fixed' }], body: 'validate the schema' },
+    { id: 'c2', prNumber: 1, prMerged: true, outdated: false, prAuthor: 'pr-author', author: 'reviewer', replies: [{ author: 'pr-author', body: 'done, fixed' }], body: 'validate the schema' },
   ],
 };
 

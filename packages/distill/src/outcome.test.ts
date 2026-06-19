@@ -24,51 +24,57 @@ describe('outcomeFor', () => {
   });
 });
 
-// Reply-agreement weak confirm (ADR-50): a merged PR where the PR author replied that they addressed
+// Reply-agreement weak confirm (ADR-50): a merged PR where the PR AUTHOR replied that they addressed
 // the comment is a `corroborated` confirm — softer than an observed `fixed`, no extra API (replies are
-// already fetched over REST). Gated to an author distinct from the reviewer + an anchored agreement token.
+// already fetched over REST). Gated to a reply whose author IS the PR author + an anchored agreement
+// token — NOT merely a reply from someone other than the reviewer.
 describe('outcomeFor — reply-agreement (corroborated)', () => {
-  const reviewer = 'octo-reviewer';
-  const author = 'pr-author';
+  const prAuthor = 'pr-author';
 
   it('confirms (corroborated) when the PR author replies in agreement on a merged PR', () => {
     expect(
-      outcomeFor({ outdated: false, prMerged: true, author: reviewer, replies: [{ author, body: 'Done, fixed in the latest push' }] }),
+      outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ author: prAuthor, body: 'Done, fixed in the latest push' }] }),
     ).toBe('corroborated');
   });
 
-  it('accepts a variety of anchored agreement tokens', () => {
-    for (const body of ['fixed', 'Good catch — addressed', 'will fix', 'updated', 'ack']) {
-      expect(outcomeFor({ outdated: false, prMerged: true, author: reviewer, replies: [{ author, body }] })).toBe('corroborated');
+  it('accepts a variety of anchored agreement tokens (incl. "Fixed in `<sha>`")', () => {
+    for (const body of ['fixed', 'Fixed in `a1b2c3d`: tightened the guard', 'Good catch — addressed', 'will fix', 'updated', 'ack']) {
+      expect(outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ author: prAuthor, body }] })).toBe('corroborated');
     }
   });
 
   it('`fixed` (observed change) takes precedence over a reply', () => {
     expect(
-      outcomeFor({ outdated: true, prMerged: true, author: reviewer, replies: [{ author, body: 'done' }] }),
+      outcomeFor({ outdated: true, prMerged: true, prAuthor, replies: [{ author: prAuthor, body: 'done' }] }),
     ).toBe('fixed');
   });
 
-  it('abstains when the agreeing reply is the reviewer talking to themselves (same author)', () => {
+  it('abstains when the agreeing reply is NOT from the PR author (a different reviewer "good catch")', () => {
     expect(
-      outcomeFor({ outdated: false, prMerged: true, author: reviewer, replies: [{ author: reviewer, body: 'done' }] }),
+      outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ author: 'second-reviewer', body: 'good catch' }] }),
     ).toBeUndefined();
   });
 
-  it('abstains when authorship is unknown (cannot establish a distinct PR author)', () => {
-    expect(outcomeFor({ outdated: false, prMerged: true, replies: [{ body: 'done' }] })).toBeUndefined();
-    expect(outcomeFor({ outdated: false, prMerged: true, author: reviewer, replies: [{ body: 'done' }] })).toBeUndefined();
+  it('abstains for a distinct-author NON-agreement reply (the branch a loose regex would mislabel)', () => {
+    expect(
+      outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ author: prAuthor, body: 'Why did you flag this? Leaving as-is.' }] }),
+    ).toBeUndefined();
+  });
+
+  it('abstains when authorship is unknown (cannot establish the PR author replied)', () => {
+    expect(outcomeFor({ outdated: false, prMerged: true, replies: [{ author: prAuthor, body: 'done' }] })).toBeUndefined(); // no prAuthor
+    expect(outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ body: 'done' }] })).toBeUndefined(); // reply author missing
   });
 
   it('abstains when agreement is mid-sentence, not the opening (anchored match)', () => {
     expect(
-      outcomeFor({ outdated: false, prMerged: true, author: reviewer, replies: [{ author, body: "I'm not sure this is fixed yet" }] }),
+      outcomeFor({ outdated: false, prMerged: true, prAuthor, replies: [{ author: prAuthor, body: "I'm not sure this is fixed yet" }] }),
     ).toBeUndefined();
   });
 
   it('abstains for a reply-agreement on an UNMERGED PR (never shipped)', () => {
     expect(
-      outcomeFor({ outdated: false, prMerged: false, author: reviewer, replies: [{ author, body: 'done' }] }),
+      outcomeFor({ outdated: false, prMerged: false, prAuthor, replies: [{ author: prAuthor, body: 'done' }] }),
     ).toBeUndefined();
   });
 });
