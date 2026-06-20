@@ -121,13 +121,13 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 ## MCP tools
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `analyze_scan` · `add_pitfalls` · `analyze_history` · `doctor`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `refresh_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `analyze_scan` · `add_pitfalls` · `analyze_history` · `sweep_outcomes` · `doctor`
 
 ## Architecture
 
 **MCP server and CLI** are the integration seam: the agent brings the LLM, and Plex brings the grounding and the memory.
 
-**Kùzu** (embedded, MIT) holds the durable per-repo code graph (symbols, imports, co-change, and precise alias edges) and the per-PR brain (rounds, findings, verdicts, comments, and the *changed-without-feedback* signal). It's one embedded engine with no service to run (ADR-30). The graph is built once and refreshed incrementally, and reviews index or refresh it on first use or when it drifts.
+**Kùzu** (embedded, MIT) holds the durable per-repo code graph: symbols, imports, co-change, and precise alias edges. It's an embedded engine with no service to run (ADR-30), opened only to map a change's blast radius. The graph is built once and refreshed incrementally, and reviews index or refresh it on first use or when it drifts. The per-PR brain — rounds, findings, verdicts, comments, and the *changed-without-feedback* signal — is kept separately as a durable, append-only JSONL log per review target, keyed to the base repo so it survives `git worktree remove` (ADR-46). Neither needs a service running.
 
 **Knowledge base** is JSON-backed pitfalls and incidents with embeddings, behind a pluggable and optional embedding provider (Voyage, OpenAI, Gemini, or Ollama). Waivers suppress the same issue across rounds *by meaning*, so they survive line drift and rewording.
 
