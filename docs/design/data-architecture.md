@@ -83,7 +83,7 @@ title/trigger/why/mitigation/category/confidence — but **no provenance today**
   top-K knowledge** → brain round-delta → assemble §3 → hand to the model → `submit_findings` ranks +
   persists findings to the brain.
 - **Learn**: an **accept** (`record_outcome`, or inferred by reconcile/sweep) → **Incident** in the
-  global knowledge store → many incidents distil (`plex analyze` / consolidation) into a **Pitfall**
+  global knowledge store → many incidents distil (`/plex:analyze` / consolidation) into a **Pitfall**
   with Wilson confidence. Rejects/waives → negative pitfalls (suppression).
 - **Retrieve**: §3 — the only path knowledge re-enters a review.
 

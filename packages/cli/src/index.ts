@@ -1,32 +1,19 @@
 #!/usr/bin/env node
-/** plex CLI — thin wrapper over @plex/engine for humans; the MCP server is the path for agents. */
-import { writeFileSync, existsSync } from 'node:fs';
+/** plex CLI — setup + maintenance for humans; the reviewer itself runs in your coding agent (the Plex plugin). */
 import { createInterface } from 'node:readline';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   loadConfig,
-  repoPaths,
   indexRepo,
   assembleReviewContext,
   blastRadius,
-  reconcileOutcomes,
-  rankingQuality,
-  submitVerdict,
-  readVerdicts,
-  consolidateKnowledge,
   sweepRepo,
   embeddingReady,
-  reviewContextToHtml,
-  analyzeRepo,
-  refreshAnalyzedOutcomes,
-  readHomeConfig,
   writeHomeConfig,
   homeConfigPath,
   type ReviewContext,
-  type LearnedLesson,
 } from '@plex/engine';
-import type { VerdictKind, WaiverScope } from '@plex/core';
 import { parse, finiteFlag } from './parse';
 import { runServe } from './serve';
 
@@ -38,24 +25,19 @@ function isGitRepo(dir: string): boolean {
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
-const USAGE = `plex, local-first code review context
+const USAGE = `plex — local-first code review
+
+The reviewer runs in your coding agent (the Plex plugin): run /plex:review (or "review my changes
+with Plex"), and /plex:analyze to seed knowledge from your PR review history. This CLI is just setup
++ maintenance.
 
 Run inside your repo. Commands default to the current git repo (an explicit [repoPath] still works).
 
 Usage:
-  plex init                                              # setup (run in your repo): embedding key + offer to index + seed from PR history
-  plex doctor [repoPath]                                 # check embeddings + graph
-  plex index [--incremental]                             # index the current git repo (--incremental: only changed files, ADR-25)
-  plex reconcile [repoPath] [--pr <n> | --staged | --branch <base>]   # auto-accept findings the push fixed (ADR-28)
-  plex eval [repoPath]                                   # offline: how well does ranking match outcomes (nDCG)? measurement only
-  plex blast [repoPath] --files <a.ts,b.ts>
-  plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>] [--note <n>] [--repo <p>]
-  plex verdicts [repoPath]
-  plex consolidate [repoPath]                            # recompute pitfall confidence from recorded outcomes
-  plex refresh-outcomes [repoPath] [--all]               # backfill analyzed pitfalls' confidence from current GitHub state (ADR-50)
-  plex serve [--port <n>] [--stop] [--status]            # local web UI to explore the code graph, PR brain & knowledge (http://127.0.0.1:2288)
-  plex sweep [repoPath]                                  # background maintenance: close loops + refresh main's graph + consolidate decay + analyze (ADR-43)
-  plex analyze [repoPath] [--reset] [--all] [--oldest] [--limit <n>] [--threshold <0..1>] [--min-cluster <n>]  # learn pitfalls from PR review history (--oldest = chronological)
+  plex init                                   # setup: embedding key + offer to index the repo
+  plex index [--incremental]                  # index the current git repo (--incremental: only changed files, ADR-25)
+  plex serve [--port <n>] [--stop] [--status] # local web UI: code graph, PR brain & knowledge (http://127.0.0.1:2288)
+  plex sweep [repoPath]                       # background maintenance: close loops + refresh main's graph + consolidate (ADR-43)
 
 Env: PLEX_DATA_DIR, PLEX_KNOWLEDGE_DIR, PLEX_EMBEDDING_PROVIDER`;
 
@@ -126,20 +108,6 @@ function printReview(ctx: ReviewContext): void {
   process.stdout.write(out.join('\n') + '\n');
 }
 
-/** Summarize what Plex learned + how much of your code it's anchored to (ADR-47). Empty → ''. */
-function formatLearned(learned: LearnedLesson[], limit = 6): string {
-  if (!learned.length) return '';
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const top = [...learned].sort((a, b) => b.incidents - a.incidents).slice(0, limit);
-  const lines = top.map((l) => {
-    const anchor = l.files ? ` · ${plural(l.files, 'file')}` : '';
-    return `  • ${l.title}  (${plural(l.incidents, 'comment')}${anchor})`;
-  });
-  const more = learned.length - top.length;
-  if (more > 0) lines.push(`  …and ${more} more.`);
-  return `Learned from your review history (anchored to your code):\n${lines.join('\n')}\n`;
-}
-
 function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a.trim()); }));
@@ -184,11 +152,8 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** How many recent merged PRs the onboarding seed analyzes — a fast first win; the cursor advances. */
-const INIT_SEED_PRS = 25;
-
-/** One-command setup: optional embedding key, then offer to index + seed from PR history. The MCP is
- *  provided by the Plex plugin, so init does NOT register one (avoids a duplicate `plex` server). */
+/** One-command setup: optional embedding key, then offer to index. The MCP is provided by the Plex
+ *  plugin, so init does NOT register one (avoids a duplicate `plex` server). */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
   out.write('Plex setup (embedded: no Docker, no services).\n\n');
@@ -212,26 +177,11 @@ async function runInit(repoPath: string): Promise<number> {
   }
 
   if (isGitRepo(repoPath)) {
-    if (!embeddingReady(loadConfig())) {
-      out.write('\nTip: add an embedding key (re-run `plex init`) and run `plex analyze` to seed Plex from your\nmerged PR history — it analyzes past review comments into lessons anchored to your code, so the\nreviewer is sharp from day one instead of learning from scratch.\n');
-    } else if ((await ask(`\nSeed Plex from your merged PR history now? Analyzes the most recent ~${INIT_SEED_PRS} merged PRs into\nlessons anchored to your code (uses \`gh\`; run \`plex analyze\` for the full history). [y/N]: `)).toLowerCase() === 'y') {
-      try {
-        const res = await withSpinner(
-          `Analyzing the most recent ${INIT_SEED_PRS} merged PR(s) (fetching via \`gh\`, distilling review comments into lessons)`,
-          () => analyzeRepo(repoPath, loadConfig(), { state: 'merged', limit: INIT_SEED_PRS }),
-        );
-        out.write(
-          `Seeded ${res.pitfalls} lesson(s) (${res.reinforced} reinforced) from ${res.prsScanned} PR(s), ${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
-        );
-        out.write(formatLearned(res.learned));
-        out.write('Run `plex analyze` anytime to continue with older PRs.\n');
-      } catch (e) {
-        out.write(
-          `\nCouldn't seed automatically: ${e instanceof Error ? e.message : String(e)}\n` +
-            'No worries — your agent can seed from PR history later (it has the LLM), or run `plex analyze` once an LLM distiller is available. Plex also learns from every review you run.\n',
-        );
-      }
-    }
+    out.write(
+      '\nTip: run `/plex:analyze` in your agent to seed Plex from your merged PR history — it distills past\n' +
+        'review comments into lessons anchored to your code, so the reviewer is sharp from day one.\n' +
+        (embeddingReady(loadConfig()) ? '' : 'Add an embedding key first (re-run `plex init`) so the lessons are stored semantically.\n'),
+    );
   }
 
   out.write('\nDone. Install the Plex plugin if you have not, then run `/plex:review` in your agent (or say "review my changes with Plex").\n');
@@ -246,17 +196,6 @@ async function main(): Promise<number> {
   switch (command) {
     case 'init':
       return runInit(positionals[1] ?? process.cwd());
-    case 'doctor': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const emb = embeddingReady(config);
-      const graphed = existsSync(repoPaths(repoPath, config.dataDir).graphDir);
-      const line = (ok: boolean, label: string, detail: string) =>
-        process.stdout.write(`  ${ok ? '✓' : '○'} ${label.padEnd(12)} ${detail}\n`);
-      process.stdout.write('plex doctor (embedded, no services)\n');
-      line(emb, 'embeddings', emb ? `provider: ${config.embedding.provider}` : 'not configured (optional). run `plex init`');
-      line(graphed, 'graph', graphed ? 'indexed' : 'not indexed. run `plex index` (reviews also auto-index)');
-      return 0;
-    }
     case 'index': {
       const repoPath = positionals[1] ?? process.cwd();
       if (!isGitRepo(repoPath)) {
@@ -286,8 +225,9 @@ async function main(): Promise<number> {
       }
       return 0;
     }
-    // `review` is OMITTED from USAGE: the CLI only ASSEMBLES context (no LLM); a real review MUST run
-    // in the isolated reviewer agent (anti-bias, ADR-02). Kept for --html viz, --json piping, brain E2E.
+    // INTERNAL (omitted from USAGE): `review --json` and `blast` exist to drive the engine through the
+    // BUILT CLI in the node-only E2E harness (ADR-17 needs child-process isolation per Kùzu open). The
+    // CLI has no LLM, so it only ASSEMBLES context — a real review runs in the isolated agent (ADR-02).
     case 'review': {
       const repoPath = positionals[1] ?? process.cwd();
       const mode: LocalDiffMode | undefined = flags.staged
@@ -303,41 +243,8 @@ async function main(): Promise<number> {
         baseRef: typeof flags.branch === 'string' ? flags.branch : undefined,
         pr: typeof flags.pr === 'string' ? flags.pr : undefined,
       });
-      if (typeof flags.html === 'string') {
-        writeFileSync(flags.html, reviewContextToHtml(ctx));
-        process.stdout.write(`Wrote neighborhood visualization to ${flags.html}\n`);
-      }
       if (flags.json) process.stdout.write(JSON.stringify(ctx, null, 2) + '\n');
       else printReview(ctx);
-      return 0;
-    }
-    case 'reconcile': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const res = await reconcileOutcomes(repoPath, config, {
-        source: flags.pr ? 'pr' : 'local',
-        mode: flags.staged ? 'staged' : flags.branch ? 'branch' : undefined,
-        baseRef: typeof flags.branch === 'string' ? flags.branch : undefined,
-        pr: typeof flags.pr === 'string' ? flags.pr : undefined,
-      });
-      process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
-      process.stdout.write(`  ${res.reason}\n`);
-      for (const a of res.acceptedFindings ?? []) {
-        process.stdout.write(`  ✓ ${a.title} (${a.file ?? '?'}:${a.line ?? '?'} — ${a.matchedBy})\n`);
-      }
-      return 0;
-    }
-    case 'eval': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const q = await rankingQuality(repoPath, config);
-      const verdictLabel = { 'not-yet': 'NOT YET', 'defaults-win': 'DEFAULTS ALREADY WIN', ready: 'READY' }[q.verdict];
-      process.stdout.write(
-        'plex ranking eval (offline — measurement only, no weights change)\n' +
-          `  labeled findings: ${q.labeledFindings}  (${q.positives} positive / ${q.negatives} negative)\n` +
-          `  evaluable rounds: ${q.evaluableRounds}\n` +
-          `  mean nDCG:        ${q.meanNdcg == null ? 'n/a' : q.meanNdcg.toFixed(3)}\n` +
-          `\n  re-weight (deferred #1): ${verdictLabel}\n` +
-          `  ${q.note}\n`,
-      );
       return 0;
     }
     case 'blast': {
@@ -349,83 +256,6 @@ async function main(): Promise<number> {
       }
       const neighbors = await blastRadius(repoPath, files, config);
       process.stdout.write(JSON.stringify({ neighbors }, null, 2) + '\n');
-      return 0;
-    }
-    case 'verdict': {
-      const findingId = positionals[1];
-      const kind = positionals[2] as VerdictKind | undefined;
-      if (!findingId || !kind || !['accept', 'reject', 'waive', 'acknowledge'].includes(kind)) {
-        process.stderr.write('Usage: plex verdict <findingId> <accept|reject|waive|acknowledge> [--scope <s>]\n');
-        return 1;
-      }
-      const repoPath = typeof flags.repo === 'string' ? flags.repo : process.cwd();
-      const stored = await submitVerdict(
-        repoPath,
-        {
-          findingId,
-          kind,
-          scope: typeof flags.scope === 'string' ? (flags.scope as WaiverScope) : undefined,
-          note: typeof flags.note === 'string' ? flags.note : undefined,
-          file: typeof flags.file === 'string' ? flags.file : undefined,
-          line: typeof flags.line === 'string' ? finiteFlag(flags.line, 'line') : undefined,
-          title: typeof flags.title === 'string' ? flags.title : undefined,
-          pattern: typeof flags.pattern === 'string' ? flags.pattern : undefined,
-          category: typeof flags.category === 'string' ? flags.category : undefined,
-        },
-        config,
-      );
-      process.stdout.write(`Recorded: ${JSON.stringify(stored)}\n`);
-      return 0;
-    }
-    case 'verdicts': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const list = await readVerdicts(repoPath, config);
-      process.stdout.write(JSON.stringify(list, null, 2) + '\n');
-      return 0;
-    }
-    case 'analyze': {
-      const repoPath = positionals[1] ?? process.cwd();
-      const oldest = Boolean(flags.oldest);
-      // `--oldest` needs the full PR list to find the chronological start — raise the fetch ceiling.
-      if (oldest) config.analyze.maxPrs = Math.max(config.analyze.maxPrs, 1000);
-      if (typeof flags.threshold === 'string') config.analyze.clusterThreshold = finiteFlag(flags.threshold, 'threshold');
-      if (typeof flags['min-cluster'] === 'string') config.analyze.minClusterSize = finiteFlag(flags['min-cluster'], 'min-cluster');
-      const res = await analyzeRepo(repoPath, config, {
-        reset: Boolean(flags.reset),
-        state: flags.all ? 'all' : 'merged',
-        order: oldest ? 'oldest' : undefined,
-        limit: typeof flags.limit === 'string' ? finiteFlag(flags.limit, 'limit') : undefined,
-      });
-      process.stdout.write(
-        `Analyzed ${res.prsScanned} new PR(s) (total scanned: ${res.totalScanned}). ` +
-          `${res.comments} comments → ${res.substantive} substantive → ${res.clusters} clusters → ` +
-          `+${res.pitfalls} new pitfalls, ${res.reinforced} reinforced, +${res.incidents} incidents. Distiller: ${res.distiller}.\n`,
-      );
-      process.stdout.write(formatLearned(res.learned));
-      return 0;
-    }
-    case 'consolidate': {
-      const c = await consolidateKnowledge(config);
-      process.stdout.write(
-        `Consolidated ${c.reinforced}/${c.pitfalls} pitfall(s) from incident outcomes${c.pruned ? `, pruned ${c.pruned} stale` : ''}.\n`,
-      );
-      return 0;
-    }
-    case 'refresh-outcomes': {
-      // Backfill analyzed pitfalls' confidence from current GitHub state (ADR-50).
-      const repoPath = positionals[1] ?? process.cwd();
-      const res = await refreshAnalyzedOutcomes(repoPath, config, { state: flags.all ? 'all' : 'merged' });
-      if (!res.repoReachable) {
-        process.stdout.write(`Refresh skipped — ${res.reason}.\n`);
-        return 0;
-      }
-      process.stdout.write(
-        `Refreshed outcomes across ${res.prsScanned} PR(s): ${res.matched}/${res.analyzedIncidents} analyzed incidents matched, ` +
-          `${res.upgraded} upgraded, ${res.confirms} now confirm.\n`,
-      );
-      process.stdout.write(
-        'Note: age-decay caps how much OLD evidence lifts confidence — the main payoff is prospective (fresh PRs).\n',
-      );
       return 0;
     }
     case 'serve': {

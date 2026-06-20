@@ -17,7 +17,7 @@ export interface RawComment {
   author?: string;
   createdAt?: string;
   inReplyToId?: number;
-  /** Replies in the same review thread — the LLM distiller reads these to decide skip vs store. */
+  /** Replies in the same review thread — the connected agent reads these (via `analyze_scan`) to decide skip vs store. */
   replies?: { author?: string; body: string }[];
 }
 
@@ -31,22 +31,4 @@ export interface LearnedLesson {
   /** Distinct source files those comments concern — "anchored to N files of your code". */
   files: number;
   action: 'minted' | 'reinforced';
-}
-
-export interface DistillResult {
-  prsScanned: number;
-  comments: number;
-  substantive: number;
-  clusters: number;
-  /** NEW pitfalls minted (a principle not already in the store). */
-  pitfalls: number;
-  /** Existing pitfalls reinforced by a semantically-matching candidate (no duplicate minted). */
-  reinforced: number;
-  /** Clusters the LLM judged NOT worth storing. */
-  skipped: number;
-  incidents: number;
-  /** Name of the LLM distiller that ran (claude-cli, anthropic, openai, …). */
-  distiller: string;
-  /** What was learned this run (titles + code-anchoring) — for a tangible payoff summary. */
-  learned: LearnedLesson[];
 }

@@ -99,6 +99,24 @@ keep higher-confidence version), waive false-positive deterministic findings, th
 table. Add a one-line note that this was an intense review and list the four concerns covered.
 `;
 
+// Codex-neutral replacement for the plex-analyzer's Claude-specific "Section 0" (deferred tools + ToolSearch).
+const CODEX_ANALYZE_SECTION_0 = `## 0. Use the Plex tools (don't hand-distill)
+
+The \`mcp__plex__*\` tools are your spine — they come from the **plex** MCP server this plugin
+configures (its \`.mcp.json\` launches \`@sshanzel/plex\` via \`npx\`). Plex does the mechanical half
+(fetch via \`gh\`, denoise, embed, cluster); you provide the judgment.
+
+- Start by calling \`mcp__plex__analyze_scan\`. If the Plex tools aren't visible, make sure the plex
+  MCP server is enabled in your Codex config — **do not** read PRs by hand with \`gh\`/\`git\` and
+  distill them yourself; that throws away Plex's clustering, provenance, incremental cursor, and
+  semantic dedup. If a Plex call genuinely errors, report the exact error and stop.
+
+**Requirements** (surface these if a call fails for one of these reasons, then stop):
+- **\`gh\` must be authenticated** — \`analyze_scan\` pulls review comments through the GitHub CLI.
+- **An embedding key is strongly recommended** — clustering and \`add_pitfalls\` embed server-side;
+  without a provider \`analyze_scan\` errors (clustering needs vectors). Point the user to \`npx @sshanzel/plex init\`.
+`;
+
 const banner = (src) =>
   `<!-- GENERATED from ${src} by scripts/gen-codex-skills.mjs — do not edit here; edit the source and re-run. -->\n\n`;
 
@@ -121,6 +139,24 @@ const written = [];
   writeFileSync(
     join(dir, 'SKILL.md'),
     `---\nname: ${name}\ndescription: >-\n  ${description}\n---\n\n${banner('agents/plex-reviewer.md')}${body.trimEnd()}\n`,
+  );
+  written.push(name);
+}
+
+// plex-analyzer AGENT  ->  plex-analyze SKILL
+{
+  const name = 'plex-analyze';
+  const description =
+    "Seed Plex's knowledge base from this repo's PR review history — pull merged-PR review comments via `gh`, cluster recurring themes, and distill each into a reusable pitfall stored in Plex via the plex MCP. Use when the user asks to analyze/seed/bootstrap Plex from past reviews, or after installing Plex to give it a head start. Incremental — re-run to keep working through history. Needs `gh` authenticated and an embedding key.";
+  let body = stripFrontmatter(readFileSync(join(ROOT, 'agents', 'plex-analyzer.md'), 'utf8'));
+  // Replace the whole Claude-specific "## 0. Load the Plex tools FIRST …" section up to the next header.
+  body = body.replace(/## 0\. Load the Plex tools FIRST[\s\S]*?(?=\n## )/, CODEX_ANALYZE_SECTION_0);
+  body = adapt(body);
+  const dir = join(OUT, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: >-\n  ${description}\n---\n\n${banner('agents/plex-analyzer.md')}${body.trimEnd()}\n`,
   );
   written.push(name);
 }

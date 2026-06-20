@@ -29,7 +29,7 @@ Copilot review hits usage limits, the Claude solo plan has no review feature, an
 npx @sshanzel/plex init
 ```
 
-It saves the key to `~/.plex/config.json` (you can also create that file yourself), offers to index the current repo, and offers to **seed Plex from your merged PR history** — `plex analyze` distills your past review comments into lessons anchored to your code, so the reviewer is sharp from day one instead of learning from scratch (the fastest way to a useful Plex; see [Bootstrap from your PR history](#bootstrap-from-your-pr-history)). Want a CLI for full visibility (`doctor`, `eval`, analysis, and blast radius from your terminal)? `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
+It saves the key to `~/.plex/config.json` (you can also create that file yourself) and offers to index the current repo. To seed Plex from your past reviews, run **`/plex:analyze`** in your agent — the fastest way to a useful Plex (see [Bootstrap from your PR history](#bootstrap-from-your-pr-history)). For the few maintenance commands you can run from a terminal, `npm install -g @sshanzel/plex` gives you a plain `plex` command — see [Command-line use](#command-line-use-optional).
 
 **3. Review.** Run **`/plex:review`**, or just say *"review my changes with Plex."* The first review indexes the repo for you, and the graph keeps itself fresh after that.
 
@@ -83,17 +83,13 @@ Switching providers later invalidates the stored vectors, since they are not com
 
 ## Bootstrap from your PR history
 
-Plex gets sharper as you review, but you can give it a head start by analyzing your past PR reviews into pitfalls. From inside the repo, with an embedding key set and the GitHub CLI (`gh`) authenticated:
+Plex gets sharper as you review, but you can give it a head start. Run **`/plex:analyze`** in your agent (e.g. `/plex:analyze --oldest --limit 50`) and it pulls your past PR review comments, clusters the recurring themes, and distills them into pitfalls anchored to your code — so the reviewer is useful from day one instead of learning from scratch.
 
-```bash
-npx @sshanzel/plex analyze --oldest --limit 50
-```
-
-That pulls the review comments from your first 50 PRs, clusters the recurring themes, and distills them into knowledge. It rides your Claude subscription (via the `claude` CLI, no API key needed) and is incremental, so re-run it to keep working through your history. Drop `--oldest` to analyze your most recent PRs instead.
+Your connected agent does the distilling (no API key, no separate LLM), on the repo your terminal is in. It needs the GitHub CLI (`gh`) authenticated and an embedding key set (see [Embeddings](#embeddings)). It's incremental: re-run to keep working through your history — `--oldest` goes chronologically from your first PRs, drop it for your most recent, `--limit <n>` bounds a run.
 
 ## Command-line use (optional)
 
-You do not need a terminal CLI for normal use: the plugin runs the reviewer, and `plex init` sets your key. If you also want to run Plex's maintenance and knowledge commands yourself (in CI, a script, or by hand), they are documented in **[docs/cli.md](docs/cli.md)**.
+You do not need a terminal CLI for normal use: the plugin runs the reviewer, `/plex:analyze` seeds knowledge, and `plex init` sets your key. For the handful of maintenance commands you can run yourself — `index`, `serve` (the visualization UI), `sweep` — see **[docs/cli.md](docs/cli.md)**.
 
 ## How it works
 
@@ -117,11 +113,11 @@ You do not need a terminal CLI for normal use: the plugin runs the reviewer, and
 
 **Closing the loop on a PR (opt-in).** Turn on `autoComment` and a PR review posts the ranked stream as one GitHub review: inline comments on the changed lines, plus a summary for coupled and note findings, deduped across rounds. **`/pr-master:respond`** then works through it (you decide each one) and records the outcomes back into the knowledge base (ADR-34). That command comes from a second plugin in the same marketplace, installed separately when you want it: `/plugin install pr-master@sshanzel`.
 
-**Review-history analysis.** Plex turns your PR-review history into pitfalls. It pulls review comments through `gh`, denoises them, clusters similar ones, and an LLM distills each cluster, deciding what's worth keeping and whether it belongs to the global or the per-project layer. Distillation runs on your subscription, through either the connected agent (`analyze_scan` then `add_pitfalls`) or the local `claude` CLI (`plex analyze`). It's incremental: a per-repo cursor only reads new PRs.
+**Review-history analysis.** Plex turns your PR-review history into pitfalls. Run **`/plex:analyze`** and it pulls review comments through `gh`, denoises them, clusters similar ones, and your connected agent distills each cluster — deciding what's worth keeping and whether it belongs to the global or the per-project layer (`analyze_scan` then `add_pitfalls`, on your subscription, no API key). It's incremental: a per-repo cursor only reads new PRs.
 
 ## MCP tools
 
-`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `refresh_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `analyze_scan` · `add_pitfalls` · `analyze_history` · `sweep_outcomes` · `doctor`
+`index_repo` · `get_review_context` · `get_blast_radius` · `get_deterministic_findings` · `submit_findings` · `record_outcome` · `reconcile_outcomes` · `refresh_outcomes` · `get_relevant_knowledge` · `consolidate_knowledge` · `analyze_scan` · `add_pitfalls` · `sweep_outcomes` · `doctor`
 
 ## Architecture
 
@@ -141,7 +137,6 @@ Everything here is optional. Set it once with `plex init` (saved to `~/.plex/con
 |---|---|
 | `PLEX_EMBEDDING_PROVIDER` | Semantic knowledge and brain signals: `voyage`, `openai`, `gemini`, or `ollama`. `none` turns it off; `fake` is for tests only. |
 | *(provider key)* | `VOYAGE_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`. Ollama needs none. |
-| `PLEX_LLM_PROVIDER` | Analysis distiller: `claude-cli` (default), `anthropic`, or `openai`. |
 | `PLEX_DATA_DIR` | Per-repo data directory. Default is centralized at `~/.plex/repos/<id>`; set `.plex` to keep it in the repo, where it self-ignores. |
 | `PLEX_KNOWLEDGE_DIR` | Global knowledge base. Default `~/.plex/knowledge`. |
 | `PLEX_AUTO_COMMENT` | Post a PR review's findings back to the GitHub PR. Off by default. Set `PLEX_AUTO_COMMENT_SKIP_NITS=true` to leave nits out; otherwise nits are posted too. |

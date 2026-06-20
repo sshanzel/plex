@@ -27,7 +27,6 @@ import {
   maybeSpawnSweep,
   scanForAnalysis,
   addAnalyzedPitfalls,
-  analyzeRepo,
   refreshAnalyzedOutcomes,
   embeddingReady,
   type SubmittedFinding,
@@ -77,7 +76,7 @@ const server = new McpServer(
       'reason → submit_findings (one ranked, triaged stream; optionally posts the review to the PR) → ' +
       'record_outcome (accept | reject | waive | acknowledge). reconcile_outcomes checks whether pushed commits ' +
       'addressed findings. Review-history analysis (distill recurring review comments into pitfalls): ' +
-      'analyze_scan / add_pitfalls / analyze_history / consolidate_knowledge. `doctor` reports version + whether a newer build is on ' +
+      'analyze_scan / add_pitfalls / consolidate_knowledge. `doctor` reports version + whether a newer build is on ' +
       'disk (reconnect to load it). NOTE: this stdio server idle-drops after a few seconds and re-spawns on ' +
       'the next call (~400ms), and is stateless per call (reads the brain/graph from disk) — so a ' +
       '"disconnected" status is NEVER a reason to skip a step; just call the tool (the call reconnects), or ' +
@@ -335,19 +334,6 @@ server.tool(
       () => addAnalyzedPitfalls(config, a.pitfalls as AgentPitfall[], path.basename(path.resolve(a.repoPath ?? process.cwd()))),
       'add_pitfalls',
     ),
-);
-
-server.tool(
-  'analyze_history',
-  'One-shot standalone analysis: scan + LLM-distill (local `claude` CLI by default, or the configured provider — errors with no LLM available) + store. Prefer analyze_scan + add_pitfalls to distill with your own reasoning. Takes the same order/limit as analyze_scan.',
-  {
-    repoPath: z.string().optional(),
-    reset: z.boolean().optional(),
-    state: z.enum(['merged', 'all']).optional(),
-    order: z.enum(['newest', 'oldest']).optional(),
-    limit: z.number().int().positive().optional(),
-  },
-  (a) => guard(() => analyzeRepo(a.repoPath ?? process.cwd(), config, { reset: a.reset, state: a.state, order: a.order, limit: a.limit }), 'analyze_history'),
 );
 
 server.tool(

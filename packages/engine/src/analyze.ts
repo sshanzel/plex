@@ -2,7 +2,6 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { ReviewerConfig, Pitfall, PitfallTier, Incident, IncidentOutcome } from '@plex/core';
 import {
-  distillHistory,
   scanHistory,
   categorize,
   distilledPitfallId,
@@ -10,7 +9,6 @@ import {
   fetchCommentsForPr,
   outcomeFor,
   type PrRef,
-  type DistillResult,
   type LearnedLesson,
 } from '@plex/distill';
 import { confidenceFromOutcomes, addOrReinforcePitfall } from '@plex/knowledge';
@@ -50,31 +48,6 @@ export interface AnalyzeOptions {
   order?: 'newest' | 'oldest';
   /** Max fresh PRs to scan this run (the cursor advances for the next run). */
   limit?: number;
-}
-
-/** Analyze a repo's PR review history into the knowledge base, incrementally (ADR-11). */
-export async function analyzeRepo(
-  repoPath: string,
-  config: ReviewerConfig,
-  opts: AnalyzeOptions = {},
-): Promise<DistillResult & { totalScanned: number }> {
-  const p = repoPaths(repoPath, config.dataDir);
-  const repo = path.basename(p.repoPath);
-  const prior = opts.reset ? { repo, scannedPrs: [], lastRun: '' } : await loadAnalyzeState(repoPath, config);
-
-  const embed = requireEmbeddings(config);
-  const store = knowledgeStore(config);
-  const { result, scannedPrs } = await distillHistory(store, embed, config, {
-    cwd: p.repoPath,
-    repoName: repo,
-    alreadyScanned: prior.scannedPrs,
-    state: opts.state,
-    order: opts.order,
-    limit: opts.limit,
-  });
-
-  await saveAnalyzeState(repoPath, config, { repo, scannedPrs, lastRun: new Date().toISOString() });
-  return { ...result, totalScanned: scannedPrs.length };
 }
 
 export interface ReviewCluster {

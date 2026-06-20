@@ -24,15 +24,6 @@ export interface CoChangeConfig {
   maxCommits: number;
 }
 
-/** Generative LLM used ONLY by the offline analysis/distillation pipeline (ADR-02). */
-export type LlmProviderName = 'heuristic' | 'claude-cli' | 'anthropic' | 'openai';
-export interface LlmConfig {
-  provider: LlmProviderName;
-  model?: string;
-  apiKeyEnv?: string;
-  baseUrl?: string;
-}
-
 export interface AnalyzeConfig {
   /** Merged PRs to scan, most recent first (0 = as many as gh returns). */
   maxPrs: number;
@@ -63,8 +54,6 @@ export interface ReviewerConfig {
     /** Minimum aggregate coupling score to include a neighbor. */
     minScore: number;
   };
-  /** Generative LLM for analysis/distillation (offline only). */
-  llm: LlmConfig;
   analyze: AnalyzeConfig;
   /** Post ranked findings back to a reviewed GitHub PR (deduped per round). Off by default; non-PR reviews never post. */
   autoComment: boolean;
@@ -127,12 +116,6 @@ export const defaultConfig: ReviewerConfig = {
     maxNeighbors: 40,
     minScore: 0.05,
   },
-  llm: {
-    // Analysis distillation is LLM-only (ADR-20); default to the local `claude` CLI (subscription, no key).
-    provider: 'claude-cli',
-    model: 'claude-haiku-4-5-20251001',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-  },
   analyze: {
     maxPrs: 100,
     clusterThreshold: 0.8, // <~0.7 sinks everything into one cluster (see AnalyzeConfig)
@@ -153,7 +136,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     embedding: { ...defaultConfig.embedding, ...overrides.embedding },
     coChange: { ...defaultConfig.coChange, ...overrides.coChange },
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
-    llm: { ...defaultConfig.llm, ...overrides.llm },
     analyze: { ...defaultConfig.analyze, ...overrides.analyze },
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
     suppression: { ...defaultConfig.suppression, ...overrides.suppression },

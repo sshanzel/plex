@@ -1,20 +1,18 @@
 # @plex/distill — AGENTS.md
 
-The **distillation pipeline** behind the user-facing `analyze` feature (command/tools `analyze*`,
-package `@plex/distill`; ADR-38). Pull a
-repo's GitHub review comments via the `gh` CLI, **denoise → record provenance Incidents → embed →
-cluster → LLM-distill** each cluster into one Pitfall stored in `@plex/knowledge`. This is how the
-knowledge base gets cold-started from a team's real review history; reviews then retrieve those
-pitfalls, and `record_outcome`/`consolidate_knowledge` refine them. Two paths share the mechanical
-half (`scanHistory`):
+The **clustering/scan technique** behind the user-facing `/plex:analyze` feature (`@plex/distill`;
+ADR-38). Pull a repo's GitHub review comments via the `gh` CLI, **denoise → record provenance
+Incidents → embed → cluster** each into a candidate the connected agent then distills into one
+Pitfall stored in `@plex/knowledge`. This is how the knowledge base gets cold-started from a team's
+real review history; reviews then retrieve those pitfalls, and `record_outcome`/`consolidate_knowledge`
+refine them. Distillation is **agent-only (ADR-51)** — this package does the mechanical half and hands
+clusters to the agent; it no longer contains an LLM distiller:
 
 - **Agent-driven** (MCP `analyze_scan` → the connected agent distills → `add_pitfalls`): rides the
   user's subscription, no API key. The engine adapters live in `packages/engine/src/analyze.ts`
-  (`scanForAnalysis`, `addAnalyzedPitfalls`).
-- **Standalone** (`plex analyze` / MCP `analyze_history` → `analyzeRepo` → `distillHistory`): distills
-  via a `CompletionProvider` from `src/llm.ts`.
+  (`scanForAnalysis`, `addAnalyzedPitfalls`); the `/plex:analyze` command + `plex-analyzer` agent drive it.
 
-Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope) in
+Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope), ADR-51 (agent-only) in
 [docs/adr/README.md](../../docs/adr/README.md); richer-outcome plan in
 [docs/design/outcome-signals.md](../../docs/design/outcome-signals.md); clustering math in
 [docs/design/tuning.md](../../docs/design/tuning.md) §6.
@@ -26,11 +24,10 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
 | `src/github.ts` | `gh`-CLI fetchers (`listPrs`, `fetchCommentsForPr`) + pure `groupThreads` (replies attached to their root comment; orphans dropped, reply-cycles guarded) + pure `isOutdated` (GitHub's `position`-null "hunk changed" signal, ADR-44) |
 | `src/classify.ts` | Denoise (`isSubstantive`) + coarse regex `categorize` (first-match-wins, security first) |
 | `src/cluster.ts` | Pure clustering: `greedyCluster`, `adaptiveCosineThreshold` (μ+kσ), `centroid` |
-| `src/distill.ts` | `llmDistill`: one cluster → one Pitfall (or `null` = SKIP); `distilledPitfallId` |
-| `src/llm.ts` | `CompletionProvider`s: `claude-cli` (default), `anthropic`, `openai`; `createCompletionProvider` → `null` when unusable |
+| `src/distill.ts` | `distilledPitfallId` (collision-free pitfall id) + the `ClusterInput` shape handed to the agent |
 | `src/outcome.ts` | `outcomeFor` — the OBSERVED outcome (confirm `fixed` only on an outdated+merged comment, else abstain; ADR-44) |
-| `src/pipeline.ts` | Orchestration: `scanHistory` (mechanical, no LLM) and `distillHistory` (scan + distill + store) |
-| `src/types.ts` | `RawComment` (thread-grouped source unit), `DistillResult` (+ `learned: LearnedLesson[]` — the per-run payoff: each stored lesson's title/scope/incidents/`files` = distinct comment paths, so the CLI/init/MCP can show "learned X anchored to N files of your code" instead of a bare count; symbol-level anchoring still accrues only from live-review accepts, ADR-47) |
+| `src/pipeline.ts` | Orchestration: `scanHistory` (mechanical, no LLM — scan/denoise/embed/cluster → clusters for the agent) |
+| `src/types.ts` | `RawComment` (thread-grouped source unit), `LearnedLesson` (the per-run payoff: each stored lesson's title/scope/incidents/`files` = distinct comment paths, so the MCP can show "learned X anchored to N files of your code" instead of a bare count; symbol-level anchoring still accrues only from live-review accepts, ADR-47) |
 
 ## The pipeline (`pipeline.ts`)
 
@@ -51,12 +48,11 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
    vector joins the most-similar existing centroid when `sim >= threshold` **and** `sim > 0` (never
    merge orthogonal vectors even at threshold ≤ 0), else starts a cluster; centroids are running
    means. Clusters below `config.analyze.minClusterSize` (default 1) are dropped.
-5. **Distill (ADR-20 — LLM-only, never heuristic)**: `distillHistory` **throws** if
-   `createCompletionProvider` returns `null` (no `claude` binary / missing key) — it never stores
-   junk. `llmDistill` renders the comments *with their thread replies* (the discussion reveals
-   dismissals) and asks for JSON; `{"skip": true}`, missing JSON, or an empty title → `null` (the
-   model decides what's worth remembering; dismissed/intentional suggestions are skipped). LLM/transport
-   errors **propagate** — a broken distiller must fail loudly, not silently skip every cluster.
+5. **Distill (ADR-20 — LLM-only, never heuristic; ADR-51 — agent-only)**: `scanHistory` stops at the
+   clusters and returns them (via MCP `analyze_scan`) to the **connected agent**, which renders each
+   cluster's comments *with their thread replies* (the discussion reveals dismissals) and decides
+   keep-vs-SKIP — skipping trivial, non-reusable, or dismissed/intentional clusters (the model decides
+   what's worth remembering). There is no in-package distiller; the agent IS the LLM.
 6. **Mechanical pitfall fields** (the LLM supplies only the semantic content + keep/skip):
    `confidence = confidenceFromOutcomes(comments.map(outcomeFor))` — the **Wilson lower bound of the
    cluster's OBSERVED confirm rate** (ADR-44; the same `@plex/knowledge` estimator consolidation and
@@ -71,8 +67,8 @@ Decisions: ADR-11 (analysis loop), ADR-20 (LLM-only distillation), ADR-21 (scope
    `adaptiveFloor(0.7,…)` over stored vectors, like the live-review `inferPitfallId`; exact-title then
    lexical fallback when vectorless) **REINFORCES** that pitfall — unions its provenance incidents,
    recomputes confidence (inline Wilson — analyzed incidents carry no `pitfallId`, so `consolidate`
-   can't), bumps `lastReinforcedAt` — instead of minting a near-duplicate. `distillHistory` returns
-   `pitfalls` (minted) **and** `reinforced`. So a re-phrased recurrence of the same lesson across
+   can't), bumps `lastReinforcedAt` — instead of minting a near-duplicate. `addAnalyzedPitfalls` returns
+   `{ added, reinforced }`. So a re-phrased recurrence of the same lesson across
    PRs/runs converges on one pitfall whose confidence climbs (the 322-duplicate fix); `minClusterSize`
    is now purely an LLM-cost throttle (default 1), not the dedup mechanism. Same path in
    `addAnalyzedPitfalls` (the `add_pitfalls` path, which embeds `` `${category}: ${title}\n${why}` ``
@@ -109,15 +105,12 @@ next run continues.
 - **The cursor advances at scan time**, before the agent distills: if `analyze_scan` clusters are never
   passed to `add_pitfalls`, those PRs won't be re-clustered without `--reset` (their Incidents are
   recorded, though).
-- **Stale "heuristic" wording**: the `scanHistory`/`distillHistory` docstrings and the `analyze_history`
-  MCP description still mention a heuristic distiller; reality is LLM-only — `distillHistory` throws.
 
 ## Testing
 
 All tests here are **vitest units** (`pnpm test:unit`), colocated `*.test.ts` — fully offline:
-`pipeline.test.ts` runs `distillHistory` end-to-end with an injected `opts.fetch` (fake GitHub) +
-`opts.llm` (scripted distiller) and `FakeEmbeddingProvider`; `cluster.test.ts` covers the adaptive
-threshold band, the ≥-boundary, and the anisotropic centroid-sink regression; `classify.test.ts`,
-`analysis.test.ts` (threads/denoise/distill), `outcome.test.ts` round out the rest. No Kùzu anywhere
-in this package, so nothing needs `integration.mts`. The real `gh`/LLM paths are exercised only by
-using `plex analyze` against a live repo.
+`cluster.test.ts` covers the adaptive threshold band, the ≥-boundary, and the anisotropic
+centroid-sink regression; `classify.test.ts`, `analysis.test.ts` (threads/denoise/clustering),
+`outcome.test.ts` round out the rest. No Kùzu anywhere in this package, so nothing needs
+`integration.mts`. The real `gh` scan path is exercised only by running `/plex:analyze` against a
+live repo (the agent does the distilling).

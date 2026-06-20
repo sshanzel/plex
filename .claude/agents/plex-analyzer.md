@@ -1,0 +1,1 @@
+../../plugin/agents/plex-analyzer.md

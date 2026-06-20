@@ -58,7 +58,7 @@ file-level is too coarse (every concern in a busy file would fire at once). Symb
   (`submitVerdict` resolving from the brain finding by `findingId`) covers **both** the explicit
   `record_outcome` accept and the automatic reconcile "you fixed it" accept. This is the highest-value
   path — it's the recurrence loop: *Plex flagged it here → you fixed it → you're back at this symbol.*
-- **Mined comments** (from `plex analyze` over PR history) capture the comment's **line** only. There's
+- **Mined comments** (from `/plex:analyze` over PR history) capture the comment's **line** only. There's
   no code graph open at analyze time, and a historical line may not map cleanly to today's symbols, so
   we don't pretend to resolve a symbol — the review-time match falls back to line-overlap.
 
