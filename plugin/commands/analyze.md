@@ -1,6 +1,6 @@
 ---
 description: Seed Plex's knowledge base from your PR review history (distill recurring review comments into reusable pitfalls).
-argument-hint: "[--oldest | --newest] [--limit <n>] [--reset] [--all]"
+argument-hint: "[--oldest] [--limit <n>] [--reset] [--all]"
 ---
 
 Seed **Plex** from this repo's **PR review history** — distill recurring review comments into reusable
