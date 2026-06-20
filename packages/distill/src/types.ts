@@ -4,6 +4,10 @@ export interface RawComment {
   prNumber: number;
   /** Whether the PR that carried this comment was merged (the "shipped" signal). */
   prMerged: boolean;
+  /** The PR author's login (ADR-50). The reply-agreement confirm requires the AGREEING reply to come
+   *  from the PR author (the person who addressed the review) — not merely from someone other than the
+   *  reviewer. Set from `PrRef.author`; absent when `gh` didn't surface it. */
+  prAuthor?: string;
   path?: string;
   line?: number;
   body: string;

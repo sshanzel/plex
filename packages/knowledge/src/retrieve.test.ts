@@ -17,6 +17,11 @@ const pf = (over: Partial<Pitfall> & { id: string; title: string }): Pitfall => 
   ...over,
 });
 
+/** n distinct ANALYZED provenance incident ids — what the recurrence tilt counts (ADR-49). */
+const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `inc:analyzed:${i}`);
+/** n live-accept (review) incident ids — unioned into incidentIds by consolidate, but recurrence must IGNORE them. */
+const reviewIds = (n: number): string[] => Array.from({ length: n }, (_, i) => `inc:src/a.ts:h${i}:t${i}`);
+
 /** Add pitfalls to a store, embedding their `category: title` text when a provider is given. */
 async function add(store: KnowledgeStore, provider: EmbeddingProvider | null, pitfalls: Pitfall[]): Promise<void> {
   const vecs = provider ? await provider.embed(pitfalls.map((p) => `${p.category}: ${p.title}`)) : [];
@@ -193,7 +198,9 @@ describe('retrieval confidence tilt (ADR-44 — evidence weights, never buries)'
     // Honesty check for the corrected "never buries" claim: the floor bounds each axis, not the
     // product, so a stale AND weakly-evidenced pitfall is discounted by up to 0.5·0.5 = 0.25 and CAN
     // drop out — while a fresh, well-evidenced one of identical cosine survives. (Both prior tilt
-    // tests use minScore 0, so this is the cut none of them exercised.)
+    // tests use minScore 0, so this is the cut none of them exercised.) The recurrence tilt (ADR-49)
+    // is excluded from the minScore gate, so it doesn't affect this cut; with equal incident counts
+    // (both default n=0) it also cancels in the ratio below.
     dir = mkdtempSync(join(tmpdir(), 'kn-conf3-'));
     const store = new KnowledgeStore(dir);
     const now = new Date('2026-06-01T00:00:00.000Z');
@@ -209,5 +216,89 @@ describe('retrieval confidence tilt (ADR-44 — evidence weights, never buries)'
     // A cut between the two drops only the stale+weak one — the compound discount is real, not bounded at tiltFloor.
     const cut = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0.5, undefined, now, 365, 0.5);
     expect(cut.map((r) => r.pitfall.id)).toEqual(['strong']);
+  });
+});
+
+describe('retrieval recurrence tilt (ADR-49 — how often a lesson recurs, decay-immune)', () => {
+  const provider = new FakeEmbeddingProvider();
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it('a long-recurring lesson outranks a one-off of equal relevance and confidence', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']); // equal cosine
+    // Same confidence + undated → recency & confidence tilts identical; recurrence is the only differentiator.
+    await store.addPitfall(pf({ id: 'recurring', title: 'A', embedding: qv, confidence: 0.5, incidentIds: ids(37) }));
+    await store.addPitfall(pf({ id: 'oneoff', title: 'B', embedding: qv, confidence: 0.5, incidentIds: ids(1) }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    expect(res[0]!.pitfall.id).toBe('recurring');
+    const recurring = res.find((r) => r.pitfall.id === 'recurring')!;
+    const oneoff = res.find((r) => r.pitfall.id === 'oneoff')!;
+    // recurring tilt = 37/38 ; one-off tilt = max(.5, 1/2) = .5 → ratio (.5)/(37/38)
+    expect(oneoff.score).toBeCloseTo(recurring.score * (0.5 / (37 / 38)), 6);
+  });
+
+  it('a zero-incident pitfall stays visible (floored, not zeroed)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec2-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    await store.addPitfall(pf({ id: 'bare', title: 'A', embedding: qv, confidence: 0.5, incidentIds: [] }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0.05);
+    expect(res.map((r) => r.pitfall.id)).toContain('bare'); // n=0 → tilt floored at 0.5, survives
+  });
+
+  it('a negative (suppression) pitfall gets no recurrence tilt (neutral 1)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec3-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // Equal cosine/confidence; the positive one has FEWER incidents but should still win, because the
+    // negative pitfall is exempt from the recurrence discount (tilt 1) while the positive one is not.
+    await store.addPitfall(pf({ id: 'neg', title: 'A', embedding: qv, confidence: 0.5, polarity: 'negative', incidentIds: ids(1) }));
+    await store.addPitfall(pf({ id: 'pos', title: 'B', embedding: qv, confidence: 0.5, polarity: 'positive', incidentIds: ids(1) }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const neg = res.find((r) => r.pitfall.id === 'neg')!;
+    const pos = res.find((r) => r.pitfall.id === 'pos')!;
+    expect(neg.score).toBeGreaterThan(pos.score); // neg tilt 1 vs pos tilt max(.5, 1/2)=.5
+  });
+
+  it('counts ANALYZED incidents only — accept-union ids do not inflate recurrence (ADR-50 review)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec4-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // Both have 2 ANALYZED incidents; `inflated` also carries 20 live-accept (review) ids that
+    // `consolidate` would have unioned into incidentIds. Recurrence must score them EQUAL — the accepts
+    // belong to the confidence axis, not recurrence.
+    await store.addPitfall(pf({ id: 'lean', title: 'A', embedding: qv, confidence: 0.5, incidentIds: ids(2) }));
+    await store.addPitfall(pf({ id: 'inflated', title: 'B', embedding: qv, confidence: 0.5, incidentIds: [...ids(2), ...reviewIds(20)] }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const lean = res.find((r) => r.pitfall.id === 'lean')!;
+    const inflated = res.find((r) => r.pitfall.id === 'inflated')!;
+    expect(inflated.score).toBeCloseTo(lean.score, 6); // accept volume did not lift recurrence
+  });
+
+  it('does not miscount a review incident on a file slugged "analyzed" (collision-shaped id)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec5-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // A real analyzed id is `inc:analyzed:<commentId>` (no further colon). A review incident whose file
+    // slugifies to `analyzed` is `inc:analyzed:<hash>:<ts>` (extra colons) and must NOT count as analyzed.
+    await store.addPitfall(pf({ id: 'oneAnalyzed', title: 'A', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:101'] }));
+    await store.addPitfall(pf({ id: 'collisionOnly', title: 'B', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:h0:t0', 'inc:analyzed:h1:t1'] }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const real = res.find((r) => r.pitfall.id === 'oneAnalyzed')!;
+    const collision = res.find((r) => r.pitfall.id === 'collisionOnly')!;
+    // real: n=1 → 1/2 = .5 (== floor); collision: n=0 → floor .5 — equal, i.e. the collision ids scored 0.
+    expect(collision.score).toBeCloseTo(real.score, 6);
+    // And a genuinely-analyzed pair (n=2 → .667) DOES outrank the collision-only pitfall, proving the
+    // collision ids were excluded rather than the filter just zeroing everything.
+    await store.addPitfall(pf({ id: 'twoAnalyzed', title: 'C', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:201', 'inc:analyzed:202'] }));
+    const res2 = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const two = res2.find((r) => r.pitfall.id === 'twoAnalyzed')!;
+    const coll2 = res2.find((r) => r.pitfall.id === 'collisionOnly')!;
+    expect(two.score).toBeGreaterThan(coll2.score);
   });
 });

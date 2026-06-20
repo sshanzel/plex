@@ -62,25 +62,72 @@ export function lexicalScores(queryText: string, pitfalls: Pitfall[]): number[] 
 const inScope = (p: Pitfall, repo?: string): boolean =>
   (p.scope ?? 'global') !== 'repo' || p.repo === repo;
 
+/** An analyzed-provenance incident id, EXACTLY `inc:analyzed:<commentId>` (commentId numeric → no
+ *  further colon). Used to count recurrence without miscounting a review incident on a file slugged
+ *  `analyzed` (`inc:analyzed:<hash>:<ts>`, which has extra colons). */
+const ANALYZED_INCIDENT_ID = /^inc:analyzed:[^:]+$/;
+
+/**
+ * Recurrence tilt (ADR-49): `max(tiltFloor, n/(n+1))` where `n` is the pitfall's provenance-incident
+ * count — how often the lesson was independently raised. Monotonic + saturating, so a long-recurring
+ * lesson outranks a one-off at equal cosine. POSITIVE pitfalls only: a negative (suppression) pitfall's
+ * strength is computed live in the engine from decayed dismissal counts, never from a retrieval tilt, so
+ * it gets a neutral 1 here (no double-count). Pure. See the `rankAndSlim` header for the axis rationale
+ * and the `Finding.prevalence` naming contrast.
+ */
+export function recurrenceWeight(p: Pitfall, tiltFloor: number): number {
+  if ((p.polarity ?? 'positive') !== 'positive') return 1;
+  // Count only ANALYZED-provenance incidents. `consolidatePitfalls` writes back the UNION of a pitfall's
+  // incidents (forward `incidentIds` ∪ reverse-linked live `accept` incidents), so a plain
+  // `incidentIds.length` would let accept VOLUME inflate recurrence — re-coupling it to the confidence
+  // axis it's meant to be independent of (a live accept is the confidence signal). Analyzed incidents are
+  // the independent "raised in history" events recurrence is about. The analyze pipeline mints exactly
+  // `inc:analyzed:<commentId>` (commentId numeric → no further colon), so we match that EXACT shape
+  // rather than a bare prefix: a review incident on a file that happens to slugify to `analyzed`
+  // (`inc:analyzed:<hash>:<ts>` — extra colons) must NOT be miscounted as analyzed provenance.
+  const n = (p.incidentIds ?? []).filter((id) => ANALYZED_INCIDENT_ID.test(id)).length;
+  return Math.max(tiltFloor, n / (n + 1));
+}
+
 // Rank, floor, cap — and drop the embedding from the RESULT: it powers the cosine but no
 // consumer ever reads it (the agent, CLI, and audit log use title/why/category/score). A
 // `voyage-code-3` vector is 1024 floats ≈ 16KB serialized PER pitfall — returning topK of
 // them ships ~80KB / tens of thousands of tokens into every review context that the model
 // can't use. The stored pitfall keeps its vector; only the retrieved copy is slimmed.
-// Two bounded, multiplicative tilts applied to the cosine score BEFORE the minScore cut — each floored
-// at `tiltFloor` (> 0, so neither tilt ever ZEROES a hit) and both read-only/reversible (stored fields
-// untouched). They are **independent axes and COMPOUND**: a pitfall that is BOTH stale AND
-// weakly-evidenced is discounted by up to `tiltFloor²` (0.25 at the 0.5 default), which is *intended* —
-// the stale-and-weak combination should rank lowest. The floor bounds each axis, not the product, so
-// "never buries" means **never zeroed and never the sole reason a strongly-relevant hit is cut** — NOT
-// "loses at most tiltFloor": a low-cosine, stale, weak pitfall CAN fall below `minScore` and drop out
-// (the same intended ADR-42 drop-out behavior for the recency axis alone, now possible via either axis).
+// TWO bounded evidence-quality tilts GATE the cosine score (applied before the minScore cut), then a
+// THIRD salience tilt RE-RANKS the survivors. All floored at `tiltFloor` (> 0, so no tilt zeroes a hit)
+// and read-only/reversible (stored fields untouched).
+//
+// Gate tilts — recency & confidence — both scale the score AND participate in the `minScore` cut. They
+// **compound**: a pitfall that is stale AND weakly-evidenced is discounted by up to `tiltFloor²` (0.25
+// at the 0.5 default) and CAN fall below `minScore` and drop out — *intended* (a stale, weak lesson is
+// genuinely less trustworthy; ADR-42). The floor bounds each axis, not the product.
 //   • Recency (ADR-42): `max(tiltFloor, 0.5^(ageDays/halfLife))` from `lastReinforcedAt` — a stale
 //     lesson ranks lower. Undated → ageDays 0 → weight 1 → tilt 1 (no change; preserves test corpora).
 //   • Confidence (ADR-44): `max(tiltFloor, confidence)` — the Wilson-grounded evidence strength (one
 //     estimator everywhere, see confidenceFromOutcomes/consolidatePitfalls), so among similarly-relevant
-//     pitfalls the better-evidenced one wins; a pitfall with NO confidence (legacy/seeded) uses 1
-//     (neutral — never penalized for missing data).
+//     pitfalls the better-evidenced one wins. `?? 1` is a legacy-only safety net: every pitfall the
+//     pipeline writes carries a numeric confidence (mint/add_pitfalls/consolidate all fill it), so a
+//     missing value can only come from a hand-edited record — treated as neutral (1), never penalized.
+//
+// Re-rank tilt — recurrence — scales the sort/returned score but is DELIBERATELY EXCLUDED from the
+// `minScore` cut (it gates on the pre-recurrence evidence score). Recurrence is a salience signal among
+// VALID lessons, not a relevance/quality signal: a valid one-off must rank *below* a recurring lesson
+// but must never be *erased* for being a one-off (and one-offs are common — `n=1 → tilt floor`, so
+// gating on it would uniformly discount the whole corpus and push borderline-relevant hits under
+// `minScore`, regressing recall). So recurrence promotes; it never buries.
+//   • Recurrence (ADR-49): `max(tiltFloor, n/(n+1))` where `n` = the count of ANALYZED-provenance
+//     incidents (`inc:analyzed:*`) — how often this lesson was independently raised across history.
+//     Analyzed-only on purpose: `consolidate` unions live `accept` incidents into `incidentIds`, so a
+//     raw length would let accept volume inflate recurrence and re-couple it to the confidence axis it
+//     must stay independent of. UNLIKE confidence (did the fix land?), recurrence does NOT decay with
+//     age, so it's the axis that surfaces a long-recurring lesson in a cold-started historical KB where
+//     every confidence sits at the floor. n=0/1→floor, n=4→0.8, n=37→0.97 (saturating: ≥1
+//     comments-per-PR slightly inflate n, but saturation caps the effect). POSITIVE
+//     pitfalls only — a negative/suppression pitfall's strength comes from `loadSuppressions` (engine,
+//     live decayed counts), never retrieval; a recurrence tilt there would double-count its dismissals.
+//     NOTE: distinct from `Finding.prevalence` (findings/signal.ts) — that is repo-commonness 0..1 and
+//     DEMOTES (a common style nit ranks lower); recurrence here is a historical count and PROMOTES.
 const rankAndSlim = (
   scored: RetrievedPitfall[],
   topK: number,
@@ -95,9 +142,12 @@ const rankAndSlim = (
       const ageDays = Number.isNaN(t) ? 0 : (nowMs - t) / 86_400_000;
       const recencyTilt = Math.max(tiltFloor, recencyWeight(ageDays, halfLifeDays));
       const confidenceTilt = Math.max(tiltFloor, r.pitfall.confidence ?? 1);
-      return { pitfall: r.pitfall, score: r.score * recencyTilt * confidenceTilt };
+      // `gate` = relevance × evidence-quality, the value the minScore cut sees. Recurrence multiplies
+      // only the sort/returned `score`, so it re-ranks without ever cutting a valid one-off.
+      const gate = r.score * recencyTilt * confidenceTilt;
+      return { pitfall: r.pitfall, gate, score: gate * recurrenceWeight(r.pitfall, tiltFloor) };
     })
-    .filter((r) => r.score >= minScore)
+    .filter((r) => r.gate >= minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
     .map(({ pitfall: { embedding: _embedding, ...pitfall }, score }) => ({ pitfall, score }));

@@ -1,6 +1,6 @@
 # Design note — richer outcome signals for analyzed incidents
 
-**Status: LOCAL PATH BUILT — ADR-44.** The local-first half shipped, but **not as this note first framed it.** The framing flipped: the win is *correcting a mislabeled input*, not *grading positives with weights*. See the "What actually shipped" section at the bottom; the hosted-API pieces (`isResolved`, revert detection) remain deferred behind the rate-limit discipline below. The original plan is kept for that context.
+**Status: LOCAL PATH BUILT — ADR-44, extended ADR-50.** The local-first half shipped, but **not as this note first framed it.** The framing flipped: the win is *correcting a mislabeled input*, not *grading positives with weights*. ADR-50 then added a **second observed signal — reply-agreement** (a weak `corroborated` confirm, still REST-only, no rate-limit cost) plus a **backfill** to re-derive outcomes for already-recorded incidents. See "What actually shipped" + "Extension (ADR-50)" at the bottom; the hosted-API pieces (`isResolved`, revert detection) and LLM-graded replies remain deferred behind the rate-limit discipline below. The original plan is kept for that context.
 
 ## Problem
 
@@ -75,3 +75,14 @@ So the MVP's "else `accepted` (unchanged)" was **rejected** — it keeps the man
 - **Retrieval finally uses confidence** (a bounded tilt beside the recency tilt) — without this the richer signal would feed a value nothing reads.
 
 Still deferred (need the API + rate-limit discipline, so they stay off the local path): `isResolved` corroboration and revert detection.
+
+## Extension (ADR-50) — reply-agreement as a graded weak confirm + a backfill
+
+A populated KB (the playright dogfood) exposed that the ADR-44 confirm — `outdated && merged` — fired **zero** times across 858 analyzed incidents (GitHub nulls a comment's `position` only when a *later commit in the PR* rewrites its exact hunk; empirically rare). So every distilled pitfall sat at `confidence: 0`. Two changes:
+
+- **A second observed signal, graded.** `outcomeFor` becomes a ladder: `outdated && merged` → `fixed` (weight 1); else a merged PR where the **PR author replied in agreement** ("done"/"fixed"/"good catch" — anchored regex, and the reply's author IS the PR author, threaded through `PrRef.author`, not merely someone other than the reviewer) → a new **`corroborated`** outcome — a *claimed* fix, not an observed one. Replies are **already** in the REST payload (`groupThreads`), so this needs **no new API** (unlike `isResolved`, which still needs GraphQL and stays deferred — it's also noisier: threads get resolved for won't-fix/off-topic). `corroborated` is weighted **fractionally** (`CORROBORATED_WEIGHT = 0.5`) in the one Wilson estimator — a single named constant, NOT a revival of the deleted `outcomeWeight` *bonus* table (strong confirms stay 1.0); it grades a weaker *source*. Analysis still **never refutes**.
+- **A backfill (`refresh_outcomes`).** `replaceIncidents` (atomic) + `refreshAnalyzedOutcomes`: re-fetch the scanned PRs, recompute `outcomeFor`, **monotonically upgrade** the matching `inc:analyzed:*` incidents (never downgrade; never touch live `source:'review'` accepts; safe no-op + report when the repo is unreachable), then consolidate. Manual/one-time, **not** a sweep job.
+
+**Honest limit (load-bearing):** `consolidatePitfalls` recency-decays each confirm by `0.5^(ageDays/365)` on the original comment date, so on an OLD corpus a successful confirm lands ~0.05–0.08 — below the 0.5 retrieval confidence-tilt floor → no visible retrieval change. The backfill's payoff is **prospective** (fresh PRs, decay ≈ 1); the decay-immune **recurrence** axis (ADR-49) is what surfaces lessons over the existing historical KB.
+
+**Two estimators, one authoritative.** `refresh_outcomes` lifts confidence via the inline `confidenceFromOutcomes` (weights `corroborated` flat 0.5), but the next `consolidatePitfalls` re-scores it with recency-decay (`recencyWeight × 0.5`) — so a confidence the refresh reports today can settle *lower* on a later sweep as the comment ages. Pre-existing mint-vs-consolidate duality (ADR-42); **consolidate is the authoritative value**, the inline one a transient seed. Set expectations accordingly when reading the refresh report. **Still deferred:** GraphQL `isResolved`, revert detection, and an LLM-graded reply path (the distiller already reads replies — routing a per-comment outcome verdict back onto incidents is the higher-quality but larger-contract change).

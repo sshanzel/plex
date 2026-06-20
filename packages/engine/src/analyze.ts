@@ -1,9 +1,20 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { ReviewerConfig, Pitfall, PitfallTier } from '@plex/core';
-import { distillHistory, scanHistory, categorize, distilledPitfallId, type DistillResult, type LearnedLesson } from '@plex/distill';
+import type { ReviewerConfig, Pitfall, PitfallTier, Incident, IncidentOutcome } from '@plex/core';
+import {
+  distillHistory,
+  scanHistory,
+  categorize,
+  distilledPitfallId,
+  listPrs,
+  fetchCommentsForPr,
+  outcomeFor,
+  type PrRef,
+  type DistillResult,
+  type LearnedLesson,
+} from '@plex/distill';
 import { confidenceFromOutcomes, addOrReinforcePitfall } from '@plex/knowledge';
-import { knowledgeStore, requireEmbeddings } from './knowledge';
+import { knowledgeStore, requireEmbeddings, consolidateKnowledge } from './knowledge';
 import { repoPaths } from './paths';
 
 // The product feature is "analyze your PR review history"; the technique it uses (cluster +
@@ -201,4 +212,123 @@ export async function addAnalyzedPitfalls(
     learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
   }
   return { added, reinforced, learned };
+}
+
+// ---------------------------------------------------------------------------
+// Outcome backfill (ADR-50) — re-derive analyzed incidents' outcomes from current GitHub state, then
+// consolidate so confidence lifts. NOT a re-distill: no LLM, no clustering, no new pitfalls. The fix
+// for "every distilled pitfall sits at confidence 0 because the confirm signal never fired" — paired
+// with the broadened `outcomeFor` (reply-agreement). Also the prospective freshener as threads resolve.
+// ---------------------------------------------------------------------------
+
+const ANALYZED_PREFIX = 'inc:analyzed:';
+const isAnalyzedIncident = (i: Incident): boolean => i.source === 'analyzed' && i.id.startsWith(ANALYZED_PREFIX);
+/** Confirm strength so backfill only ever UPGRADES an outcome (monotonic, idempotent, never downgrades
+ *  a prior `fixed` on a transient fetch miss). `corroborated` (weak) < observed change; abstain = 0. */
+const outcomeRank = (o?: IncidentOutcome): number =>
+  o === 'fixed' || o === 'accepted' || o === 'reverted' ? 2 : o === 'corroborated' ? 1 : 0;
+const isConfirm = (o?: IncidentOutcome): boolean => outcomeRank(o) > 0; // `rejected` → rank 0, so already excluded
+
+export interface RefreshOutcomesResult {
+  /** Could `gh` list the repo's PRs? `false` = repo not checked out here / not authed → safe no-op. */
+  repoReachable: boolean;
+  prsScanned: number;
+  /** Total `inc:analyzed:*` incidents in the store. */
+  analyzedIncidents: number;
+  /** Analyzed incidents whose source comment was successfully re-fetched. */
+  matched: number;
+  /** Incidents whose outcome was upgraded this run (abstain→corroborated/fixed, or corroborated→fixed). */
+  upgraded: number;
+  /** Analyzed incidents now carrying a confirm (`fixed`/`accepted`/`reverted`/`corroborated`). */
+  confirms: number;
+  reason: string;
+}
+
+/**
+ * Backfill analyzed incidents' outcomes from current GitHub state, then consolidate (ADR-50). Re-lists
+ * merged PRs, re-fetches each comment thread, recomputes `outcomeFor` (now incl. reply-agreement), and
+ * **upgrades** the matching `inc:analyzed:<commentId>` incident's outcome — then `consolidateKnowledge`
+ * recomputes Wilson confidence so well-corroborated lessons lift off zero.
+ *
+ * Safety (the load-bearing constraints):
+ *  - **Only ever touches `source:'analyzed'` incidents.** The whole incident set is read and rewritten;
+ *    live `source:'review'` accepts (NOT re-derivable from GitHub) pass through untouched.
+ *  - **Never downgrades.** A confirm only replaces a weaker outcome (`outcomeRank`), so a fetch miss
+ *    (`fetchCommentsForPr` returns `[]` on error) or a now-abstaining comment leaves the incident as-is.
+ *  - **Idempotent.** A second run with the same GitHub state upgrades nothing and rewrites nothing.
+ *  - **Safe no-op when the repo is unreachable** (not checked out / `gh` unauthed) — reports it rather
+ *    than silently "succeeding" with zero changes. No embeddings required (pure outcome + consolidate).
+ */
+export async function refreshAnalyzedOutcomes(
+  repoPath: string,
+  config: ReviewerConfig,
+  opts: {
+    state?: 'merged' | 'all';
+    fetch?: { listPrs: typeof listPrs; fetchCommentsForPr: typeof fetchCommentsForPr };
+  } = {},
+): Promise<RefreshOutcomesResult> {
+  const p = repoPaths(repoPath, config.dataDir);
+  const store = knowledgeStore(config);
+  const api = opts.fetch ?? { listPrs, fetchCommentsForPr };
+
+  const incidents = await store.incidents();
+  const analyzed = incidents.filter(isAnalyzedIncident);
+  const base = { prsScanned: 0, analyzedIncidents: analyzed.length, matched: 0, upgraded: 0 };
+  if (analyzed.length === 0) {
+    return { repoReachable: true, ...base, confirms: 0, reason: 'no analyzed incidents to refresh' };
+  }
+
+  let prs: PrRef[];
+  try {
+    prs = await api.listPrs({ cwd: p.repoPath, maxPrs: config.analyze.maxPrs, state: opts.state ?? 'merged' });
+  } catch {
+    // `gh` can't resolve the repo (not checked out here / not authed). Safe no-op — change nothing.
+    return {
+      repoReachable: false,
+      ...base,
+      confirms: analyzed.filter((i) => isConfirm(i.outcome)).length,
+      reason: `repo not reachable via gh at ${p.repoPath} (not checked out or not authenticated) — nothing refreshed`,
+    };
+  }
+
+  // commentIncidentId → recomputed outcome (only successfully-fetched comments appear; a fetch miss is
+  // simply absent → the incident is never downgraded).
+  const fetchedOutcome = new Map<string, IncidentOutcome | undefined>();
+  for (const pr of prs) {
+    for (const c of await api.fetchCommentsForPr(p.repoPath, pr)) {
+      fetchedOutcome.set(`${ANALYZED_PREFIX}${c.id}`, outcomeFor(c));
+    }
+  }
+
+  let matched = 0;
+  let upgraded = 0;
+  const next = incidents.map((i) => {
+    if (!isAnalyzedIncident(i) || !fetchedOutcome.has(i.id)) return i;
+    matched++;
+    const candidate = fetchedOutcome.get(i.id);
+    if (outcomeRank(candidate) > outcomeRank(i.outcome)) {
+      upgraded++;
+      return { ...i, outcome: candidate };
+    }
+    return i;
+  });
+
+  if (upgraded > 0) {
+    await store.replaceIncidents(next);
+    await consolidateKnowledge(config); // recompute Wilson confidence from the upgraded outcomes
+  }
+
+  const confirms = next.filter((i) => isAnalyzedIncident(i) && isConfirm(i.outcome)).length;
+  return {
+    repoReachable: true,
+    prsScanned: prs.length,
+    analyzedIncidents: analyzed.length,
+    matched,
+    upgraded,
+    confirms,
+    reason:
+      upgraded > 0
+        ? `upgraded ${upgraded} of ${matched} matched analyzed incidents; ${confirms} now confirm`
+        : `no upgrades (${matched} of ${analyzed.length} analyzed incidents matched; outcomes already current)`,
+  };
 }

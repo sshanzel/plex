@@ -44,6 +44,7 @@ export {
   analyzeRepo,
   scanForAnalysis,
   addAnalyzedPitfalls,
+  refreshAnalyzedOutcomes,
   loadAnalyzeState,
 } from './analyze';
 export type {
@@ -52,6 +53,7 @@ export type {
   ReviewCluster,
   ScanForAnalysisResult,
   AgentPitfall,
+  RefreshOutcomesResult,
 } from './analyze';
 export type { DistillResult, LearnedLesson } from '@plex/distill';
 export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';

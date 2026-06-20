@@ -45,6 +45,15 @@ describe('confidenceFromOutcomes (one Wilson definition of confidence)', () => {
     expect(confidenceFromOutcomes(O(undefined, undefined))).toBe(0);
     expect(confidenceFromOutcomes([])).toBe(0);
   });
+  it('weights a `corroborated` confirm fractionally (ADR-50) — a weak confirm is not a full one', () => {
+    // One corroborated reply-agreement is half a confirm by default (CORROBORATED_WEIGHT 0.5).
+    expect(confidenceFromOutcomes(O('corroborated'))).toBe(wilsonLowerBound(0.5, 0.5));
+    expect(confidenceFromOutcomes(O('corroborated'))).toBeLessThan(confidenceFromOutcomes(O('fixed')));
+    // A full fix + a corroborated → 1.5 confirms over 1.5 trials.
+    expect(confidenceFromOutcomes(O('fixed', 'corroborated'))).toBe(wilsonLowerBound(1.5, 1.5));
+    // The weight is overridable (tunable without touching the constant).
+    expect(confidenceFromOutcomes(O('corroborated'), 0.3)).toBe(wilsonLowerBound(0.3, 0.3));
+  });
 });
 
 describe('suppressionTier (Wilson-derived, no hand-tuned floors)', () => {
