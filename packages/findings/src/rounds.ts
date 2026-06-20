@@ -18,13 +18,8 @@ export interface ClassifyOptions {
 }
 
 /**
- * Classify each region changed since the previous round as **feedback-driven** (its
- * content is semantically close to a prior finding or PR comment) or **unexplained**
- * (nothing explains it — the highest-value signal to scrutinize; ADR-23).
- *
- * Embedding-based, NOT line-proximity (no heuristic — ADR-13). Pure: the I/O (head SHAs,
- * the inter-round diff, embedding) happens at the boundary; this is just the decision and
- * is unit-tested with literal vectors.
+ * Classify each changed region as feedback-driven (semantically close to a prior finding/comment) or
+ * unexplained (ADR-23). Embedding-based, NOT line-proximity (ADR-13). Pure — decision only.
  */
 export function classifyChanges(
   regions: RegionVec[],
@@ -49,12 +44,7 @@ export function classifyChanges(
   });
 }
 
-/**
- * Was a prior-round finding **addressed** by one of the changes since? True when any
- * changed region's content is semantically close (cosine ≥ threshold) to the finding —
- * the autonomous "this got fixed" signal that records an `accept` without asking (ADR-28).
- * Pure: embeddings computed at the boundary, the decision unit-tested with vectors.
- */
+/** Was a prior finding addressed? True when a changed region is semantically close (cosine ≥ threshold) to it — autonomous auto-accept (ADR-28). Pure. */
 export function findingAddressed(
   findingEmbedding: number[],
   regionEmbeddings: number[][],
@@ -64,23 +54,10 @@ export function findingAddressed(
 }
 
 /**
- * Was a prior finding **addressed** by the changes since it was raised — combining two
- * signals so a restructuring fix still counts (ADR-28, refined):
- *
- *   1. **Semantic** — a changed region's content is close (cosine ≥ `semanticThreshold`) to the
- *      finding title. Catches a fix in a DIFFERENT place than the original anchor (code moved
- *      or extracted), and cross-file fixes.
- *   2. **Locality** — the finding's *own file* changed and its line falls within a windowed
- *      changed range. This is the signal pure-embedding matching MISSES: a fix that wraps the
- *      flagged loop in try/catch, or moves the flagged entity lines, stays in the same file/area
- *      but reads nothing like the bug's *title* — so the cosine never clears the bar even though
- *      the code clearly got touched. Anchoring on the finding's location recovers those.
- *
- * Either signal suffices, but the locality window is kept TIGHT (see `lineWindow`): a false accept
- * doesn't merely over-reinforce a pitfall — it marks a still-live bug `fixed`, drops it from the
- * stream, and never re-surfaces it. So locality must mean "the fix touched THIS code," not "someone
- * edited nearby." Genuinely relocated/restructured fixes are caught by the semantic signal instead.
- * Pure — embeddings/diff computed at the boundary, the decision unit-tested with vectors.
+ * Was a prior finding addressed (ADR-28)? Either signal suffices: SEMANTIC (a changed region close to
+ * the finding title — catches relocated/cross-file fixes) or LOCALITY (the finding's own file changed
+ * within a windowed range — catches restructurings the cosine misses). The locality window is kept
+ * TIGHT: a false accept marks a still-live bug `fixed` and it never re-surfaces. Pure.
  */
 export function findingAddressedAt(
   finding: { file?: string; line?: number },
@@ -92,12 +69,7 @@ export function findingAddressedAt(
   return findingAddressMatch(finding, findingEmbedding, regions, regionEmbeddings, opts) != null;
 }
 
-/**
- * Like `findingAddressedAt`, but says WHICH signal matched — the auto-accept audit trail.
- * Consumers surface this per accepted finding (reconcile's `acceptedFindings`, the review
- * context's `inferredAccepts`) so a locality false-accept is visible and contestable
- * instead of a silent disappearance.
- */
+/** Like `findingAddressedAt`, but says WHICH signal matched (`'semantic'|'locality'`) — the auto-accept audit trail. */
 export function findingAddressMatch(
   finding: { file?: string; line?: number },
   findingEmbedding: number[],
@@ -106,13 +78,8 @@ export function findingAddressMatch(
   opts: { semanticThreshold?: number; lineWindow?: number } = {},
 ): 'semantic' | 'locality' | null {
   const semanticThreshold = opts.semanticThreshold ?? 0.6;
-  // Drift tolerance, NOT a search radius — the changed region already spans the fix; this only
-  // absorbs the few lines a finding's RECORDED line may have shifted (edits above it). ±30 was far
-  // too loose: in a churning file almost any later edit lands within 30 lines of a prior finding,
-  // silently auto-accepting (and burying) a live bug. ±5 is a DELIBERATE keep (revisited): the
-  // residual risk (several clustered findings absorbed by one nearby edit) is mitigated by the
-  // surfaced per-accept audit trail (`matchedBy`), not by tightening — tighter re-opens the
-  // missed-fix class this exists to catch. Semantic carries relocated fixes.
+  // Drift tolerance, NOT a search radius — keep TIGHT. ±30 was far too loose (any edit in a churning
+  // file lands within 30 lines, silently auto-accepting a live bug); ±5 is a DELIBERATE keep.
   const lineWindow = opts.lineWindow ?? 5;
   if (findingEmbedding.length > 0 && findingAddressed(findingEmbedding, regionEmbeddings, semanticThreshold)) {
     return 'semantic';

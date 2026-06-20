@@ -1,24 +1,13 @@
 /**
  * Pure decision helpers extracted so the silent-failure guards they encode are unit-testable without
- * opening Kùzu (a `.test.ts` that opens the brain crashes vitest teardown, ADR-17). Each one closes a
- * specific swallow-to-nothing path the audit found; the call sites (brain.ts, review.ts, knowledge.ts)
- * import from here. No I/O, no deps.
+ * opening Kùzu (a `.test.ts` that opens the brain crashes vitest teardown, ADR-17). No I/O, no deps.
  */
 
 /**
- * The headSha to persist for a review round, or `''` to skip recording it entirely.
- *
- * A round keys off its `headSha`. Recording one with an EMPTY sha (a `git rev-parse` failure that
- * survived the spawn-retry) used to poison the NEXT round's `lastHeadSha`, silently killing both
- * fix-inference and reconcile (#2 silent-failure audit). But blindly *skipping* the round is too blunt
- * (PR #10 review): a skipped round writes no Round row, so `submit_findings`'s round-free Findings
- * recreate the exact "findings, no own rounds" signature `healSplitTarget` keys on (a false-heal risk),
- * AND the round's PR comments never get ingested.
- *
- * So when the current head is unresolved, **carry the last known anchor forward**: the round still
- * records (comments persist, a Round row exists → no split signature), and the next round's
- * attribution keeps a valid anchor over the failed range. We skip ONLY when there's no prior anchor
- * either — a first-ever review whose git is broken, which can't be reviewed meaningfully anyway.
+ * The headSha to persist for a review round, or `''` to skip recording it. An EMPTY sha (a
+ * `git rev-parse` failure past the spawn-retry) would poison the next round's `lastHeadSha`, killing
+ * fix-inference + reconcile (#2). So carry the last known anchor forward (the round still records);
+ * skip ONLY when there's no prior anchor either.
  */
 export function recordableHeadSha(currentHeadSha: string | undefined, lastHeadSha: string | undefined): string {
   const cur = (currentHeadSha ?? '').trim();
@@ -27,19 +16,10 @@ export function recordableHeadSha(currentHeadSha: string | undefined, lastHeadSh
 }
 
 /**
- * The head to attribute changes against on this review: the head of the round *before* `round`, NOT
- * simply the latest recorded round's head.
- *
- * Why it matters (the Linux-CI brain-check flake): Kùzu SIGSEGVs at brain-CLOSE time, right after
- * `recordRound` has durably written the current round. The harness retries by replaying the whole
- * `review`. On that replay the just-recorded round IS the latest, so "latest round's head" === the
- * current head → the changed-without-feedback + fix-inference signals are silently dropped. Anchoring
- * on the PRIOR round's head instead is idempotent under such a same-head replay: a re-review at an
- * already-recorded head reproduces the SAME attribution it computed the first time.
- *
- * `rounds` is the brain's round list (each `{n, headSha}`); returns the head of the highest-numbered
- * round strictly before `round`, or `undefined` (first round / no prior anchor → caller skips
- * attribution). Pure.
+ * The head to attribute changes against: the head of the round *before* `round`, NOT the latest
+ * recorded round's. Anchoring on the prior round is idempotent under a same-head crash-retry replay
+ * (Linux Kùzu close-time SIGSEGV) — comparing the head to itself would silently drop the
+ * changed-without-feedback + fix-inference signals. Returns undefined when there's no prior anchor. Pure.
  */
 export function priorRoundHeadSha(rounds: ReadonlyArray<{ n: number; headSha?: string }>, round: number): string | undefined {
   let best: { n: number; headSha?: string } | undefined;
@@ -58,11 +38,9 @@ export const OUTCOME_BY_KIND: Record<string, string> = {
 };
 
 /**
- * The brain outcome to project for a verdict, or `null` to skip the projection. Returns `null` for an
- * unknown kind OR an empty/missing `findingId` (#4 silent-failure audit): `markFindingOutcome('')`
- * runs a `MATCH (fi:Finding {id:''})` that matches nothing, so the disposition is silently lost — the
- * finding stays open and gets re-accepted by later fix-inference, double-counting its Wilson evidence.
- * Skipping the no-op write surfaces the real boundary (an empty id is rejected at the MCP/CLI edge).
+ * The brain outcome to project for a verdict, or `null` to skip. Returns `null` for an unknown kind OR
+ * an empty/missing `findingId` (#4): an empty-id outcome write is a silent no-op that leaves the finding
+ * open to be re-accepted by later fix-inference, double-counting its Wilson evidence.
  */
 export function projectableOutcome(kind: string, findingId: string | undefined): string | null {
   if (!findingId) return null;

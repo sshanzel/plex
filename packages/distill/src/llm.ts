@@ -48,11 +48,7 @@ export class OpenAICompletionProvider implements CompletionProvider {
   }
 }
 
-/**
- * Distill via the local `claude` CLI in print mode — uses the user's Claude Code
- * subscription, no API key (ADR-20). The cleanest "LLM intelligence" path for the
- * standalone `plex analyze`.
- */
+/** Distill via the local `claude` CLI in print mode — uses the user's subscription, no API key (ADR-20). */
 export class ClaudeCliCompletionProvider implements CompletionProvider {
   readonly name = 'claude-cli';
   constructor(private model?: string) {}
@@ -72,7 +68,7 @@ export function createCompletionProvider(cfg: LlmConfig): CompletionProvider | n
     try {
       execFileSync('claude', ['--version'], { stdio: 'ignore' });
     } catch {
-      return null; // `claude` CLI not installed / not on PATH
+      return null;
     }
     return new ClaudeCliCompletionProvider(cfg.model);
   }

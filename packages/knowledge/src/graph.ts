@@ -1,20 +1,10 @@
 import type { Incident, Pitfall } from '@plex/core';
 
 /**
- * The knowledge base **is** a graph (Pitfall ← Incident → Symbol/Finding); we just store it flat
- * (ADR-18) and assemble the graph **in memory** on demand. This module is that assembly: one O(N)
- * pass over the flat records into adjacency maps, plus traversal helpers — so callers stop
- * hand-rolling the same joins (`matchCodePath`, the viz symbol↔incident bridge, consolidation's
- * incident grouping each built their own). No engine, no I/O, no second store — the flat JSONL stays
- * the single source of truth; this is a derived view, rebuilt cheaply (microseconds at our scale).
- * Graduating to a real graph DB is the ADR-46/47 escape hatch only if traversals get deep or N
- * outgrows memory — neither is true today.
- *
- * **It reconciles the two-way link.** A `Pitfall→Incident` edge can be recorded from EITHER side:
- * forward (`pitfall.incidentIds`, how analyzed/distilled pitfalls link) or reverse
- * (`incident.pitfallId`, how live-review accept incidents link). Historically these diverged — e.g.
- * `consolidatePitfalls` only read the reverse side, so analyzed pitfalls' incidents were invisible to
- * it. The builder unions both directions, so every consumer sees the complete edge set.
+ * In-memory assembly of the flat-stored (ADR-18) knowledge graph (Pitfall ← Incident → Symbol/Finding):
+ * one O(N) pass into adjacency maps + traversal helpers, so callers stop hand-rolling the same joins.
+ * INVARIANT: reconciles the two-way `Pitfall→Incident` link — forward (`pitfall.incidentIds`, analyzed/
+ * distilled) ∪ reverse (`incident.pitfallId`, live accepts) — so every consumer sees the complete edge set.
  */
 export interface KnowledgeGraph {
   pitfalls: Map<string, Pitfall>;
@@ -59,7 +49,7 @@ export function buildKnowledgeGraph(pitfalls: Pitfall[], incidents: Incident[]):
     if (i.file) pushArr(g.incidentsInFile, i.file, i.id);
     if (i.findingId) pushArr(g.incidentsOfFinding, i.findingId, i.id);
     if (i.pitfallId) {
-      addSet(g.incidentsOfPitfall, i.pitfallId, i.id); // reverse link
+      addSet(g.incidentsOfPitfall, i.pitfallId, i.id);
       addSet(g.pitfallsOfIncident, i.id, i.pitfallId);
     }
   }
@@ -67,7 +57,7 @@ export function buildKnowledgeGraph(pitfalls: Pitfall[], incidents: Incident[]):
     g.pitfalls.set(p.id, p);
     for (const id of p.incidentIds ?? []) {
       if (!g.incidents.has(id)) continue; // skip a dangling incidentId (never invent a phantom edge)
-      addSet(g.incidentsOfPitfall, p.id, id); // forward link, unioned with the reverse above
+      addSet(g.incidentsOfPitfall, p.id, id);
       addSet(g.pitfallsOfIncident, id, p.id);
     }
   }

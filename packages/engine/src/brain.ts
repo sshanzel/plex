@@ -17,25 +17,17 @@ import { normalizeTitle } from '@plex/findings';
 import { lineagePaths } from './paths';
 
 /**
- * The per-PR "brain" — the **lineage layer** of the knowledge graph (ADR-46). Replaces the ephemeral,
- * per-worktree Kùzu DB (ADR-30/M11) with a **durable, base-keyed, append-only JSONL event log**:
- * round/finding/verdict/comment events under the BASE repo's centralized data dir
- * (`~/.plex/repos/<baseId>/lineage/<target>.jsonl`, via `lineagePaths`), folded into current state by
- * the pure `foldLineage` (`@plex/core`). So a worktree review's history **survives `git worktree
- * remove`**, the sweeper reads the same durable file the worktree wrote, and — because the target is
- * base-derived — the brain can no longer split across worktree names (`healSplitTarget` retired).
- *
- * The public method surface is unchanged from the Kùzu brain, so callers (review/findings/knowledge/
- * reconcile/sweep) are untouched. `close()` is a no-op (no handle to release). Idempotent reads: the
- * log is append-only, but `foldLineage` is last-write-wins per id, so a re-recorded round/finding/
- * comment collapses; outcome is tracked orthogonally so a re-raised finding never resets a `fixed`
- * disposition (ADR-28).
+ * The per-PR "brain" — the lineage layer (ADR-46): a durable, base-keyed, append-only JSONL event log
+ * (round/finding/verdict/comment) under the BASE repo's data dir, folded by `foldLineage` (`@plex/core`).
+ * So a worktree review's history survives `git worktree remove`, and the base-derived target can no
+ * longer split across worktree names (`healSplitTarget` retired). `close()` is a no-op. `foldLineage`
+ * is last-write-wins per id; outcome is tracked orthogonally so a re-raised finding never resets a
+ * `fixed` disposition (ADR-28).
  */
 
 const excerpt = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '…' : s);
 
-/** Synchronous sleep for the append lock's brief spin (no async in the append path). Best-effort —
- *  a platform without SharedArrayBuffer just falls through to a tight retry. */
+/** Synchronous sleep for the append lock's brief spin. Best-effort — no SharedArrayBuffer → tight retry. */
 const sleepSync = (ms: number): void => {
   try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -114,12 +106,10 @@ export class Brain {
   }
 
   /**
-   * Append events to a target's file under a **best-effort per-target lockfile**, so two concurrent
-   * same-PR reviews (e.g. base + a worktree) can't interleave a `>PIPE_BUF` line and tear it (a torn
-   * `outcome` line, silently dropped by `parseLineageEvents`, would re-open a resolved finding). All
-   * of one call's events go in ONE `appendFileSync` while the lock is held. Best-effort: a stale lock
-   * (crashed holder) is reclaimed by age, and if the lock can't be taken we append anyway rather than
-   * block — the `parseLineageEvents` torn-line skip remains the backstop.
+   * Append a target's events under a best-effort per-target lockfile: two concurrent same-PR reviews
+   * must not interleave a `>PIPE_BUF` line and tear it (a torn `outcome` line would re-open a resolved
+   * finding). All of one call's events go in ONE `appendFileSync` while the lock is held; a stale lock
+   * is reclaimed by age, and if the lock can't be taken we append anyway (the torn-line skip backstops).
    */
   private appendEvents(target: string, events: LineageEvent[]): void {
     if (events.length === 0) return;
@@ -159,9 +149,8 @@ export class Brain {
     try {
       body = readFileSync(this.fileFor(target), 'utf8');
     } catch (e) {
-      // ONLY a missing file is "no history yet". A real read fault (EACCES/EISDIR/EIO) must NOT
-      // masquerade as empty — that would silently drop outcome-stickiness, so reconcile reports
-      // `checked:0` and the next review re-raises resolved findings + re-learns incidents (Plex #1).
+      // ONLY a missing file is "no history yet"; a real read fault must NOT masquerade as empty (that
+      // would silently drop outcome-stickiness → re-raise resolved findings + re-learn incidents, Plex #1).
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return foldLineage([]);
       throw e;
     }
@@ -205,11 +194,8 @@ export class Brain {
     return { lastN: last?.n ?? 0, lastHeadSha: last?.headSha, rounds, signals, priorFindings };
   }
 
-  /**
-   * Targets with ≥1 OPEN (un-outcomed, non-`note`) finding AND a recorded round — the sweep's
-   * work list (ADR-43). Now durable + base-keyed, so the sweep sees a worktree's open findings even
-   * after the worktree is gone. `note` findings are excluded (never auto-accepted, ADR-31).
-   */
+  /** Targets with ≥1 OPEN (un-outcomed, non-`note`) finding AND a recorded round — the sweep's work
+   *  list (ADR-43). `note` findings are excluded (never auto-accepted, ADR-31). */
   async openTargets(): Promise<Array<{ target: string; lastHeadSha?: string; baseRef?: string }>> {
     const out: Array<{ target: string; lastHeadSha?: string; baseRef?: string }> = [];
     for (const { target, view } of this.allViews()) {
@@ -217,17 +203,14 @@ export class Brain {
       const hasOpen = view.findings.some((f) => !view.outcomeOf(f.id) && f.severity !== 'note');
       if (!hasOpen) continue;
       const last = view.rounds[view.rounds.length - 1];
-      if (!last) continue; // no round → no head cursor → can't diff; skip
+      if (!last) continue; // no round → no head cursor → can't diff
       out.push({ target, lastHeadSha: last.headSha || undefined, baseRef: last.baseRef || undefined });
     }
     return out;
   }
 
-  /**
-   * Every finding's ranking `signal` paired with its resolved outcome — the offline ranking-quality
-   * eval (tuning.md §5). Outcome is the explicit Verdict kind if one exists, else the inferred
-   * `outcome` event. Across all targets in this base's lineage.
-   */
+  /** Every finding's ranking `signal` paired with its resolved outcome — the offline ranking-quality
+   *  eval (tuning.md §5), across all targets in this base's lineage. */
   async rankingSamples(): Promise<RankingSample[]> {
     const samples: RankingSample[] = [];
     for (const { target, view } of this.allViews()) {
@@ -258,8 +241,7 @@ export class Brain {
   }
 
   /** Persist the agent's ranked findings. Id is keyed by target+file:line+title — NOT round (ADR-28),
-   *  so a re-raised finding is the SAME node and its accrued outcome (a separate `outcome` event) is
-   *  never reset. */
+   *  so a re-raised finding is the SAME node and its accrued outcome is never reset. */
   async writeFindings(target: string, roundN: number, findings: RankedFinding[]): Promise<void> {
     this.appendEvents(
       target,
@@ -276,13 +258,11 @@ export class Brain {
         line: f.location.startLine,
         triage: f.triage,
         round: roundN,
-        // Raw ranking features (tuning.md §"feature persistence"). agreement = #independent sources (min 1).
         blast: f.blastRadius ?? 0,
         prevalence: f.prevalence ?? 0,
         agreement: f.agreedSources?.length ?? 1,
-        rule: f.tags?.[0] ?? '', // the deterministic rule tag — lets an inferred accept refute a suppression (ADR-39)
-        // Anchor the finding to its symbol (code-path memory) — an accept later inherits this so the
-        // incident knows WHICH symbol the concern was about. '' when the diff hit no named symbol.
+        rule: f.tags?.[0] ?? '', // deterministic rule tag — lets an inferred accept refute a suppression (ADR-39)
+        // Anchor to the finding's `file#name` symbol (code-path memory) so an accept inherits it.
         symbol: f.location.symbol ? symbolKey(f.location.file, f.location.symbol) : '',
       })),
     );
@@ -305,8 +285,8 @@ export class Brain {
     }]);
   }
 
-  /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). The target is the id's
-   *  prefix (`<target>#…`), so no separate target arg is needed; an empty id is a no-op (#4 guard). */
+  /** Mark a finding with an inferred outcome so it isn't re-evaluated (ADR-28). Target is the id's
+   *  prefix (`<target>#…`); an empty id is a no-op (#4 guard). */
   async markFindingOutcome(findingId: string, outcome: string): Promise<void> {
     if (!findingId) return;
     const hash = findingId.indexOf('#');

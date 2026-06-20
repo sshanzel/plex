@@ -1,11 +1,5 @@
 /**
- * Pluggable provider interfaces (ADR-13).
- *
- * Embeddings are intentionally abstracted to a single `text -> vector` function so
- * the implementation (Voyage `voyage-code-3`, OpenAI `text-embedding-3-small`, local
- * Ollama, or a deterministic fake for tests) can be swapped without touching callers.
- *
- * NOTE: generative LLMs (Opus/GPT/Gemini-chat) are NOT embedding models — an embedding
+ * Pluggable provider interfaces (ADR-13). Generative LLMs are NOT embedding models — an embedding
  * provider must wrap an actual embedding endpoint.
  */
 import { createHash } from 'node:crypto';
@@ -18,11 +12,7 @@ export interface EmbeddingProvider {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-/**
- * Generative completion, used ONLY by the offline analysis/distillation pipeline (ADR-02 —
- * the interactive review uses the connected agent, never this). Implementations: a
- * deterministic heuristic (no network), Anthropic, OpenAI.
- */
+/** Generative completion, used ONLY by the offline analysis/distillation pipeline (ADR-02), never the interactive review. */
 export interface CompletionProvider {
   readonly name: string;
   complete(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>;
@@ -37,18 +27,12 @@ export function slugify(s: string, maxLen = 48): string {
     .slice(0, maxLen);
 }
 
-/**
- * Short, stable content hash for disambiguating ids whose slugs would collide or be
- * empty (e.g. two titles sharing a 48-char prefix, or a non-ASCII/emoji-only title that
- * slugs to ''). Distinct input → distinct suffix; same input → same suffix (idempotent).
- */
+/** Short, stable content hash for disambiguating ids whose slugs would collide or be empty (idempotent). */
 export function hashId(s: string, len = 8): string {
   return createHash('sha1').update(s).digest('hex').slice(0, len);
 }
 
-// Machine-written files that carry zero review signal and plenty of noise/cost: lockfiles
-// co-change with everything (distorting the 1/(n−1) commit-size weighting), minified
-// bundles and source maps explode token/embedding budgets, snapshots are test output.
+// Machine-written files with zero review signal: lockfiles distort co-change weighting; bundles/maps blow token budgets.
 const GENERATED_BASENAMES = new Set([
   'pnpm-lock.yaml', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock',
   'bun.lockb', 'bun.lock', 'deno.lock', 'cargo.lock', 'composer.lock',
@@ -57,32 +41,16 @@ const GENERATED_BASENAMES = new Set([
 ]);
 const GENERATED_PATTERNS = [/\.min\.(js|mjs|cjs|css)$/, /\.(js|mjs|cjs|css)\.map$/, /\.snap$/];
 
-/**
- * Is this path a machine-generated artifact Plex should never read? Applied at every
- * ingestion edge: diff normalization (the file never reaches the review context),
- * added-text extraction (never embedded), co-change aggregation (never counted toward a
- * commit's size or pairs), graph discovery, and the deterministic runner. Pure;
- * paths are repo-relative POSIX.
- */
+/** Is this path a machine-generated artifact Plex should never read? Applied at every ingestion edge. Pure; repo-relative POSIX. */
 export function isGeneratedArtifact(filePath: string): boolean {
   const base = filePath.slice(filePath.lastIndexOf('/') + 1).toLowerCase();
   return GENERATED_BASENAMES.has(base) || GENERATED_PATTERNS.some((p) => p.test(base));
 }
 
 /**
- * Embed `texts` resiliently. Two failure modes the raw `provider.embed` doesn't handle, both of
- * which should DEGRADE a feature (semantic waiver matching, fix inference) rather than fail the
- * whole review/verdict that merely wanted the enrichment:
- *
- *  - **Oversized batch** — one `embed([...])` over every changed region + prior finding + (uncapped)
- *    PR-comment body can blow past a provider's array/token limit (OpenAI 2048 items, Voyage 1000).
- *    So we cap each text to `maxChars` and send in chunks of `chunkSize`, concatenating in order
- *    (result[i] still aligns with texts[i]).
- *  - **Transient error** — a rate-limit/network/bad-key throw returns `null` instead of propagating,
- *    so the caller falls back to its no-embeddings path.
- *
- * Returns `null` if ANY chunk fails (all-or-nothing keeps index alignment simple — a partial result
- * would misalign the callers' `vecs[i]` indexing).
+ * Embed `texts` resiliently: cap to `maxChars` + chunk by `chunkSize` (provider batch limits), and
+ * return `null` on any failure so callers DEGRADE rather than fail. All-or-nothing: a partial result
+ * would misalign every caller's `vecs[i] ↔ texts[i]` indexing.
  */
 export async function safeEmbed(
   provider: EmbeddingProvider,
@@ -97,10 +65,7 @@ export async function safeEmbed(
     for (let i = 0; i < capped.length; i += chunkSize) {
       out.push(...(await provider.embed(capped.slice(i, i + chunkSize))));
     }
-    // A provider that returns a different count than it was given (a dropped item, a partial response)
-    // would silently MISALIGN every caller's `vecs[i] ↔ texts[i]` indexing — a wrong fix-match / waiver,
-    // not a crash. Treat a length mismatch like a thrown error: degrade to null (locality-only), never
-    // hand back a misaligned array (m5/#5 silent-failure audit).
+    // A different count than input would silently MISALIGN every caller's `vecs[i] ↔ texts[i]` — degrade to null.
     if (out.length !== texts.length) return null;
     return out;
   } catch {
@@ -109,10 +74,8 @@ export async function safeEmbed(
 }
 
 /**
- * Mean + std of the pairwise cosines of a vector set — the "background" similarity distribution of
- * a batch. Embedding spaces are anisotropic, so this baseline differs per model; measuring it from
- * the batch is how a threshold can adapt without a stored calibration corpus (tuning.md §6). Samples
- * up to `sampleCap` pairs (deterministic prefix). Returns {mu:0, sigma:0} for <2 usable vectors.
+ * Mean + std of pairwise cosines of a vector set — the anisotropy-aware per-model background baseline
+ * (tuning.md §6). Samples up to `sampleCap` pairs; returns {mu:0, sigma:0} for <2 usable vectors.
  */
 export function cosineBackground(vectors: number[][], sampleCap = 4000): { mu: number; sigma: number } {
   const usable = vectors.filter((v) => v.length > 0);
@@ -130,11 +93,8 @@ export function cosineBackground(vectors: number[][], sampleCap = 4000): { mu: n
 }
 
 /**
- * Adapt a fixed cosine threshold UPWARD only — `max(fixed, mu + k·sigma)`. For a *suppression* gate
- * (a waiver, an auto-accept) this is the SAFE direction: on a model whose baseline cosines run high
- * (anisotropy) the threshold rises so the gate fires more conservatively (suppresses LESS, surfaces
- * MORE); it can never drop below `fixed`, so it never hides more than the hand-tuned value would.
- * Pure. (tuning.md §6.)
+ * Adapt a fixed cosine threshold UPWARD only — `max(fixed, mu + k·sigma)`. The SAFE direction for a
+ * suppression gate: it raises the bar (suppresses LESS) and never drops below `fixed`. Pure (tuning.md §6).
  */
 export function adaptiveFloor(fixed: number, bg: { mu: number; sigma: number }, k = 3): number {
   return Math.max(fixed, bg.mu + k * bg.sigma);

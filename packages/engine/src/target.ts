@@ -3,9 +3,8 @@ import type { DiffSource } from './diff';
 import { baseRepoPath } from './paths';
 
 /**
- * A stable, recognizable id for a review target — the correlation key for the PR brain
- * (ADR-22/23) and the audit log: `<repo>__pr_<n>` for a PR, else `<repo>__<mode>[_<baseRef>]`.
- * Re-reviewing the same target reuses the same id.
+ * A stable id for a review target — the correlation key for the PR brain (ADR-22/23) and audit log:
+ * `<repo>__pr_<n>` for a PR, else `<repo>__<mode>[_<baseRef>]`.
  */
 export function reviewTarget(repo: string, src: DiffSource): string {
   const slug = (s: string): string => s.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
@@ -15,28 +14,18 @@ export function reviewTarget(repo: string, src: DiffSource): string {
 }
 
 /**
- * The CANONICAL review target for a repo *path* — keyed off the **base repo basename** (the primary
- * checkout a worktree branches from, `baseRepoPath`), never the worktree dir name or the code graph's
- * `repo` meta. Every lineage path (round recording, finding writes, verdicts, reconcile,
- * record_outcome) MUST go through this so they agree on the key.
- *
- * Why the BASE basename (ADR-46): a review run from a linked worktree (`…/.worktrees/dazzling-…`) and
- * one run from the base checkout (`…/playright`) are the SAME PR — both must resolve to
- * `playright__pr_N` so their rounds/findings/verdicts collect under one target, durably under the base
- * repo's data dir (`lineagePaths`), and the sweep/reconcile see one continuous history. Keying off the
- * worktree basename instead fragmented a base repo's reviews across worktree names (and needed the old
- * `healSplitTarget` guard, now retired). A non-git dir is its own base, so this is identity there.
+ * The CANONICAL review target for a repo path — keyed off the BASE repo basename (`baseRepoPath`),
+ * never the worktree dir name or the graph's `repo` meta (ADR-46), so a worktree review and the base
+ * review of the SAME PR resolve to ONE target. EVERY lineage write MUST go through this so they agree.
  */
 export function reviewTargetFor(repoPath: string, src: DiffSource): string {
   return reviewTarget(path.basename(baseRepoPath(repoPath)), src);
 }
 
 /**
- * Inverse of `reviewTarget`'s suffix → the `DiffSource` to reconcile a brain target with (ADR-43,
- * the maintenance worker). The repo prefix is dropped — the sweep already knows `repoPath`; only the
- * `__`-suffix carries source/mode/pr. `baseRef` is taken from the brain's `Round` (NOT re-parsed: the
- * `reviewTarget` slug is lossy — `feature/x` → `feature_x`). Returns `undefined` for an unrecognized
- * suffix (the sweep skips it). Pure — unit-tested with literal targets.
+ * Inverse of `reviewTarget`'s suffix → the `DiffSource` to reconcile a brain target with (ADR-43).
+ * `baseRef` is taken from the brain's `Round`, NOT re-parsed (the slug is lossy: `feature/x` →
+ * `feature_x`). Returns `undefined` for an unrecognized suffix. Pure.
  */
 export function diffSourceFromTarget(target: string, baseRef?: string): DiffSource | undefined {
   const sep = target.indexOf('__');

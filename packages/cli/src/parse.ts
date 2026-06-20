@@ -3,11 +3,8 @@ export interface Parsed {
   flags: Record<string, string | boolean>;
 }
 
-/**
- * Minimal argv parser. Supports `--flag value`, `--flag=value`, and a bare `--flag`
- * (boolean true); everything else is a positional. A `--flag` whose following token starts
- * with `--` is treated as boolean (you can't pass a value that itself begins with `--`).
- */
+/** Minimal argv parser: `--flag value`, `--flag=value`, bare `--flag` (boolean); else positional. A
+ *  `--flag` followed by a `--`-prefixed token is boolean (can't pass a value that begins with `--`). */
 export function parse(argv: string[]): Parsed {
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -17,7 +14,7 @@ export function parse(argv: string[]): Parsed {
       const body = a.slice(2);
       const eq = body.indexOf('=');
       if (eq !== -1) {
-        flags[body.slice(0, eq)] = body.slice(eq + 1); // --flag=value (value may be empty)
+        flags[body.slice(0, eq)] = body.slice(eq + 1);
         continue;
       }
       const next = argv[i + 1];
@@ -37,15 +34,10 @@ export function parse(argv: string[]): Parsed {
 /** Thrown by `finiteFlag` when a numeric flag's value isn't a finite number — caught at the run() edge. */
 export class FlagError extends Error {}
 
-/**
- * Coerce a numeric flag value, rejecting anything that isn't finite. A bare `Number('abc')` yields
- * `NaN`, which then flows silently into the engine — `slice(0, NaN)` is 0 PRs, `clusterThreshold = NaN`
- * clusters nothing — and the command exits 0 having quietly done nothing (#3 silent-failure audit).
- * Surfacing it as a `FlagError` turns a silent no-op into an actionable non-zero exit.
- */
+/** Coerce a numeric flag value, rejecting non-finite input as a `FlagError` (a NaN would otherwise
+ *  flow silently into the engine and no-op the command at exit 0). */
 export function finiteFlag(raw: string, name: string): number {
-  // `Number('')` and `Number('  ')` are 0 (finite) — a blank value is a user error, not zero. Reject it
-  // explicitly so `--limit ''` doesn't silently mean `--limit 0`.
+  // `Number('')`/`Number('  ')` are finite 0 — reject blank explicitly so `--limit ''` isn't `--limit 0`.
   const n = raw.trim() === '' ? NaN : Number(raw);
   if (!Number.isFinite(n)) throw new FlagError(`--${name} must be a finite number (got "${raw}")`);
   return n;

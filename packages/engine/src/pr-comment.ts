@@ -24,11 +24,9 @@ export interface ReviewPayload {
 }
 
 /**
- * PURE: turn the ranked stream into a single GitHub review payload.
- * - Never posts `suppressed`/waived findings; skips `nit`s when `skipNits`.
- * - Dedups against prior rounds' findings (post only what's new) — no round-2 spam.
- * - Anchors a finding inline when its line is in the diff; everything else (coupled /
- *   blast-radius files, notes) folds into the summary body.
+ * PURE: turn the ranked stream into one GitHub review payload. Never posts `suppressed`/waived findings
+ * (skips `nit`s when `skipNits`); dedups against prior rounds; anchors a finding inline when its line is
+ * in the diff, else folds it into the summary body.
  */
 export function buildReviewPayload(
   ranked: RankedFinding[],
@@ -65,11 +63,7 @@ export function buildReviewPayload(
   return { body: parts.join('\n'), comments, count: fresh.length };
 }
 
-/**
- * Post the ranked findings to a PR as one review (best-effort — never breaks a review).
- * Resolves the PR diff to anchor inline comments, dedups against prior rounds, posts, and
- * no-ops when there's nothing new.
- */
+/** Post the ranked findings to a PR as one review (best-effort — never breaks a review); no-ops when nothing is new. */
 export async function postFindingsToPr(
   cwd: string,
   config: ReviewerConfig,

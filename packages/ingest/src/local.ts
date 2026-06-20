@@ -6,9 +6,8 @@ import { normalizeUnifiedDiff, addedTextByFile, type ChangedFileText } from './n
 const pexec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-// The retry policy is shared in @plex/core so this and @plex/code-graph (`headSha`) can't drift apart
-// (the audit found code-graph's copy un-retried). `isTransientSpawnError` is re-exported for the
-// existing local.test.ts and any caller that imported it from here.
+// Retry policy is shared in @plex/core so this and @plex/code-graph (`headSha`) can't drift apart.
+// `isTransientSpawnError` is re-exported for existing callers.
 export { isTransientSpawnError };
 
 async function runGit(args: string[], cwd: string): Promise<string> {
@@ -36,10 +35,7 @@ export async function getHeadSha(cwd: string): Promise<string> {
   }
 }
 
-/**
- * Per-file added-line text changed between two commits (`from..to`) — the inter-round
- * delta whose content gets embedded for semantic change attribution (ADR-23). Best-effort.
- */
+/** Per-file added-line text between two commits (`from..to`) — the inter-round delta embedded for change attribution (ADR-23). Best-effort. */
 export async function getChangedFileTexts(cwd: string, fromSha: string, toSha: string): Promise<ChangedFileText[]> {
   try {
     const text = await runGit(['diff', `${fromSha}..${toSha}`], cwd);

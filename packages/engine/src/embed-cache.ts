@@ -3,23 +3,15 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { safeEmbed, type EmbeddingProvider } from '@plex/core';
 
 /**
- * A content-addressed embedding cache (per-repo JSON sidecar) for STABLE, recurring texts —
- * principally prior-finding titles, which the brain's change-attribution batch re-embeds every
- * round (the same titles, over and over). Caching them turns an N-round PR's title embeds from
- * O(findings × rounds) into O(distinct findings): the dominant repeat-cost on an active PR.
- *
- * Per-round CONTENT (changed-region text) is intentionally NOT routed through here — it differs
- * each round, so caching it only bloats the file. Use this only for texts that recur.
- *
- * The file also serves as **local proof embeddings actually fired**: if it exists with entries,
- * the provider resolved and was called (a config-only "voyage" with no key never writes here).
+ * A content-addressed embedding cache (per-repo JSON sidecar) for STABLE, recurring texts (prior-finding
+ * titles) so an N-round PR embeds each title once, not once per round. Per-round CONTENT must NOT be
+ * routed here (it differs each round — caching only bloats the file). Also serves as local proof
+ * embeddings fired: a config-only provider with no key never writes here.
  */
 
 type Cache = Record<string, number[]>;
 
-/** Cap the cache so a long-lived repo can't grow it without bound. Finding titles are short and
- * few (hundreds), but be defensive: past the cap we keep only the current working set, which the
- * next call re-populates cheaply. */
+/** Cap the cache so a long-lived repo can't grow it unbounded; past the cap keep only the working set. */
 const MAX_ENTRIES = 4000;
 
 function keyFor(provider: EmbeddingProvider, text: string): string {
@@ -37,12 +29,9 @@ export function loadEmbedCache(file: string): Cache {
 }
 
 /**
- * Embed `texts`, reusing cached vectors for ones seen before and embedding only the misses, then
- * merging the new vectors back into `file`. Returns vectors aligned to `texts` (a never-resolvable
- * miss yields `[]` at that index). Returns `null` only when there ARE misses and the embed call
- * fails (transient/no-key) — the caller then degrades exactly as it would for `safeEmbed` null
- * (locality-only). With zero misses it never calls the provider (the whole point) and returns the
- * cached vectors.
+ * Embed `texts`, reusing cached vectors and embedding only misses, merging new vectors back into `file`.
+ * Returns vectors aligned to `texts`; `null` only when there ARE misses and the embed call fails (caller
+ * then degrades exactly as for `safeEmbed` null). With zero misses it never calls the provider.
  */
 export async function cachedEmbed(
   provider: EmbeddingProvider,
@@ -64,7 +53,6 @@ export async function cachedEmbed(
     });
     let toWrite = cache;
     if (Object.keys(cache).length > MAX_ENTRIES) {
-      // Over budget — retain only the current working set so the file stays bounded.
       toWrite = {};
       for (const t of texts) toWrite[keyFor(provider, t)] = cache[keyFor(provider, t)]!;
     }

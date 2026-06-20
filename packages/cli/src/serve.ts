@@ -21,8 +21,7 @@ export interface ServeFlags {
   port?: number;
 }
 
-/** Resolve the UI port: explicit `--port` flag wins, else the configured port (`config.ui.port`,
- *  which already folds in `PLEX_UI_PORT` / home config / the 2288 default via `loadConfig`). */
+/** Resolve the UI port: explicit `--port` flag wins, else the configured port. */
 export function resolvePort(flagPort: number | undefined, configPort = DEFAULT_PORT): number {
   if (flagPort && Number.isFinite(flagPort)) return flagPort;
   return Number.isFinite(configPort) && configPort > 0 ? configPort : DEFAULT_PORT;
@@ -54,12 +53,9 @@ function openBrowser(url: string): void {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
- * The `plex serve` command. Modes:
- *  - `--foreground` — BE the daemon: bind, write the pidfile, run until signalled. Returns a
- *    never-resolving promise so the CLI's `main().then(process.exit)` doesn't tear it down.
- *  - `--stop` / `--status` — manage an existing daemon via the pidfile + health probe.
- *  - (default) — idempotent: if a daemon is already live, just open it; else spawn one **detached**
- *    (survives this shell), wait for it to answer, print the URL and open the browser.
+ * The `plex serve` command. Modes: `--foreground` BEs the daemon (returns a never-resolving promise so
+ * `main().then(process.exit)` doesn't tear it down); `--stop`/`--status` manage it via pidfile + probe;
+ * default is idempotent — open a live daemon, else spawn one detached and open the browser.
  */
 export async function runServe(config: ReviewerConfig, flags: ServeFlags): Promise<number> {
   const out = process.stdout;
@@ -103,7 +99,6 @@ export async function runServe(config: ReviewerConfig, flags: ServeFlags): Promi
     return new Promise<number>(() => {}); // never resolves — keep the daemon alive
   }
 
-  // Default: ensure a detached daemon is up, then open it.
   const existing = await liveDaemon();
   if (existing) {
     const url = `http://${HOST}:${existing.port}`;
@@ -136,7 +131,6 @@ export async function runServe(config: ReviewerConfig, flags: ServeFlags): Promi
       return 0;
     }
   }
-  // It might still be coming up; probe the requested port one last time for a clearer message.
   const last = await probe(port);
   out.write(
     last

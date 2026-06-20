@@ -2,12 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Pitfall, Incident } from '@plex/core';
 
-/**
- * JSON-backed knowledge store (ADR-18). The knowledge base is small and retrieval is
- * embedding-based, so a flat append log of pitfalls + incidents is sufficient and avoids
- * compounding the Kùzu/tsx open-limit (ADR-17). Graduate to Kùzu if multi-hop graph
- * queries become necessary.
- */
+/** JSON-backed knowledge store (ADR-18): a flat append log of pitfalls + incidents. */
 export class KnowledgeStore {
   constructor(private readonly dir: string) {}
 
@@ -23,11 +18,10 @@ export class KnowledgeStore {
     try {
       text = await fs.readFile(file, 'utf8');
     } catch {
-      return []; // no file yet
+      return [];
     }
-    // Parse PER LINE — a single corrupt record (e.g. a truncated final line from an
-    // interrupted append) must not discard the whole store. Dropping all pitfalls here
-    // would make consolidation rewrite an EMPTY log: silent, total data loss.
+    // Parse PER LINE — a single corrupt record must not discard the whole store (consolidation would
+    // then rewrite an EMPTY log: silent, total data loss).
     const out: T[] = [];
     for (const line of text.split('\n')) {
       if (!line) continue;
@@ -56,9 +50,8 @@ export class KnowledgeStore {
   async replacePitfalls(pitfalls: Pitfall[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
     const body = pitfalls.length ? pitfalls.map((p) => JSON.stringify(p)).join('\n') + '\n' : '';
-    // ATOMIC rewrite: write a temp sibling, then rename over the target. consolidation rewrites the
-    // WHOLE log, so a crash mid-`writeFile` would truncate the live pitfalls.jsonl and silently lose
-    // knowledge. `rename` within the same dir (same filesystem) is atomic on POSIX.
+    // ATOMIC rewrite: write a temp sibling, then `rename` over the target (atomic on POSIX, same FS) —
+    // a crash mid-`writeFile` would otherwise truncate the live log and silently lose knowledge.
     const tmp = `${this.pitfallsFile}.tmp-${process.pid}`;
     await fs.writeFile(tmp, body, 'utf8');
     await fs.rename(tmp, this.pitfallsFile);
@@ -67,11 +60,9 @@ export class KnowledgeStore {
     return this.append(this.incidentsFile, i);
   }
   /**
-   * Atomically rewrite the whole incident log — the outcome-backfill writer (ADR-50). Mirrors
-   * `replacePitfalls`: write a temp sibling, then `rename` over the target (atomic on POSIX, same
-   * filesystem), so a crash mid-write can't truncate `incidents.jsonl` and lose provenance. Callers
-   * MUST pass the FULL set read via `incidents()` (mutating only the records they intend) — a
-   * filter-then-replace would silently drop the rest, including the non-re-derivable live `accept`s.
+   * Atomically rewrite the whole incident log — the outcome-backfill writer (ADR-50; atomic temp+rename
+   * like `replacePitfalls`). INVARIANT: callers MUST pass the FULL set read via `incidents()` — a
+   * filter-then-replace would silently drop the rest, including non-re-derivable live `accept`s.
    */
   async replaceIncidents(incidents: Incident[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });

@@ -9,11 +9,7 @@ import { normalizeUnifiedDiff } from './normalize';
 const pexec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-/**
- * Validate a PR number before it reaches a `gh` argv (or the `gh api` path). Every entry point
- * (MCP, CLI `--pr`, the sweep) converges here, so guarding at this chokepoint covers them all —
- * the same belt-and-suspenders `getLocalDiff` gives `baseRef`. Refuses option-injection (`-x`).
- */
+/** Validate a PR number before it reaches a `gh` argv — the chokepoint every entry point converges on. Refuses option-injection (`-x`). */
 function prArg(pr: number | string): string {
   if (!isSafePrNumber(pr)) throw new Error(`unsafe pr number: ${JSON.stringify(pr)}`);
   return String(pr);
@@ -27,9 +23,8 @@ export interface PrReviewComment {
 }
 
 /**
- * Post ONE PR review (event=COMMENT) with a summary body + inline comments, via `gh api`.
- * The JSON goes through a temp file (execFile can't pipe stdin). Never `--approve` /
- * `--request-changes`. Throws on failure — callers post best-effort.
+ * Post ONE PR review (event=COMMENT) with a summary body + inline comments via `gh api`. Never approve/
+ * request-changes. JSON goes through a temp file (execFile can't pipe stdin). Throws — callers post best-effort.
  */
 export async function postPrReview(
   cwd: string,
@@ -60,10 +55,7 @@ export interface PrDiffOptions {
   cwd?: string;
 }
 
-/**
- * Produce a normalized diff for a GitHub PR via the `gh` CLI.
- * ADR-14: a PR diff is the same thing as a local diff once normalized.
- */
+/** Normalized diff for a GitHub PR via `gh` (ADR-14: a PR diff is the same as a local diff once normalized). */
 export async function getPrDiff(opts: PrDiffOptions): Promise<NormalizedDiff> {
   const cwd = opts.cwd ?? process.cwd();
   const pr = prArg(opts.pr);
@@ -110,10 +102,8 @@ export async function getPrHeadSha(opts: PrDiffOptions): Promise<string> {
 }
 
 /**
- * The PR's lifecycle state (`OPEN` | `CLOSED` | `MERGED`), or `''` on ANY gh failure — so a caller can
- * distinguish a *genuinely* closed/merged PR from a transient gh error (network/rate-limit/auth, or gh
- * missing on PATH). `getPrHeadSha` returning '' is ambiguous between the two; this disambiguates it (the
- * maintenance worker checks it before condemning a target as dead, ADR-43). Best-effort, like the others.
+ * The PR's lifecycle state (`OPEN`|`CLOSED`|`MERGED`), or `''` on ANY gh failure — so a caller distinguishes
+ * a genuinely closed/merged PR from a transient gh error (the maintenance worker checks it before condemning a target dead, ADR-43).
  */
 export async function getPrState(opts: PrDiffOptions): Promise<string> {
   const cwd = opts.cwd ?? process.cwd();

@@ -8,8 +8,7 @@ import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince, listW
 import { resolvePreciseImports, type PreciseImportInput } from './precise';
 import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
-// Fallback skip-list for a NON-git directory (a git repo respects .gitignore instead — see
-// discoverFiles). node_modules/dist/build/coverage/out are conventionally generated/ignored.
+// Fallback skip-list for a NON-git directory (a git repo respects .gitignore instead — see discoverFiles).
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
@@ -20,12 +19,9 @@ const SKIP_DIRS = new Set([
 ]);
 
 /**
- * `Symbol.id` is `file#name#startLine`. A minified/generated bundle can pack many declarations onto a
- * single line — two symbols with the same name at the same line collide on that PK, and Kùzu aborts the
- * ENTIRE repo index ("Found duplicated primary key value …"). One pathological file must never take
- * down the whole graph: disambiguate within a build with a stable `#<n>` suffix (deterministic
- * extraction order ⇒ stable across re-indexes). `SKIP_DIRS` keeps most such files out; this is the
- * belt-and-suspenders so robustness never depends on the skip-list being complete.
+ * Collision-safe `Symbol.id` (`file#name#startLine`): a minified bundle can pack many declarations on
+ * one line (same name+line) — appending a stable `#<n>` on collision keeps a duplicate PK from aborting
+ * the ENTIRE Kùzu index. Deterministic extraction order ⇒ stable suffix across re-indexes.
  */
 function uniqueSymbolId(base: string, seen: Set<string>): string {
   let id = base;
@@ -54,10 +50,8 @@ export interface BuildResult {
   commits: number;
 }
 
-/** Raw graph edges of files an update DELETED, read before their nodes were removed —
- *  the engine weights these into the deleted-neighbors sidecar (a deleted module's
- *  dependents must outlive its node). Raw on purpose: weighting (association strength)
- *  lives upstream in @plex/neighborhood, which this package cannot depend on. */
+/** Raw graph edges of files an update DELETED, captured before their nodes were removed. Raw on
+ *  purpose: weighting lives upstream in @plex/neighborhood, which this package cannot depend on. */
 export interface DeletedFileEdges {
   deletedPaths: string[];
   co: { src: string; dst: string; weight: number }[];
@@ -83,16 +77,9 @@ const indexable = (relOrName: string): boolean =>
   isSupportedSource(relOrName) && !relOrName.endsWith('.d.ts') && !isGeneratedArtifact(relOrName);
 
 /**
- * The source files to index. A **git repo** is the source of truth: `listWorktreeFiles` returns the
- * working tree minus `.gitignore`d paths (tracked + untracked-not-ignored), so build output (a
- * `playwright-report/` of minified bundles, `dist/`, vendored artifacts, the self-ignored `.plex`) is
- * never indexed — the principled fix vs. a hardcoded skip-list, consistent with co-change being
- * git-based — while a brand-new uncommitted source file IS still indexed (its blast radius isn't empty
- * mid-feature). A non-git directory falls back to a filesystem walk (SKIP_DIRS + dot-dirs); the two
- * branches diverge only on committed dot-directory source (`.storybook/*.ts` etc.), which the git path
- * indexes as real code and the fallback skips — git is authoritative, the walk is best-effort.
- * Both paths return ABSOLUTE paths and apply the same `indexable` filter (supported ext, not `.d.ts`,
- * not a generated artifact).
+ * Source files to index, ABSOLUTE paths, `indexable`-filtered (supported ext, not `.d.ts`, not generated).
+ * Git repo: `listWorktreeFiles` = working tree minus `.gitignore`d (so build output/`.plex` is skipped
+ * while a brand-new uncommitted source file IS still indexed). Non-git: filesystem walk (SKIP_DIRS + dot-dirs).
  */
 async function discoverFiles(root: string): Promise<string[]> {
   const tracked = await listWorktreeFiles(root);
@@ -115,11 +102,7 @@ async function discoverFiles(root: string): Promise<string[]> {
   return out;
 }
 
-/**
- * Build (full rebuild) a per-repo code graph: File/Symbol nodes, Declares/Imports
- * edges (TS compiler — ADR-15), and CoChange edges (git history — ADR-06). Co-change
- * is best-effort: a non-git directory simply has no co-change layer.
- */
+/** Full rebuild of a per-repo code graph: File/Symbol nodes, Declares/Imports edges (ADR-15), CoChange edges (ADR-06). */
 export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
   const repoPath = path.resolve(opts.repoPath);
   const repoName = opts.repoName ?? path.basename(repoPath);
@@ -148,7 +131,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     let symbolCount = 0;
     const symbolRows: Record<string, unknown>[] = [];
     const declareRows: Record<string, unknown>[] = [];
-    const seenSymbolIds = new Set<string>(); // collision-safe Symbol PKs (uniqueSymbolId)
+    const seenSymbolIds = new Set<string>();
     const importEdges = new Set<string>();
     const fileSpecifiers: PreciseImportInput[] = [];
 
@@ -199,7 +182,6 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
       importRows,
     );
 
-    // Precise (tsconfig-alias-aware) reference edges that the relative resolver missed.
     let refCount = 0;
     if (opts.precise !== false) {
       const precise = resolvePreciseImports(repoPath, fileSpecifiers, fileSet).filter(
@@ -226,7 +208,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
       );
       coChangePairs = pairs.length;
     } catch {
-      // not a git repo / no history — co-change layer is simply absent
+      // not a git repo / no history — co-change layer absent
     }
 
     const sha = await headSha(repoPath);
@@ -247,16 +229,10 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
 }
 
 /**
- * Incrementally refresh an existing graph (ADR-25): re-extract only the files changed
- * since the graph's stored `headSha`, drop deleted ones, and recompute co-change. Pays
- * O(changed files) instead of re-parsing the whole repo.
- *
- * Edge correctness: a **modified** file keeps its File node so its *incoming* edges (from
- * unchanged importers) survive — only its Symbols + *outgoing* Imports/Refs are replaced.
- * A **deleted** file is `DETACH DELETE`d (removing its incoming edges too).
- *
- * Throws `FullRebuildRequired` when there's no stored sha or the diff can't be computed
- * (history rewritten) — callers should fall back to `buildCodeGraph`.
+ * Incrementally refresh an existing graph (ADR-25): re-extract only files changed since the stored
+ * `headSha`. Edge correctness: a **modified** file keeps its File node so its *incoming* edges survive
+ * (only Symbols + *outgoing* Imports/Refs are replaced); a **deleted** file is `DETACH DELETE`d.
+ * Throws `FullRebuildRequired` (no stored sha / undiffable history) — callers fall back to `buildCodeGraph`.
  */
 export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult> {
   const repoPath = path.resolve(opts.repoPath);
@@ -274,11 +250,8 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     const fileSet = new Set(relFiles);
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
 
-    // 1. Deleted (and rename-from): capture each file's edges FIRST — within THIS open;
-    //    re-opening the same Kùzu dir later in one process SIGSEGVs — then remove the File
-    //    node + its Symbols (and dangling edges). The engine persists the capture to the
-    //    deleted-neighbors sidecar so a deleted module's dependents stay in the blast
-    //    radius on every later review round.
+    // 1. Deleted (and rename-from): capture each file's edges FIRST within THIS open (re-opening the
+    //    same Kùzu dir later in one process SIGSEGVs — ADR-17), THEN remove the File node + its Symbols.
     let deletedEdges: DeletedFileEdges | undefined;
     if (delta.deleted.length > 0) {
       const [co, imports, refs] = await Promise.all([
@@ -300,18 +273,16 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       await db.run('MATCH (:File {id:$id})-[r:Refs]->() DELETE r', { id: rel });
     }
 
-    // 3. Ensure File nodes for added/modified files that still exist on disk.
     const upserts = [...new Set([...delta.added, ...delta.modified])].filter((rel) => fileSet.has(rel));
     await db.insertMany(
       'MERGE (f:File {id:$id}) SET f.path=$path, f.repo=$repo, f.lang=$lang',
       upserts.map((rel) => ({ id: rel, path: rel, repo: repoName, lang: path.extname(rel).slice(1) })),
     );
 
-    // 4. Re-extract symbols/imports/precise refs for the upserted files only.
     let symbolCount = 0;
     const symbolRows: Record<string, unknown>[] = [];
     const declareRows: Record<string, unknown>[] = [];
-    const seenSymbolIds = new Set<string>(); // collision-safe Symbol PKs (uniqueSymbolId)
+    const seenSymbolIds = new Set<string>();
     const importEdges = new Set<string>();
     const fileSpecifiers: PreciseImportInput[] = [];
     for (const rel of upserts) {
@@ -352,11 +323,8 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       refCount = precise.length;
     }
 
-    // 5. Co-change: merge ONLY the commits since the last index (ADR-26) — accumulate onto
-    //    stored pairs; create only new pairs reaching minPairCount within this window.
-    //    Deleted files' edges were already removed (step 1); new pairs are fileSet-filtered.
-    //    Decay re-baselines on a full build; here new commits land at full recency (the
-    //    `Math.max(0, …)` clamp in aggregateCoChange), so no epoch bookkeeping is needed.
+    // 5. Co-change: merge ONLY the commits since the last index (ADR-26) — accumulate onto stored
+    //    pairs; new commits land at full recency (no epoch bookkeeping; decay re-baselines on a full build).
     let coChangePairs = 0;
     let commits = 0;
     try {
@@ -372,20 +340,12 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
           'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
         strong.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count })),
       );
-      // weak: a CoChange singleton is never created from one window (ADR-06 denoising), but
-      // sub-threshold evidence is no longer FORGOTTEN between windows either. ALL weak
-      // pairs are STAGED in CoChangePending (a lane read queries never traverse); the
-      // promotion below immediately folds staged weight onto pairs that already have a
-      // real CoChange edge (the `nowStored` arm — same accumulate arithmetic, same window)
-      // and PROMOTES the rest once their cross-window total reaches minPairCount. Without
-      // the staging, a coupling landing one commit per window (e.g. a review-triggered
-      // refresh after every commit) stayed invisible until the next full rebuild. Pending
-      // resets on a full rebuild.
-      // Evict stale staged pairs FIRST (this window's staging refreshes ts below): without
-      // eviction the lane grows monotonically with every never-promoted singleton — the N²
-      // noise ADR-06 prunes — and two occurrences YEARS apart would promote at full
-      // undecayed weight. A pair that hasn't recurred within one co-change half-life would
-      // carry ~half its weight anyway; age it out of the lane on the same horizon.
+      // weak: a CoChange singleton is never created from one window (ADR-06 denoising); sub-threshold
+      // evidence is STAGED in CoChangePending (a lane reads never traverse) and promoted once its
+      // cross-window total reaches minPairCount — so a coupling landing one commit per window isn't forgotten.
+      // Evict stale staged pairs FIRST (ts refreshed below): bounds the lane so never-promoted singletons
+      // age out instead of accumulating (the N² noise ADR-06 prunes) and can't promote at full undecayed
+      // weight a half-life later.
       const nowSec = Date.now() / 1000;
       if (opts.coChange.halfLifeDays > 0) {
         await db.run(
@@ -399,8 +359,8 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
           'ON MATCH SET p.weight = p.weight + $weight, p.cnt = p.cnt + $cnt, p.ts = $ts',
         weak.map((p) => ({ a: p.a, b: p.b, weight: p.weight, cnt: p.count, ts: nowSec })),
       );
-      // Promote: staged pairs that crossed the threshold, plus any pending residue for a
-      // pair that has since gained a real edge (its evidence belongs on the edge now).
+      // Promote: staged pairs that crossed the threshold, plus pending residue for a pair that has
+      // since gained a real edge (its evidence belongs on the edge now).
       const crossed = await db.run(
         'MATCH (a:File)-[p:CoChangePending]->(b:File) WHERE p.cnt >= $min RETURN a.id AS a, b.id AS b, p.weight AS weight, p.cnt AS cnt',
         { min: opts.coChange.minPairCount },
@@ -419,15 +379,12 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
         'MATCH (a:File {id:$a})-[p:CoChangePending]->(b:File {id:$b}) DELETE p',
         promotable.map((r) => ({ a: String(r.a), b: String(r.b) })),
       );
-      // Count UNIQUE pairs: a pair that crosses the threshold within the window (strong arm)
-      // and also carries pending residue shows up in both `strong` and `promotable` — naive
-      // length addition double-counted it in the "(N pairs)" the CLI prints.
+      // Count UNIQUE pairs: a pair in both `strong` and `promotable` must not double-count.
       coChangePairs = new Set([...strong.map((p) => `${p.a}\t${p.b}`), ...promotable.map((r) => `${r.a}\t${r.b}`)]).size;
     } catch {
       // not a git repo / no history
     }
 
-    // 6. Re-stamp the indexed head.
     const sha = await headSha(repoPath);
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'headSha', v: sha });
 

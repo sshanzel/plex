@@ -1,16 +1,11 @@
 import type { CodeGraphDB } from './db';
 
 /**
- * Kùzu schema for a per-repo code graph (ADR-07). Edges are unioned by provenance
- * (ADR-06): `Imports` (structural), `Refs` (precise, alias-aware) and `CoChange`
- * (git history).
- *
- * `CoChangePending` is the incremental staging lane (ADR-26): sub-threshold co-change
- * pairs accumulate here ACROSS update windows and promote to a real `CoChange` edge once
- * their total `cnt` reaches `minPairCount`. Read queries must never traverse it.
- *
- * `File.id` is the repo-relative POSIX path (unique within a per-repo DB).
- * `Symbol.id` is `<file>#<name>#<startLine>`.
+ * Kùzu schema for a per-repo code graph (ADR-07). Edges unioned by provenance (ADR-06): `Imports`
+ * (structural), `Refs` (precise, alias-aware), `CoChange` (git history). `CoChangePending` is the
+ * incremental staging lane (ADR-26) — sub-threshold pairs accumulate across windows and promote to a
+ * real `CoChange` edge at `minPairCount`; read queries must NEVER traverse it. `File.id` = repo-relative
+ * POSIX path; `Symbol.id` = `<file>#<name>#<startLine>`.
  */
 export const DDL: string[] = [
   `CREATE NODE TABLE IF NOT EXISTS File(
@@ -32,7 +27,7 @@ export async function initSchema(db: CodeGraphDB): Promise<void> {
   for (const stmt of DDL) {
     await db.run(stmt);
   }
-  // Column migrations for graphs created before a column existed (swallow "already exists").
+  // Column migration for graphs created before `ts` existed (swallow "already exists").
   try {
     await db.run('ALTER TABLE CoChangePending ADD ts DOUBLE');
   } catch {

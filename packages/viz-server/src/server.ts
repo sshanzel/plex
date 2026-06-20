@@ -28,11 +28,8 @@ const json = (res: http.ServerResponse, status: number, body: unknown): void => 
   res.end(payload);
 };
 
-/**
- * Handle one request. All store reads open Kùzu per-request and close immediately (collect.ts), so
- * the daemon never holds the single-writer lock; a `RepoBusyError` (a review holds it right now)
- * becomes a 503 the UI retries (ADR-45).
- */
+/** Handle one request. Store reads open Kùzu per-request and close immediately (collect.ts) so the
+ *  daemon never holds the single-writer lock; a `RepoBusyError` becomes a 503 the UI retries (ADR-45). */
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts: ServeOptions): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${HOST}`);
   const p = url.pathname;
@@ -55,7 +52,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
   if (p.startsWith('/api/graph/') || p === '/api/expand' || p === '/api/search') {
     const repoId = url.searchParams.get('repo') ?? '';
 
-    // Knowledge is machine-global, but optionally scoped to the selected repo (by name).
     if (p === '/api/graph/knowledge') {
       if (!repoId) return json(res, 200, await collectKnowledge(config.knowledgeDir));
       const scoped = resolveRepo(config, repoId);
@@ -63,7 +59,6 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
       return json(res, 200, await collectKnowledge(config.knowledgeDir, { repo: scoped.name }));
     }
 
-    // The remaining graphs require a valid repo.
     const repo = repoId ? resolveRepo(config, repoId) : null;
     if (!repo) return json(res, 404, { error: 'unknown repo', repo: repoId });
 
@@ -72,12 +67,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
     if (p === '/api/graph/lineage') return json(res, 200, await collectLineage(repo, config.knowledgeDir));
     if (p === '/api/expand') {
       const node = url.searchParams.get('node') ?? '';
-      // Only File nodes expand (their symbols + neighbors). `node` is prefixed `f:<fileId>`.
+      // Only File nodes (prefixed `f:<fileId>`) expand.
       if (node.startsWith('f:')) return json(res, 200, await expandCodeFile(repo, node.slice(2), config.knowledgeDir));
       return json(res, 200, { nodes: [], edges: [] });
     }
     if (p === '/api/search') {
-      // Reach any File (incl. ones outside the code-graph landing set). Query is parameterized downstream.
+      // Query is parameterized downstream (searchFiles), never concatenated into Cypher.
       const nodes = await searchFiles(repo, url.searchParams.get('q') ?? '');
       return json(res, 200, { nodes, edges: [] });
     }
@@ -86,13 +81,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts:
   return json(res, 404, { error: 'not found', path: p });
 }
 
-/** Process start time — stamped once at module load (a normal long-lived server, not a replayable workflow). */
+/** Process start time — stamped once at module load. */
 const STARTED_AT = new Date().toISOString();
 
-/**
- * Start the HTTP server, binding **127.0.0.1 only** (never 0.0.0.0 — no remote exposure, ADR-45).
- * If `port` is taken, try the next few ports so a stale listener never blocks startup outright.
- */
+/** Start the HTTP server, binding 127.0.0.1 ONLY (never 0.0.0.0 — no remote exposure, ADR-45). If
+ *  `port` is taken, try the next few ports so a stale listener never blocks startup. */
 export function startServer(opts: ServeOptions): Promise<RunningServer> {
   const first = opts.port ?? DEFAULT_PORT;
   const server = http.createServer((req, res) => {

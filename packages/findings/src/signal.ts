@@ -16,12 +16,9 @@ export function severityWeight(s: Severity, w: SignalWeights = defaultWeights): 
 }
 
 /**
- * signal = severity × confidence × blast × deviation × agreement   (ADR-04, ADR-05)
- *
- * - blast: 0.5..1, so a no-blast finding is dampened, not zeroed.
- * - deviation: prevalence demotes style/nits/improvements (common ⇒ convention) but
- *   NOT bugs (a common bug is systemic, handled by triage — never silenced here).
- * - agreement: cross-source corroboration boosts the signal.
+ * signal = severity × confidence × blast × deviation × agreement (ADR-04/05).
+ * INVARIANT: prevalence demotes style/nits/improvements via `deviation`, NEVER bugs (a common bug is
+ * systemic, handled by triage — never silenced here). blast is 0.5..1 (no-blast dampened, not zeroed).
  */
 export function computeSignal(
   f: Finding,

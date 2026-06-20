@@ -24,12 +24,8 @@ export interface DoctorReport {
   advice: string;
   /** Configured embedding provider name (e.g. `voyage`, `none`). */
   embeddings: string;
-  /**
-   * Whether that provider will ACTUALLY fire — i.e. resolves to a usable client (key present).
-   * A configured `voyage` with no `VOYAGE_API_KEY` / `config.apiKey` reports `embeddings: 'voyage'`
-   * but `embeddingsActive: false`: it silently degrades to lexical, so nothing reaches the provider
-   * (the "my dashboard shows no usage" tell). `false` for the test-only `fake` provider too.
-   */
+  /** Whether the provider will ACTUALLY fire (key present) vs silently degrade to lexical — the "my
+   *  dashboard shows no usage" tell. `false` for the test-only `fake` provider too. */
   embeddingsActive: boolean;
   /** One-line human summary of the embedding state (active / configured-but-no-key / off). */
   embeddingsAdvice: string;
@@ -60,12 +56,8 @@ export function dirSizeBytes(dir: string): number {
   }
 }
 
-/**
- * Scan the centralized repos root and return entries whose `repo-path` sidecar points to
- * a path that no longer exists on disk (deleted worktrees, renamed/deleted repos, etc.).
- * Only dirs that contain a `repo-path` file are examined — pre-v0.3.3 dirs without one
- * are skipped rather than misidentified.
- */
+/** Repos-root entries whose `repo-path` sidecar points to a path no longer on disk. Dirs without a
+ *  `repo-path` file (pre-v0.3.3) are skipped, not misidentified as orphans. */
 export function findOrphanedRepos(reposRoot: string): OrphanedRepo[] {
   if (!existsSync(reposRoot)) return [];
   const orphans: OrphanedRepo[] = [];
@@ -99,12 +91,8 @@ export function resolveReposRoot(config: ReviewerConfig): string | null {
   return null; // relative = per-repo, can't scan a single root
 }
 
-/**
- * Pure health report. The point is `stale`: a long-lived stdio MCP process keeps running the
- * build it loaded at spawn, so a `pnpm build` (or package update) on disk has no effect until the
- * client reconnects/respawns. Comparing the loaded build time to the file's current mtime makes
- * that visible instead of silent (which is exactly what bit us — a fix that "didn't apply").
- */
+/** Pure health report. The point is `stale`: a long-lived stdio process runs the build it loaded at
+ *  spawn, so an on-disk rebuild has no effect until reconnect — comparing loaded vs on-disk mtime shows it. */
 export function buildDoctorReport(args: {
   version: string;
   config: ReviewerConfig;
@@ -112,9 +100,8 @@ export function buildDoctorReport(args: {
   onDiskBuildMs: number;
   node: string;
   pid: number;
-  /** Whether the configured embedding provider resolves to a usable client (key present). Injected
-   * by the caller (`embeddingReady`) so this report stays a pure, Kùzu-free function (the engine
-   * barrel — which `embeddingReady` lives behind — must not load into the unit-tested doctor). */
+  /** Injected by the caller (`embeddingReady`) so this report stays pure + Kùzu-free (the engine
+   *  barrel must not load into the unit-tested doctor). */
   embeddingsActive: boolean;
 }): DoctorReport {
   const { version, config, loadedBuildMs, onDiskBuildMs, node, pid, embeddingsActive } = args;

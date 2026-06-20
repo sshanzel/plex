@@ -14,25 +14,7 @@ const numEnv = (v?: string): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-/**
- * Build a config from, in increasing precedence: defaults < `~/.plex/config.json` (written
- * by `plex init`) < environment variables < explicit overrides. The home config lets a user
- * set their embedding key once; env still wins for per-invocation overrides.
- *
- *   PLEX_DATA_DIR             per-repo data dir ('' = centralized ~/.plex/repos/<id>)
- *   PLEX_KNOWLEDGE_DIR        global knowledge base dir (default ~/.plex/knowledge)
- *   PLEX_EMBEDDING_PROVIDER   voyage | openai | gemini | ollama | none (default none)
- *   PLEX_LLM_PROVIDER         analysis distiller: claude-cli | anthropic | openai
- *   PLEX_LLM_MODEL            model id for the analysis distiller
- *   PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS  recency-decay half-life of a `reject` (default 30)
- *   PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS   recency-decay half-life of a `waive` (default 365)
- *   PLEX_DECAY_HALFLIFE_DAYS               positive-pitfall recency half-life (default 365)
- *   PLEX_DECAY_RETRIEVAL_TILT_FLOOR        retrieval recency-tilt floor (default 0.5)
- *   PLEX_DECAY_PRUNE_FLOOR                 prune below this decayed confidence (default 0.1)
- *   PLEX_DECAY_PRUNE_MIN_AGE_DAYS          min days quiet before prune (default 365)
- *   PLEX_UI_AUTOSTART          viz daemon always-on (default off — on-demand via `plex serve`)
- *   PLEX_UI_PORT               viz daemon port (default 2288)
- */
+/** Build a config in increasing precedence: defaults < `~/.plex/config.json` < env vars < explicit overrides. */
 export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerConfig {
   const home = readHomeConfig();
   const env = process.env;
@@ -46,12 +28,11 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
     };
   }
   if (home.llm?.provider) o.llm = { provider: home.llm.provider, ...(home.llm.model ? { model: home.llm.model } : {}) };
-  // Suppression half-lives (ADR-41) — the documented tuning knob, so it must be reachable from the
-  // home config (not just programmatic overrides). Collect home values; env may override below.
+  // Suppression half-lives (ADR-41). Collect home values; env may override below.
   const supp: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number } = {};
   if (typeof home.suppression?.rejectHalfLifeDays === 'number') supp.rejectHalfLifeDays = home.suppression.rejectHalfLifeDays;
   if (typeof home.suppression?.waiveHalfLifeDays === 'number') supp.waiveHalfLifeDays = home.suppression.waiveHalfLifeDays;
-  // Positive-pitfall decay knobs (ADR-42) — same home/env reachability as suppression.
+  // Positive-pitfall decay knobs (ADR-42).
   const dec: { halfLifeDays?: number; retrievalTiltFloor?: number; pruneFloor?: number; pruneMinAgeDays?: number } = {};
   if (typeof home.decay?.halfLifeDays === 'number') dec.halfLifeDays = home.decay.halfLifeDays;
   if (typeof home.decay?.retrievalTiltFloor === 'number') dec.retrievalTiltFloor = home.decay.retrievalTiltFloor;
@@ -75,8 +56,7 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   const waEnv = numEnv(env.PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS);
   if (reEnv != null) supp.rejectHalfLifeDays = reEnv;
   if (waEnv != null) supp.waiveHalfLifeDays = waEnv;
-  // Only set when a value was actually supplied — a partial fills the rest from defaults via the
-  // `resolveConfig` deep-merge; with nothing supplied, leave it unset so defaults (30/365) apply.
+  // Only set when a value was supplied; a partial fills the rest from defaults via `resolveConfig`.
   if (supp.rejectHalfLifeDays != null || supp.waiveHalfLifeDays != null) {
     o.suppression = { ...defaultConfig.suppression, ...supp };
   }

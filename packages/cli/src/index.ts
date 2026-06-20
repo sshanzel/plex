@@ -1,12 +1,5 @@
 #!/usr/bin/env node
-/**
- * plex CLI. Thin wrapper over @plex/engine for humans; the MCP server is the
- * path for agents. Commands: init, doctor, index, reconcile, eval, blast, verdict,
- * verdicts, consolidate, refresh-outcomes, sweep, analyze (and an undocumented `review` — see the USAGE note).
- *
- * The shebang above is the first line so esbuild/tsup preserves it in dist/plex.js,
- * making the published `bin` directly executable.
- */
+/** plex CLI — thin wrapper over @plex/engine for humans; the MCP server is the path for agents. */
 import { writeFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { spawnSync } from 'node:child_process';
@@ -39,11 +32,7 @@ import { runServe } from './serve';
 
 type LocalDiffMode = 'working' | 'staged' | 'branch';
 
-/**
- * True when `dir` is inside a git work tree (handles subdirectories + git worktrees, not just a bare
- * `.git` check). This is the validity gate for `index`/`init`: Plex's blast radius is built from git
- * co-change history, so a non-git folder simply can't be indexed — run inside the repo and it's valid.
- */
+/** True when `dir` is inside a git work tree (handles subdirectories + git worktrees). */
 function isGitRepo(dir: string): boolean {
   const r = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
   return r.status === 0 && r.stdout.trim() === 'true';
@@ -137,9 +126,7 @@ function printReview(ctx: ReviewContext): void {
   process.stdout.write(out.join('\n') + '\n');
 }
 
-/** The tangible cold-start payoff: WHAT Plex learned + how much of YOUR code it's anchored to —
- *  so "it learned from our history" is visible, not just a count. (Mined lessons anchor to files;
- *  symbol-level memory accrues from live-review accepts, ADR-47.) Empty → ''. */
+/** Summarize what Plex learned + how much of your code it's anchored to (ADR-47). Empty → ''. */
 function formatLearned(learned: LearnedLesson[], limit = 6): string {
   if (!learned.length) return '';
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -158,11 +145,7 @@ function ask(question: string): Promise<string> {
   return new Promise((res) => rl.question(question, (a) => { rl.close(); res(a.trim()); }));
 }
 
-/**
- * Like `ask`, but does not echo the typed answer — for secrets (an API key shouldn't land in the
- * terminal scrollback). The prompt is written synchronously by `rl.question`; we mute keystroke
- * echo only after that. On a non-TTY (piped) there's no screen echo to suppress, so fall back.
- */
+/** Like `ask`, but does not echo the typed answer — for secrets. Falls back to `ask` on a non-TTY. */
 function askSecret(question: string): Promise<string> {
   const out = process.stdout;
   if (!process.stdin.isTTY) return ask(question);
@@ -177,11 +160,7 @@ function askSecret(question: string): Promise<string> {
   });
 }
 
-/**
- * Run a slow step with a live spinner + elapsed time so the terminal never looks frozen
- * (indexing a large repo walks git history — it CAN take a minute). On a non-TTY (CI / piped)
- * it degrades to a single line, no escape codes. Pure-stdout, no dependency.
- */
+/** Run a slow step with a live spinner + elapsed time; degrades to a single line on a non-TTY. */
 async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
   const out = process.stdout;
   if (!out.isTTY) {
@@ -201,22 +180,19 @@ async function withSpinner<T>(label: string, fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     clearInterval(timer);
-    out.write('\r\x1b[K'); // clear the spinner line so the caller's summary starts clean
+    out.write('\r\x1b[K');
   }
 }
 
-/** How many recent merged PRs the onboarding seed analyzes — a fast first win, NOT the full history.
- *  The analyze cursor advances, so `plex analyze` (default 100 newest, or `--oldest`/`--all`) continues. */
+/** How many recent merged PRs the onboarding seed analyzes — a fast first win; the cursor advances. */
 const INIT_SEED_PRS = 25;
 
-/** One-command setup: optional embedding key (saved to config), then offer to index + seed from PR
- *  history. The MCP is provided by the Plex plugin, so init does NOT register one — that avoids a
- *  duplicate `plex` server now that the plugin is the install path. */
+/** One-command setup: optional embedding key, then offer to index + seed from PR history. The MCP is
+ *  provided by the Plex plugin, so init does NOT register one (avoids a duplicate `plex` server). */
 async function runInit(repoPath: string): Promise<number> {
   const out = process.stdout;
   out.write('Plex setup (embedded: no Docker, no services).\n\n');
 
-  // 1. Embedding key (optional). Saved to ~/.plex/config.json; the MCP server reads it at review time.
   out.write('An embedding key powers knowledge retrieval and the semantic review signals (optional).\n');
   const provider = (await ask('Embedding provider [voyage/openai/gemini/ollama/none] (voyage): ')) || 'voyage';
   if (provider !== 'none') {
@@ -225,8 +201,6 @@ async function runInit(repoPath: string): Promise<number> {
     out.write(`Saved config to ${homeConfigPath()}\n`);
   }
 
-  // 2. Index this repo, only inside a git repo (Plex needs git history for co-change). Reviews also
-  //    auto-index on first use and refresh on drift, so this step is optional.
   if (!isGitRepo(repoPath)) {
     out.write('\nNot a git repo here, so skipping the index. Run `plex index` inside a repo later, or just review it (the first review auto-indexes).\n');
   } else if ((await ask('\nIndex this repo now? [Y/n]: ')).toLowerCase() !== 'n') {
@@ -237,16 +211,11 @@ async function runInit(repoPath: string): Promise<number> {
     out.write(`Indexed ${res.files} files, ${res.symbols} symbols, ${res.coChangePairs} co-change pairs.\n`);
   }
 
-  // 3. Cold-start accelerator: seed knowledge from merged PR history NOW, so Plex's learned lessons
-  //    (and the code-path memory anchored to your symbols) are alive on day one instead of week three.
-  //    Needs embeddings (clustering) + an LLM distiller + `gh` against a GitHub repo with merged PRs.
   if (isGitRepo(repoPath)) {
     if (!embeddingReady(loadConfig())) {
       out.write('\nTip: add an embedding key (re-run `plex init`) and run `plex analyze` to seed Plex from your\nmerged PR history — it analyzes past review comments into lessons anchored to your code, so the\nreviewer is sharp from day one instead of learning from scratch.\n');
     } else if ((await ask(`\nSeed Plex from your merged PR history now? Analyzes the most recent ~${INIT_SEED_PRS} merged PRs into\nlessons anchored to your code (uses \`gh\`; run \`plex analyze\` for the full history). [y/N]: `)).toLowerCase() === 'y') {
       try {
-        // Bound the onboarding seed to a fast slice — a quick first win, not a multi-minute job. The
-        // analyze cursor (analyze-state.json) advances, so a later `plex analyze` continues from here.
         const res = await withSpinner(
           `Analyzing the most recent ${INIT_SEED_PRS} merged PR(s) (fetching via \`gh\`, distilling review comments into lessons)`,
           () => analyzeRepo(repoPath, loadConfig(), { state: 'merged', limit: INIT_SEED_PRS }),
@@ -257,7 +226,6 @@ async function runInit(repoPath: string): Promise<number> {
         out.write(formatLearned(res.learned));
         out.write('Run `plex analyze` anytime to continue with older PRs.\n');
       } catch (e) {
-        // Degrade clearly: most commonly no LLM distiller (claude CLI / API key) or `gh` unavailable.
         out.write(
           `\nCouldn't seed automatically: ${e instanceof Error ? e.message : String(e)}\n` +
             'No worries — your agent can seed from PR history later (it has the LLM), or run `plex analyze` once an LLM distiller is available. Plex also learns from every review you run.\n',
@@ -318,12 +286,8 @@ async function main(): Promise<number> {
       }
       return 0;
     }
-    // `review` is intentionally OMITTED from USAGE. The CLI can only ASSEMBLE the review context
-    // (assembleReviewContext) — it has no LLM, so it can't produce the first-principles findings a
-    // real review needs, and a review MUST run in the isolated reviewer agent (anti-bias), not here.
-    // The handler stays for the --html graph viz, --json context piping, and the brain E2E
-    // (scripts/brain-check.mjs). Document it as a true headless `review` only once an API-key path
-    // lets the CLI run the reasoning itself.
+    // `review` is OMITTED from USAGE: the CLI only ASSEMBLES context (no LLM); a real review MUST run
+    // in the isolated reviewer agent (anti-bias, ADR-02). Kept for --html viz, --json piping, brain E2E.
     case 'review': {
       const repoPath = positionals[1] ?? process.cwd();
       const mode: LocalDiffMode | undefined = flags.staged
@@ -356,9 +320,7 @@ async function main(): Promise<number> {
         pr: typeof flags.pr === 'string' ? flags.pr : undefined,
       });
       process.stdout.write(`Reconciled ${res.target}: ${res.accepted}/${res.checked} open finding(s) auto-accepted as fixed.\n`);
-      process.stdout.write(`  ${res.reason}\n`); // always explain the outcome — esp. why accepted is 0
-      // The audit trail: WHAT was accepted and WHICH signal matched — a locality false-accept
-      // should be visible here, not a silent disappearance from the stream.
+      process.stdout.write(`  ${res.reason}\n`);
       for (const a of res.acceptedFindings ?? []) {
         process.stdout.write(`  ✓ ${a.title} (${a.file ?? '?'}:${a.line ?? '?'} — ${a.matchedBy})\n`);
       }
@@ -424,8 +386,7 @@ async function main(): Promise<number> {
     case 'analyze': {
       const repoPath = positionals[1] ?? process.cwd();
       const oldest = Boolean(flags.oldest);
-      // `--oldest` needs the full PR list to find the chronological start, not just the
-      // recent `maxPrs` window — raise the fetch ceiling so the oldest PRs are in view.
+      // `--oldest` needs the full PR list to find the chronological start — raise the fetch ceiling.
       if (oldest) config.analyze.maxPrs = Math.max(config.analyze.maxPrs, 1000);
       if (typeof flags.threshold === 'string') config.analyze.clusterThreshold = finiteFlag(flags.threshold, 'threshold');
       if (typeof flags['min-cluster'] === 'string') config.analyze.minClusterSize = finiteFlag(flags['min-cluster'], 'min-cluster');
@@ -451,8 +412,7 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'refresh-outcomes': {
-      // Backfill analyzed pitfalls' confidence from current GitHub state (ADR-50): re-fetch threads,
-      // recompute outcomes (incl. reply-agreement), upgrade analyzed incidents, consolidate.
+      // Backfill analyzed pitfalls' confidence from current GitHub state (ADR-50).
       const repoPath = positionals[1] ?? process.cwd();
       const res = await refreshAnalyzedOutcomes(repoPath, config, { state: flags.all ? 'all' : 'merged' });
       if (!res.repoReachable) {
@@ -469,8 +429,7 @@ async function main(): Promise<number> {
       return 0;
     }
     case 'serve': {
-      // The optional local visualization daemon (ADR-45). Reads the same per-repo stores the
-      // review flow writes; opens Kùzu per-request and closes, so it never blocks a review.
+      // The optional local visualization daemon (ADR-45); opens Kùzu per-request, never blocks a review.
       return runServe(config, {
         foreground: Boolean(flags.foreground),
         stop: Boolean(flags.stop),

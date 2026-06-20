@@ -20,18 +20,9 @@ export interface RankingQuality {
 }
 
 /**
- * Offline ranking-quality measurement + re-weight readiness gate (tuning.md §5 / §"deferred #1") —
- * **measurement only, no weights change.**
- *
- * Reads the per-repo brain (each finding's `signal` + raw features + resolved outcome — data the
- * review flow already persists, analysis-INDEPENDENT) and answers two questions:
- *   1. How well does the current `signal` ranking match what the user accepted? (per-round nDCG)
- *   2. Is a ranking re-weight worth BUILDING yet? (the readiness gates → a `verdict`)
- *
- * It never mutates the ranking. The verdict is the honest go/no-go: `not-yet` (keep defaults, accrue
- * data), `defaults-win` (the current ranking already matches outcomes — ship nothing), or `ready`
- * (enough balanced data AND headroom — build a candidate fit, and ship it ONLY if it beats the
- * defaults on grouped held-out CV; that cross-validation harness is itself step 1 of #1).
+ * Offline ranking-quality measurement + re-weight readiness gate (tuning.md §5) — MEASUREMENT ONLY,
+ * never mutates the ranking. Reads the brain's persisted `signal` + features + outcomes and returns
+ * per-round nDCG plus a go/no-go `verdict` (`not-yet` / `defaults-win` / `ready`).
  */
 export async function rankingQuality(repoPath: string, config: ReviewerConfig): Promise<RankingQuality> {
   const brain = await Brain.open(repoPath, config);

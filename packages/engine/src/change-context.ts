@@ -4,14 +4,8 @@ import { repoPaths } from './paths';
 import type { DiffSource } from './diff';
 
 /**
- * Resolve the *stated motivation* behind a change so the reviewer can check the code
- * AGAINST its claimed intent (flag overclaims, behavior that contradicts the description).
- *
- * - PR review  → PR title/body/url (`gh pr view`).
- * - branch review → commit subjects in `base..HEAD` (the change's narrative).
- * - working/staged → nothing stated yet; returns undefined (no motivation to check against).
- *
- * Best-effort: any failure (no `gh`, detached repo, no commits) yields undefined.
+ * Resolve the change's stated motivation (PR title/body, or branch commit subjects) so the reviewer
+ * can check the code against its claimed intent. Best-effort: any failure yields undefined.
  */
 export async function resolveChangeContext(
   repoPath: string,

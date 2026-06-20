@@ -12,11 +12,7 @@ function fnv1a(s: string): number {
   return h >>> 0;
 }
 
-/**
- * Deterministic bag-of-words embedding for tests / offline use (ADR-13). Shared tokens
- * ⇒ higher cosine similarity, which is all retrieval needs to be exercised without a
- * network call or API key.
- */
+/** Deterministic bag-of-words embedding for tests / offline use (ADR-13). */
 export class FakeEmbeddingProvider implements EmbeddingProvider {
   readonly name = 'fake';
   readonly dimensions: number;
@@ -89,8 +85,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
     const body = {
       requests: texts.map((t) => ({ model: `models/${this.model}`, content: { parts: [{ text: t }] } })),
     };
-    // Key in the `x-goog-api-key` header, not the URL query — keeps it out of proxy/CDN access
-    // logs and referrers (Gemini accepts both; the other providers all use headers).
+    // Key in the `x-goog-api-key` header, not the URL query — keeps it out of proxy/CDN access logs.
     const data = await postJson(`${this.baseUrl}/v1beta/models/${this.model}:batchEmbedContents`, body, {
       'x-goog-api-key': this.apiKey,
     });
@@ -98,12 +93,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-/**
- * Construct the configured embedding provider, or `null` when none is usable (provider
- * `none`, or a missing API key). Real operation requires a real provider; `fake` is a
- * deterministic test-only embedder and is never the default. Callers treat `null` as
- * "knowledge features unavailable" (retrieval returns nothing; writes error).
- */
+/** Construct the configured embedding provider, or `null` when none is usable (provider `none`, or a missing API key). */
 export function createEmbeddingProvider(cfg: EmbeddingConfig): EmbeddingProvider | null {
   const env = process.env;
   // Prefer an env key; else the key stored in ~/.plex/config.json (ADR-29).

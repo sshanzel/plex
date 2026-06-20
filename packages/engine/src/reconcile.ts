@@ -8,8 +8,7 @@ import { reviewTargetFor } from './target';
 import { Brain, type BrainFinding } from './brain';
 import { submitVerdict } from './knowledge';
 
-/** One auto-accepted finding, with the signal that matched it — the audit trail that keeps
- *  locality auto-accepts honest (a false accept is visible, not a silent disappearance). */
+/** One auto-accepted finding + the signal that matched it — the audit trail that keeps locality auto-accepts honest. */
 export interface AcceptedFix {
   findingId: string;
   title: string;
@@ -19,10 +18,8 @@ export interface AcceptedFix {
 }
 
 /**
- * Record an autonomous `accept` for each prior finding that one of `regionEmbeddings`
- * addressed (ADR-28), returning WHAT was accepted and HOW it matched. Shared by the review
- * flow and standalone reconcile, using the caller's open Brain handle so the per-repo Kùzu
- * brain is opened once.
+ * Record an autonomous `accept` for each prior finding a change addressed (ADR-28), returning WHAT was
+ * accepted and HOW it matched. Shared by the review flow and standalone reconcile via the caller's Brain.
  */
 export async function recordFixAccepts(
   repoPath: string,
@@ -37,23 +34,19 @@ export async function recordFixAccepts(
    *  (default) to fall back to pure semantic matching. */
   changedRegions: ReadonlyArray<ChangedRegion> = [],
 ): Promise<AcceptedFix[]> {
-  // Adapt the semantic auto-accept cut UPWARD only (tuning.md §6): on an anisotropic model the
-  // bar rises so a "fix" must be more clearly related before we auto-accept — never below the 0.6
-  // floor, so it never auto-accepts (and thus silences) more than today's fixed value would. With
-  // no embedder the embeddings are empty → background {0,0} → stays 0.6, and locality still works.
+  // Adapt the semantic auto-accept cut UPWARD only (tuning.md §6) — never below the 0.6 floor, so it
+  // never auto-accepts more than today's fixed value would. No embedder → empty → stays 0.6 (locality works).
   const semanticThreshold = adaptiveFloor(0.6, cosineBackground([...regionEmbeddings, ...findingEmbeddings]));
   const accepts: AcceptedFix[] = [];
   for (let i = 0; i < priorFindings.length; i++) {
     const f = priorFindings[i]!;
-    // `note` findings are never auto-accepted (ADR-31): a note isn't a defect to be
-    // "fixed" — its only valid outcomes are an EXPLICIT acknowledge (intentional) or reject. Auto-
-    // inferring "fixed" from a nearby change is semantically wrong and, worse, pre-empts the
-    // acknowledge → semantic-waiver path that keeps it quiet until it MATERIALLY changes.
+    // `note` findings are never auto-accepted (ADR-31): valid outcomes are an EXPLICIT acknowledge or
+    // reject only — auto-inferring "fixed" pre-empts the acknowledge→semantic-waiver path.
     if (f.severity === 'note') continue;
     const matchedBy = findingAddressMatch({ file: f.file, line: f.line }, findingEmbeddings[i] ?? [], changedRegions, regionEmbeddings, { semanticThreshold });
     if (matchedBy) {
-      // Pass the rule tag as `pattern` so an inferred accept can REFUTE a learned suppression
-      // (ADR-39): the brain id can't carry it, so without this a fix never pulls the tier back down.
+      // Pass the rule tag as `pattern` so an inferred accept can REFUTE a learned suppression (ADR-39) —
+      // the brain id can't carry it, else a fix never pulls the tier back down.
       await submitVerdict(repoPath, { findingId: f.id, kind: 'accept', inferred: true, file: f.file, line: f.line, title: f.title, pattern: f.rule || undefined }, config, target, brain);
       await brain.markFindingOutcome(f.id, 'fixed');
       accepts.push({ findingId: f.id, title: f.title, file: f.file, line: f.line, matchedBy });
@@ -68,12 +61,7 @@ export interface ReconcileResult {
   checked: number;
   /** Findings auto-accepted because a pushed change addressed them. */
   accepted: number;
-  /**
-   * Human-readable explanation of the outcome — so `accepted: 0` is never a black box. Names the
-   * concrete cause (no open findings / no prior round recorded for this target / no commits since
-   * the last review / N files changed but nothing matched / accepted M of N). The "no prior round"
-   * case is the worktree split-brain tell (reviewTargetFor).
-   */
+  /** Human-readable explanation so `accepted: 0` is never a black box (names the concrete cause). */
   reason: string;
   /** The "since" window reconcile diffed: last reviewed round's head → current head. */
   fromSha?: string;
@@ -85,15 +73,9 @@ export interface ReconcileResult {
 }
 
 /**
- * Reconcile a target's open findings against what has been pushed since they were raised,
- * recording `accept` for the ones now addressed (ADR-28) — WITHOUT running a full review.
- *
- * The cheap, on-demand "did the author fix these?" check: embedded Kùzu brain + git +
- * embeddings, no service. Call it from the responder skill, a CI `on: push` step, or by
- * hand. Matches a finding to the pushed changes by EITHER a semantic title match OR
- * file/line LOCALITY (ADR-28) — the locality signal is what catches a restructuring fix
- * (try/catch wrap, moved lines) that reads nothing like the finding's title. A no-op without
- * an embedding provider (the semantic half needs it; locality still works) or when nothing moved.
+ * The cheap "did the author fix these?" check: reconcile a target's open findings against what's been
+ * pushed since, recording `accept` for the addressed ones (ADR-28) WITHOUT a full review. Matches by
+ * semantic title OR file/line LOCALITY (the latter catches restructuring fixes and needs no embeddings).
  */
 export async function reconcileOutcomes(
   repoPath: string,
@@ -101,16 +83,14 @@ export async function reconcileOutcomes(
   src: DiffSource,
 ): Promise<ReconcileResult> {
   const target = reviewTargetFor(repoPath, src);
-  // Embeddings power the SEMANTIC half only; the file/line LOCALITY half needs none (git +
-  // anchors). So we no longer bail when no provider is configured (ADR-30 made embeddings
-  // optional) — locality still reconciles restructuring fixes.
+  // Embeddings power the SEMANTIC half only; the LOCALITY half needs none (ADR-30), so don't bail
+  // without a provider.
   const embedder = createEmbeddingProvider(config.embedding);
 
   const cwd = repoPaths(repoPath, config.dataDir).repoPath;
   const brain = await Brain.open(repoPath, config);
   try {
-    // Lineage is base-keyed + durable (ADR-46): a worktree and its base share one target, so there's
-    // no brain split to heal, and a worktree's prior rounds survive `git worktree remove`.
+    // Lineage is base-keyed + durable (ADR-46): a worktree and its base share one target — no split to heal.
     const state = await brain.loadRoundState(target);
     const checked = state.priorFindings.length;
     const head =

@@ -11,11 +11,8 @@ export interface RawFinding {
   severity: Severity;
   confidence: number;
   /**
-   * The name of the nearest enclosing named declaration (function/method/class, or a `const f = () =>`
-   * binding) — undefined at top level. Becomes `Finding.location.symbol` so a dismissal is anchored to
-   * the SYMBOL it concerned (ADR-48): suppressing one `console.log` scopes to its function, not the
-   * whole rule. Stable across rounds (re-derived from the same AST), which is all the symbol-scoping
-   * match needs — it does NOT have to match the code graph's `Class.method` qualification.
+   * Nearest enclosing named declaration → `Finding.location.symbol` so a dismissal is anchored to the
+   * SYMBOL it concerned (ADR-48): suppressing one `console.log` scopes to its function, not the whole rule.
    */
   symbol?: string;
 }
@@ -41,9 +38,8 @@ function isNullish(node: ts.Expression): boolean {
 }
 
 /**
- * The nearest enclosing named declaration of `node` — the symbol a finding lives in (ADR-48). Walks
- * up the parent chain to the closest function/method/accessor/class with an identifier name, or a
- * `const name = () => …` / object-property / class-field function binding. Undefined at module top level.
+ * The nearest enclosing named declaration of `node` — the symbol a finding lives in (ADR-48). Walks up
+ * to the closest function/method/accessor/class, or a `const name = () => …` function binding; undefined at top level.
  */
 function enclosingSymbol(node: ts.Node): string | undefined {
   for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
@@ -64,19 +60,14 @@ function enclosingSymbol(node: ts.Node): string | undefined {
       n.initializer &&
       (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))
     ) {
-      // `const f = () => …`, an object-literal `{ handler: () => … }`, or a class field
-      // `f = () => …` — common in handler maps, so scope them like a named method.
+      // `const f = () => …`, `{ handler: () => … }`, or a class field — scope like a named method.
       return n.name.text;
     }
   }
   return undefined;
 }
 
-/**
- * Deterministic checks over a single source file via the TS AST (ADR-03). The always-on
- * structural-pattern layer: 100% recall on each rule's pattern, ~free, reproducible — the
- * complement to the agent's judgment (and what feeds measured prevalence). Pure.
- */
+/** Deterministic checks over one source file via the TS AST (ADR-03) — the always-on structural layer, pure. */
 export function analyzeSource(file: string, text: string): RawFinding[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));
   const out: RawFinding[] = [];

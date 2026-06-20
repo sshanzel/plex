@@ -1,17 +1,8 @@
 #!/usr/bin/env node
 /**
- * reviewer MCP server (stdio). The shebang (first line) is preserved by esbuild/tsup into
- * dist/plex-mcp.js so the published `plex-mcp` bin is directly spawnable by an MCP client.
- *
- * The integration seam (ADR-02): any coding agent connects here and calls tools to
- * *get* review context and *record* findings/verdicts. The agent brings the LLM; this
- * server stays model-agnostic and runs in a fresh process, separate from whoever
- * authored the code — which removes self-review bias.
- *
- * The 13 tools are registered below: the review flow (index_repo, get_review_context,
- * get_blast_radius, get_deterministic_findings, submit_findings, record_outcome,
- * reconcile_outcomes), the knowledge base (get_relevant_knowledge,
- * consolidate_knowledge), review-history analysis (analyze_scan, add_pitfalls, analyze_history), and doctor.
+ * reviewer MCP server (stdio). The shebang is preserved by tsup into dist/plex-mcp.js (the spawnable bin).
+ * The integration seam (ADR-02): the agent brings the LLM; this server stays model-agnostic and runs in
+ * a fresh process, separate from whoever authored the code — which removes self-review bias.
  */
 import path from 'node:path';
 import { statSync, readFileSync } from 'node:fs';
@@ -45,8 +36,7 @@ import {
 import { ensureDaemon } from '@plex/viz-server';
 import { buildDoctorReport } from './doctor';
 
-// Single-sourced from the package.json that ships beside the bundle (dist/ → ../package.json),
-// so `doctor` and the MCP handshake never report a stale hand-bumped number.
+// Single-sourced from the package.json beside the bundle (dist/ → ../package.json) — never hand-bumped.
 const VERSION = (() => {
   try {
     return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? '0.0.0';
@@ -55,9 +45,8 @@ const VERSION = (() => {
   }
 })();
 
-// This running file's mtime = the build this process LOADED. Comparing it to the file's mtime
-// *now* tells `doctor` whether a newer build is sitting on disk unused (a long-lived stdio
-// process keeps running its loaded code until the client reconnects/respawns it).
+// This running file's mtime = the build this process LOADED; doctor compares it to the on-disk mtime to
+// detect a newer build (a long-lived stdio process runs its loaded code until reconnected/respawned).
 const SELF = (() => {
   try {
     return fileURLToPath(import.meta.url);
@@ -74,16 +63,14 @@ const buildMtimeMs = (): number => {
 };
 const LOADED_BUILD_MS = buildMtimeMs();
 
-// Config is RE-READ per tool call (see `guard`), so edits to ~/.plex/config.json — an embedding
-// key, autoComment, thresholds — take effect WITHOUT restarting the server. `let`, not `const`,
-// because `guard` reassigns it and every handler's thunk reads it at call time.
+// Config is RE-READ per tool call (in `guard`), so config.json edits apply without a restart. `let`,
+// not `const`: `guard` reassigns it and every handler's thunk reads it at call time.
 let config = loadConfig();
 const server = new McpServer(
   { name: 'plex', version: VERSION },
   {
-    // Surfaced to the client so tool-search can discover Plex even when MCP tools are
-    // deferred behind search in a crowded multi-server session (keywords: review, PR,
-    // blast radius, findings). With `.mcp.json` "alwaysLoad": true these load eagerly.
+    // Surfaced to the client so tool-search can discover Plex when MCP tools are deferred (pair with
+    // `.mcp.json` "alwaysLoad": true to load eagerly).
     instructions:
       'Plex — code-review orchestration for a diff or GitHub PR. Flow: index_repo (once) → ' +
       'get_review_context (blast radius + deterministic checks + relevant pitfalls + the PR brain) → ' +
@@ -105,17 +92,15 @@ const json = (data: unknown) => ({ content: [{ type: 'text' as const, text: JSON
 const fail = (m: string) => ({ content: [{ type: 'text' as const, text: m }], isError: true });
 const guard = async (fn: () => Promise<unknown>, label: string) => {
   try {
-    config = loadConfig(); // refresh per call so config edits apply without a server restart
+    config = loadConfig(); // refresh per call so config edits apply without a restart
     return json(await fn());
   } catch (e) {
     return fail(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 };
 
-// The diff-source axes, shared by every review-flow tool. Two mutually exclusive shapes:
-// `source: 'pr'` + `pr: <number>` reviews a GitHub PR; anything else is a LOCAL diff picked by
-// `mode` (`working` default) — `baseRef` applies only to `mode: 'branch'`. One review must use
-// the SAME source params across context → findings → outcomes → reconcile (they key the brain).
+// The diff-source axes, shared by every review-flow tool. One review MUST use the SAME source params
+// across context → findings → outcomes → reconcile — they key the brain target (reviewTargetFor).
 const diffSourceShape = {
   source: z.enum(['local', 'pr']).optional().describe('"local" (default) or "pr" (requires `pr`).'),
   mode: z
@@ -230,8 +215,7 @@ server.tool(
   'Record the user\'s verdict on a finding (accept | reject | waive | acknowledge). `acknowledge` is for a `note` finding confirmed intentional — it stops re-surfacing UNLESS the situation materially changes, without down-weighting the reviewer (use this, not reject, for "good catch, intentional"). For waive/acknowledge pass the finding identity (file/line/title/pattern/category). Pass the same diff source (source/pr/mode/baseRef) you reviewed so it lands on the right PR brain.',
   {
     repoPath: z.string().optional(),
-    // .min(1): an empty findingId can't key a brain Finding — its outcome projection silently no-ops and
-    // the finding stays open to be re-accepted + double-counted (#4 silent-failure audit). Reject at the edge.
+    // .min(1): an empty findingId can't key a brain Finding — its outcome silently no-ops. Reject at the edge.
     findingId: z.string().min(1),
     kind: z.enum(['accept', 'reject', 'waive', 'acknowledge']),
     scope: z.enum(['line', 'file', 'pattern-repo', 'category-repo', 'category-global']).optional(),
@@ -283,7 +267,7 @@ server.tool(
   (a) =>
     guard(async () => {
       const r = await reconcileOutcomes(a.repoPath ?? process.cwd(), config, { source: a.source, mode: a.mode, baseRef: a.baseRef, pr: a.pr });
-      maybeSpawnSweep(a.repoPath ?? process.cwd(), config); // debounced background sweep keeps main fresh + closes other targets
+      maybeSpawnSweep(a.repoPath ?? process.cwd(), config); // debounced background sweep
       return r;
     }, 'reconcile_outcomes'),
 );
@@ -400,28 +384,20 @@ const transport = new StdioServerTransport();
 try {
   await server.connect(transport);
 } catch (e) {
-  // Bootstrap (the stdio handshake) failing used to reject this top-level await with a bare,
-  // unhandled stack the client couldn't interpret (#7 silent-failure audit). Surface a labeled
-  // diagnostic on the log channel and exit non-zero so the failure is legible, not a raw trace.
+  // Surface a labeled diagnostic on stderr (the log channel, never stdout) and exit non-zero.
   process.stderr.write(`[plex] MCP server failed to start: ${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(1);
 }
-// Keep stdin in flowing mode so the event loop doesn't drain between back-to-back
-// tool calls (e.g. index_repo → get_review_context). Without this, after a
-// long-running handler (Kùzu indexing spawns and joins a child) the event loop
-// can see no pending I/O and exit before the next call arrives, forcing a re-spawn
-// that may fail if MCP tools are deferred. Stdin closing (client disconnect) still
-// tears down the process naturally via the transport's own lifecycle handling.
+// Keep stdin flowing so the event loop doesn't drain (and exit) between back-to-back tool calls after a
+// long-running handler. Stdin closing (client disconnect) still tears down via the transport.
 process.stdin.resume();
 process.stderr.write(
   `[plex] MCP server v${VERSION} (build ${LOADED_BUILD_MS ? new Date(LOADED_BUILD_MS).toISOString() : 'unknown'}) running on stdio\n`,
 );
 
-// UI auto-start (ADR-45/M13) — OPT-IN. The viz daemon is a *viewer*, not a capturer: it only displays
-// data the review flow already persists, so nothing is missed by it being off. Default is on-demand
-// (`plex serve` / `npx … plex serve`); set `ui.autoStart` (or PLEX_UI_AUTOSTART=1) to restore always-on,
-// in which case the MCP spawns it detached via its sibling built CLI (`plex.js`). Best-effort +
-// STDOUT-SAFE (ensureDaemon writes nothing to stdout, swallows errors); no-ops in dev/tsx (no sibling).
+// UI auto-start (ADR-45/M13) — OPT-IN via `ui.autoStart`/PLEX_UI_AUTOSTART; spawns the viz daemon
+// detached via the sibling built CLI. Best-effort + STDOUT-SAFE (stdout is the protocol channel —
+// ensureDaemon writes nothing there, swallows errors); no-ops in dev/tsx (no sibling).
 {
   const startupConfig = loadConfig();
   if (startupConfig.ui.autoStart && SELF) {

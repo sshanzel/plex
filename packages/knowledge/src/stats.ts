@@ -1,17 +1,13 @@
 /**
- * Statistical primitives for outcome-driven knowledge confidence (see docs/design/tuning.md §1).
- *
- * Pitfall confidence (both polarities) and the suppression tier rest on the **Wilson score lower
- * bound** — the textbook small-sample estimate of a Bernoulli success rate. This replaced the old
- * path-dependent `±0.1/±0.15` rule and the interim Beta posterior mean (+ `REJECT_COST`) — see ADR-39.
+ * Statistical primitives for outcome-driven knowledge confidence (ADR-39; tuning.md §1). Pitfall
+ * confidence (both polarities) and the suppression tier rest on the Wilson score lower bound.
  */
 import type { IncidentOutcome } from '@plex/core';
 
 /**
- * Wilson score lower bound of a binomial success rate (Wilson 1927) — the principled way to RANK
- * by a rate observed from few trials: it discounts a lucky 1/1 toward 0 and tightens to the raw
- * rate as evidence accrues, so it never lets a thin sample outrank a proven one. `z=1.96` ≈ 95%.
- * Returns 0 for n≤0. (Popularized by Evan Miller, "How Not To Sort By Average Rating".)
+ * Wilson score lower bound of a binomial success rate (Wilson 1927) — discounts a lucky 1/1 toward 0
+ * and tightens to the raw rate as evidence accrues, so a thin sample never outranks a proven one.
+ * `z=1.96` ≈ 95%. Returns 0 for n≤0.
  */
 export function wilsonLowerBound(successes: number, total: number, z = 1.96): number {
   if (total <= 0) return 0;
@@ -24,22 +20,14 @@ export function wilsonLowerBound(successes: number, total: number, z = 1.96): nu
 }
 
 /**
- * A POSITIVE pitfall's confidence from its linked evidence: the Wilson lower bound of the rate at
- * which the outcomes CONFIRM the pitfall's claim. **The same estimator `consolidatePitfalls` uses**,
- * so confidence has one definition everywhere — no hand-tuned `0.3 + 0.1·n` polynomial, no `0.6`
- * default. A confirm is `accepted`/`fixed`/`reverted` (someone acted on the flagged issue); a refute
- * is `rejected` (a human dismissed it). **Everything else ABSTAINS** — `undefined` and any unknown
- * outcome is observed-but-uninformative (e.g. a comment on a merged PR whose code never changed: no
- * evidence the suggestion was applied OR wrong), so it is dropped from the counts rather than
- * fabricating a confirm. Zero informative evidence → `wilsonLowerBound(0, 0) = 0`: an honest floor,
- * not a guess — retrieval floors the resulting tilt so a 0-confidence pitfall still surfaces on
- * cosine. Pure; mirrors `confirmsAndRefutes` (promotion.ts) for the positive polarity.
+ * A POSITIVE pitfall's confidence: the Wilson lower bound of the confirm rate (ADR-44; the same estimator
+ * `consolidatePitfalls` uses — one definition everywhere). Confirm = `accepted`/`fixed`/`reverted`; refute
+ * = `rejected`; everything else ABSTAINS (observed-but-uninformative, dropped rather than a fabricated
+ * confirm). Zero informative evidence → 0 (honest floor; retrieval floors the tilt so it still surfaces).
  *
- * **POSITIVE pitfalls ONLY** — there is no `polarity` switch here (unlike `confirmsAndRefutes`, which
- * flips confirm/refute for negatives). This is correct *by construction* for every caller: distilled
- * and `add_pitfalls` pitfalls are always positive ("remember this issue"); negative (suppression)
- * pitfalls are minted only by `learnSuppression` and get their tier from `suppressionTier`, never this.
- * Do NOT feed a negative pitfall's outcomes here — it would read a dismissal as a refute and invert. */
+ * POSITIVE pitfalls ONLY (no `polarity` switch). Do NOT feed a negative pitfall's outcomes here — it would
+ * read a dismissal as a refute and invert; negatives get their tier from `suppressionTier`.
+ */
 export function confidenceFromOutcomes(
   outcomes: ReadonlyArray<IncidentOutcome | undefined>,
   corroboratedWeight: number = CORROBORATED_WEIGHT,
@@ -55,11 +43,9 @@ export function confidenceFromOutcomes(
 }
 
 /**
- * Evidence weight of a `corroborated` confirm (ADR-50) — a reply-agreement signal mined from analysis,
- * worth a fraction of an observed code change (`fixed`/`accepted`/`reverted`, weight 1). A SINGLE named
- * constant, not a per-outcome table (ADR-44 deleted the magic `outcomeWeight` 1.5 bonus and we do not
- * reintroduce one; strong confirms stay 1.0). Wilson takes the fractional count unchanged, so a noisy
- * reply confirm tightens confidence less than a real fix. Graduate to config if tuning demands it.
+ * Evidence weight of a `corroborated` confirm (ADR-50) — a reply-agreement signal worth a fraction of an
+ * observed code change (weight 1). A SINGLE named constant, NOT a per-outcome table (ADR-44 deleted the
+ * magic `outcomeWeight` 1.5 bonus; strong confirms stay 1.0).
  */
 export const CORROBORATED_WEIGHT = 0.5;
 
@@ -70,15 +56,9 @@ export const Z_68 = 1.0; //  ~68% (1σ) — the weaker level at which we merely 
 export type SuppressionTier = 'suppress' | 'demote' | 'none';
 
 /**
- * How strongly a stream of dismissals justifies suppressing a finding — derived, not hand-tuned.
- * The only constants are the **0.5 majority pivot** (are most dispositions dismissals?) and the two
- * **textbook confidence levels** (95% / 1σ); there are no invented floors. Uses the Wilson score
- * lower bound (Wilson 1927), so it's robust to small N *by construction*: a lone 1/1 dismissal has
- * a wide interval and sits well below 0.5, so one "not now" can never bury a finding (C1). It takes
- * ~4 consistent dismissals to be 95%-confident the majority is "dismiss" (→ suppress); 1–3 only
- * `demote`; an accept/fix mixed in pulls the rate back down.
- *
- * `dismissals` = waive+reject incidents (FOR suppression); `corrections` = accept/fix (AGAINST it).
+ * How strongly a stream of dismissals justifies suppressing a finding (Wilson lower bound at 95%/1σ vs
+ * the 0.5 majority pivot). Robust to small N by construction: one "not now" can never bury a finding (C1);
+ * ~4 consistent dismissals → suppress, 1–3 → demote. `dismissals` = waive+reject; `corrections` = accept/fix.
  */
 export function suppressionTier(dismissals: number, corrections: number): SuppressionTier {
   const total = dismissals + corrections;
@@ -101,11 +81,8 @@ export type Dismissal = { verb: 'reject' | 'waive'; ageDays: number };
 
 /**
  * Exponential recency weight: `0.5^(ageDays / halfLifeDays)`. A non-positive OR non-finite half-life
- * means "never decays" (weight 1) — this both matches the documented intent and keeps the function
- * TOTAL: `halfLifeDays = 0` would otherwise give `0.5^Infinity = 0` (or `0.5^NaN = NaN` at age 0),
- * and a NEGATIVE half-life would INVERT decay (`0.5^negative > 1`, growing with age). A misconfigured
- * `config.suppression` half-life must never silently disable or over-apply suppression — it degrades
- * to no-decay, not to NaN. Negative ages clamp to 0 (future-dated → full weight). Pure.
+ * means "never decays" (weight 1) — keeps the function TOTAL (0 → no `0.5^Infinity`, negative → no
+ * inverted decay; a misconfigured half-life degrades to no-decay, never NaN). Negative ages clamp to 0.
  */
 export function recencyWeight(ageDays: number, halfLifeDays: number): number {
   if (!Number.isFinite(halfLifeDays) || halfLifeDays <= 0) return 1;
@@ -113,13 +90,9 @@ export function recencyWeight(ageDays: number, halfLifeDays: number): number {
 }
 
 /**
- * Decay the suppression evidence by recency (the keystone of the negative-knowledge loop, ADR-41):
- * each dismissal contributes `recencyWeight` instead of a flat 1, with a verb-specific half-life
- * (reject fades, waive persists). **Corrections are durable** — each contributes full weight 1: the
- * user acting on a finding is permanent evidence it was real, and must not fade and let a stale
- * suppression creep back. The decayed (fractional) counts feed straight into `suppressionTier` —
- * Wilson takes plain numbers, so as evidence ages the effective N shrinks, the interval widens, and
- * the tier slides `suppress → demote → none` (this is also the re-surface mechanism — no probe).
+ * Decay the suppression evidence by recency (ADR-41): each dismissal contributes `recencyWeight`
+ * (verb-specific half-life — reject fades, waive persists). INVARIANT: corrections are DURABLE (full
+ * weight 1) — acting on a finding is permanent evidence, must not fade and let a stale suppression creep back.
  */
 export function decayedCounts(
   dismissals: Dismissal[],

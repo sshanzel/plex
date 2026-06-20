@@ -40,11 +40,7 @@ function isExported(node: ts.Node): boolean {
   return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
 }
 
-/**
- * Structural extraction via the TypeScript compiler API (ADR-15). No type checker —
- * a single SourceFile parse — so it is fast and needs no full program. Precise
- * (type-resolved) edges are added in M2.
- */
+/** Structural extraction via the TS compiler API (ADR-15) — a single SourceFile parse, no type checker. */
 export function extractFromSource(fileName: string, text: string): ExtractedFile {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, scriptKindFor(fileName));
   const symbols: ExtractedSymbol[] = [];
@@ -95,11 +91,7 @@ export function extractFromSource(fileName: string, text: string): ExtractedFile
   return { imports: [...new Set(imports)], symbols };
 }
 
-/**
- * Resolve a relative import specifier to a repo-relative file path present in `fileSet`.
- * Returns null for bare/external specifiers or unresolved paths. Path aliases
- * (tsconfig `paths`) are handled by the precise layer in M2.
- */
+/** Resolve a relative import specifier to a repo-relative path in `fileSet`; null for bare/external/unresolved (aliases → precise layer). */
 export function resolveRelativeImport(
   fromFile: string,
   spec: string,

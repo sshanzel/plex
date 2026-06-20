@@ -8,8 +8,7 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 export interface PrRef {
   number: number;
   mergedAt: string | null;
-  /** PR author login (ADR-50) — the reply-agreement confirm requires the agreeing reply to come from
-   *  the PR author, not merely from someone other than the reviewer. Absent if `gh` didn't return it. */
+  /** PR author login (ADR-50) — the reply-agreement confirm requires the agreeing reply to come from the PR author. */
   author?: string;
 }
 interface GhComment {
@@ -29,22 +28,14 @@ interface GhComment {
 }
 
 /**
- * GitHub's server-computed "outdated" signal for a review comment: the hunk it was anchored to was
- * changed by a later commit, so its position in the current diff (`position`) can no longer be
- * resolved (null) while the original (`original_position`) persists. PURE. Conservative by design —
- * if the fields are absent/ambiguous we return `false` (abstain), never a false "addressed" (the
- * outcome layer only ever upgrades this to a confirm, never a refute, so under-reading is safe).
+ * GitHub's server-computed "outdated" signal: `position` null (hunk changed by a later commit) while
+ * `original_position` persists. Conservative — absent/ambiguous fields return `false` (abstain), never a false "addressed".
  */
 export function isOutdated(c: Pick<GhComment, 'position' | 'original_position'>): boolean {
   return c.position == null && c.original_position != null;
 }
 
-/**
- * Parse `gh pr list --json` output into PR refs. A bare `JSON.parse` here would throw an opaque
- * `Unexpected token …` with no hint that it was `gh` output (an auth prompt, a `gh` error banner, an
- * empty body) — unlike its sibling `fetchCommentsForPr`, which guards (#8 silent-failure audit). Wrap
- * the parse so the failure names its source. PURE — unit-tested.
- */
+/** Parse `gh pr list --json` output into PR refs, naming the source on a parse/shape failure. */
 export function parsePrList(stdout: string): PrRef[] {
   let parsed: unknown;
   try {
@@ -52,9 +43,7 @@ export function parsePrList(stdout: string): PrRef[] {
   } catch {
     parsed = undefined;
   }
-  // Validate the SHAPE, not just that JSON parsed: a valid-JSON non-array (a `{}` error object, a gh
-  // banner that happens to be JSON) would otherwise cast straight through and throw far downstream at
-  // `.map`/`.slice` — the same unlabeled failure one step removed (PR #10 review).
+  // Validate the SHAPE, not just that JSON parsed: a valid-JSON non-array would cast through and throw far downstream.
   if (!Array.isArray(parsed)) {
     const preview = stdout.trim().slice(0, 200);
     throw new Error(`gh pr list did not return a JSON array (got: ${preview || '<empty>'}); is gh installed + authenticated?`);
@@ -80,11 +69,7 @@ export async function listPrs(opts: {
   return parsePrList(stdout);
 }
 
-/**
- * Group a flat list of review comments into threads: each top-level comment carries its
- * replies (the discussion that reveals the outcome). PURE — unit-tested. Replies whose
- * root can't be resolved are dropped.
- */
+/** Group a flat list of review comments into threads: each top-level comment carries its replies. Orphan replies are dropped. */
 export function groupThreads(flat: RawComment[]): RawComment[] {
   const byId = new Map(flat.map((c) => [c.id, c]));
   const tops = flat
