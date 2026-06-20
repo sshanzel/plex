@@ -9,18 +9,11 @@ import { rangesOverlap } from '@plex/neighborhood';
 import { historyOf, type KnowledgeGraph, type RetrievedPitfall } from '@plex/knowledge';
 
 /**
- * Code-path memory — the location-aware overlay on semantic retrieval (ADR — code-path memory).
- *
- * Semantic retrieval answers "is this lesson textually similar to your diff?". This module answers
- * the question a stateless linter cannot: **"has THIS code path had this concern before — and did we
- * fix it?"** It intersects the pitfalls' provenance incidents (anchored to a `file#name` symbol key
- * and/or a line) against the symbols a diff is actually touching (`nb.changed`) and their co-change
- * neighbours (`nb.neighbors`). The sharpest output is the **regression sentinel**: a prior `fixed`
- * (or accepted/reverted) outcome at a symbol you're changing again.
- *
- * PURE — no Kùzu, no embeddings, no I/O. It runs over the JSON knowledge store + the already-computed
- * neighbourhood (graph closed), so it adds no review-time graph open (ADR-17) and works on a key-less
- * install. Unit-tested with plain fixtures.
+ * Code-path memory (ADR-47): the location-aware overlay on semantic retrieval. Intersects pitfalls'
+ * provenance incidents (anchored to a `file#name` symbol/line) against the diff's changed symbols
+ * (`nb.changed`) + co-change neighbours (`nb.neighbors`); a prior `fixed`/accepted/reverted outcome at
+ * a symbol being changed again is a regression sentinel.
+ * PURE — no Kùzu/embeddings/I/O, so it adds no review-time graph open (ADR-17) and works key-less.
  */
 
 export type CodePathKind = 'direct' | 'coupled';
@@ -54,8 +47,7 @@ export interface CodePathResult {
 const OUTCOME_RANK: Record<string, number> = { fixed: 4, accepted: 3, reverted: 2, rejected: 1 };
 const SENTINEL_OUTCOMES = new Set<IncidentOutcome>(['fixed', 'accepted', 'reverted']);
 
-// Boost weights (docs/design/code-path-memory.md). Direct symbol/line is a strong, explainable signal;
-// a regression sentinel is the strongest; a file-only match is weak; coupled scales with PPR coupling.
+// Boost weights (docs/design/code-path-memory.md).
 const BOOST_DIRECT_SYMBOL = 0.5;
 const BOOST_SENTINEL_BONUS = 0.3; // → 0.8 for a regression sentinel
 const BOOST_DIRECT_FILE = 0.25;
@@ -74,10 +66,8 @@ const strongestOutcome = (incs: Incident[]): IncidentOutcome | undefined => {
   return best;
 };
 
-/**
- * Intersect retrieved pitfalls' incident history with the diff's changed symbols + co-change
- * neighbours. Returns explainable alerts + a per-pitfall ranking boost.
- */
+/** Intersect retrieved pitfalls' incident history with the diff's changed symbols + co-change
+ *  neighbours → explainable alerts + a per-pitfall ranking boost. */
 export function matchCodePath(
   retrieved: RetrievedPitfall[],
   graph: KnowledgeGraph,
@@ -115,9 +105,8 @@ export function matchCodePath(
       const fileHits: Incident[] = [];
       for (const i of incs) {
         if (cKey && i.symbol && i.symbol === cKey) symbolHits.push(i);
-        // Line-overlap is a fallback ONLY for an incident with no symbol key (e.g. mined). An incident
-        // already keyed to a DIFFERENT symbol must not drift into this one just because its line falls
-        // in range — that would mislabel the alert's `symbol`. (It only ever matches its own key above.)
+        // Line-overlap is a fallback ONLY for a symbol-less incident: one keyed to a DIFFERENT symbol
+        // must not drift in by line and mislabel the alert's `symbol`.
         else if (c.symbol && !i.symbol && i.file === c.file && i.line != null && rangesOverlap(c.startLine, c.endLine, i.line, i.line)) lineHits.push(i);
         else if (!c.symbol && i.file === c.file) fileHits.push(i); // file-level change (no named symbol)
       }

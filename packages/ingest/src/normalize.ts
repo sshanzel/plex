@@ -32,16 +32,12 @@ export interface ChangedFileText {
   text: string;
 }
 
-/**
- * Extract the added-line text per file from a unified diff. Pure — used to embed what
- * actually changed since the last round (no line-number heuristics; ADR-13/23).
- */
+/** Extract added-line text per file from a unified diff. Pure — embeds what changed since the last round (ADR-13/23). */
 export function addedTextByFile(diffText: string): ChangedFileText[] {
   const out: ChangedFileText[] = [];
   for (const f of parseDiff(diffText)) {
     const file = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';
-    // A regenerated lockfile/bundle is not "what changed" in any reviewable sense —
-    // embedding 10k mechanical lines costs tokens and poisons change attribution.
+    // A regenerated lockfile/bundle is not "what changed" — embedding it poisons change attribution.
     if (isGeneratedArtifact(file)) continue;
     let min = Infinity;
     let max = -Infinity;
@@ -50,8 +46,7 @@ export function addedTextByFile(diffText: string): ChangedFileText[] {
     for (const c of f.chunks ?? []) {
       for (const ch of c.changes) {
         if (ch.type === 'add' && typeof ch.ln === 'number') {
-          // Track min/max incrementally — a spread (`Math.min(...lines)`) overflows the call
-          // stack on a file that adds ~100k+ lines (generated/vendored bundles).
+          // Track min/max incrementally — `Math.min(...lines)` overflows the stack on ~100k+ added lines.
           if (ch.ln < min) min = ch.ln;
           if (ch.ln > max) max = ch.ln;
           count++;
@@ -74,20 +69,14 @@ function statusOf(f: { new?: boolean; deleted?: boolean; from?: string; to?: str
   return 'modified';
 }
 
-/**
- * Parse a unified diff into the normalized form. Pure — no git/gh dependency,
- * so it is directly unit-testable (ADR-14: all inputs reduce to "diff vs base ref").
- */
+/** Parse a unified diff into normalized form. Pure (ADR-14: all inputs reduce to "diff vs base ref"). */
 export function normalizeUnifiedDiff(
   text: string,
   baseRef: string,
   headRef?: string,
 ): NormalizedDiff {
-  // Generated artifacts (lockfiles, minified bundles, source maps, snapshots) are dropped
-  // HERE, at the single entry point of the review flow — they never reach the context the
-  // agent reads, the deterministic runner, or the brain's round bookkeeping. Their PATHS
-  // are kept as a fact (`generatedPaths`): a lockfile-only diff is a supply-chain signal
-  // worth a heads-up even though its content is never read.
+  // Generated artifacts are dropped HERE, the single entry point — they never reach the agent context,
+  // deterministic runner, or brain. Their PATHS are kept (`generatedPaths`) as a supply-chain signal.
   const generatedPaths: string[] = [];
   const files = parseDiff(text).filter((f) => {
     const p = f.to && f.to !== '/dev/null' ? f.to : f.from ?? 'unknown';

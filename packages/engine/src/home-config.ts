@@ -3,23 +3,15 @@ import path from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
 
-/**
- * Persistent global config at `~/.plex/config.json` — written by `plex init`, read by the
- * MCP server and CLI, so a user enters their embedding key **once** instead
- * of per-MCP-registration. Env vars still override it. The file is chmod 600 (it can hold
- * an API key); the key never enters `ReviewerConfig` serialization paths beyond the
- * embedding provider that needs it.
- */
+/** Persistent global config at `~/.plex/config.json` (chmod 600 — it can hold an API key). Env vars override it. */
 export interface HomeConfig {
   embedding?: { provider?: EmbeddingProviderName; apiKey?: string; model?: string };
   llm?: { provider?: LlmProviderName; model?: string };
-  /** Learned-suppression recency-decay half-lives (ADR-41). Partial blocks merge with defaults
-   * (30d reject / 365d waive) in `resolveConfig`. Documented as the one tuning knob — so it must be
-   * reachable here, not just in `ReviewerConfig`. */
+  /** Learned-suppression recency-decay half-lives (ADR-41). */
   suppression?: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number };
-  /** Positive-pitfall recency-decay knobs (ADR-42). Partial blocks merge with defaults in `resolveConfig`. */
+  /** Positive-pitfall recency-decay knobs (ADR-42). */
   decay?: { halfLifeDays?: number; retrievalTiltFloor?: number; pruneFloor?: number; pruneMinAgeDays?: number };
-  /** Viz daemon (ADR-45): `autoStart: true` restores always-on (the MCP spawns it); default off (on-demand). */
+  /** Viz daemon (ADR-45): `autoStart: true` restores always-on; default off (on-demand). */
   ui?: { autoStart?: boolean; port?: number };
 }
 

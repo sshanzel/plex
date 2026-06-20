@@ -88,15 +88,10 @@ export interface EnsureOptions {
 }
 
 /**
- * Best-effort "make sure the UI is up" — the **universal auto-start** the MCP server calls on
- * startup so EVERY Plex user (Claude plugin, Codex plugin, or a bare MCP registration) gets the UI
- * without a CLI install or a client-specific hook (ADR-45). Probes first (cheap no-op when already
- * up), else detached-spawns `node plex.js serve --foreground` and returns immediately.
- *
- * **STDOUT-SAFE and non-throwing** by contract: the MCP server's stdout IS its protocol channel, so
- * this writes nothing to stdout, spawns the child with `stdio: 'ignore'` + `unref()`, and swallows
- * every error. Returns the live daemon if one was already running, else null (it was just spawned
- * and may still be binding). No-ops silently when `scriptPath` doesn't exist (dev/tsx: no built CLI).
+ * Best-effort opt-in auto-start (ADR-45): probe first (no-op when up), else detached-spawn
+ * `node plex.js serve --foreground`. STDOUT-SAFE and non-throwing by contract — the MCP server's
+ * stdout IS its protocol channel, so this writes nothing there, uses `stdio: 'ignore'`, and swallows
+ * every error. No-ops when `scriptPath` doesn't exist (dev/tsx: no built CLI).
  */
 export async function ensureDaemon(opts: EnsureOptions): Promise<DaemonInfo | null> {
   try {
@@ -112,11 +107,8 @@ export async function ensureDaemon(opts: EnsureOptions): Promise<DaemonInfo | nu
   return null;
 }
 
-/**
- * Resolve the live daemon: trust the health probe over the pidfile (a probe confirms it's serving;
- * a stale pidfile after a crash would otherwise read as "running"). If the pidfile points at a port
- * nothing answers AND the pid is dead, clear it so the next `serve` starts cleanly.
- */
+/** Resolve the live daemon: trust the health probe over the pidfile (a stale pidfile after a crash
+ *  reads as "running"). Clears the pidfile when nothing answers AND the pid is dead. */
 export async function liveDaemon(): Promise<DaemonInfo | null> {
   const info = readDaemon();
   if (!info) return null;

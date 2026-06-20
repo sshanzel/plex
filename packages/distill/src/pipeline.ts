@@ -40,9 +40,8 @@ export interface ScanResult {
 }
 
 /**
- * MECHANICAL half of analysis (no LLM): list new PRs, denoise, record provenance incidents,
- * embed, and cluster. Returns clusters for a distiller — either the standalone LLM distiller
- * (`distillHistory`) or the connected agent via MCP (rides the user's subscription).
+ * MECHANICAL half of analysis (no LLM): list new PRs, denoise, record provenance incidents, embed,
+ * and cluster. Returns clusters for a distiller (standalone `distillHistory` or the MCP agent path).
  */
 export async function scanHistory(
   store: KnowledgeStore,
@@ -53,7 +52,6 @@ export async function scanHistory(
   const api = opts.fetch ?? { listPrs, fetchCommentsForPr };
   const skip = new Set(opts.alreadyScanned ?? []);
   const all = await api.listPrs({ cwd: opts.cwd, maxPrs: config.analyze.maxPrs, state: opts.state });
-  // Order by PR number — oldest-first for chronological analysis, else newest-first (default).
   const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
   const unscanned = ordered.filter((p) => !skip.has(p.number));
   const fresh = opts.limit != null ? unscanned.slice(0, opts.limit) : unscanned;
@@ -77,9 +75,8 @@ export async function scanHistory(
       source: 'analyzed',
       repo: opts.repoName,
       file: c.path,
-      // Code-path anchor (code-path memory): the comment's line. No `symbol` for mined incidents in
-      // v1 — there's no code graph open at analyze time and a historical line may not map to a current
-      // symbol; the review-time match uses line-overlap against the changed symbols' ranges instead.
+      // Code-path anchor: the comment's line. No `symbol` for mined incidents — no code graph at analyze
+      // time; the review-time match uses line-overlap against the changed symbols' ranges instead.
       ...(c.line != null ? { line: c.line } : {}),
       snippet: c.body.slice(0, 300),
       outcome: outcomeFor(c),
@@ -90,14 +87,11 @@ export async function scanHistory(
   }
 
   const vectors = await embed.embed(substantive.map((c) => c.body));
-  // Adaptive cut from this batch's own cosine background (tuning.md §6) — the configured value is
-  // the small-batch fallback, not a per-model magic constant.
+  // Adaptive cut from this batch's own cosine background (tuning.md §6); the configured value is the small-batch fallback.
   const threshold = adaptiveCosineThreshold(vectors, { fallback: config.analyze.clusterThreshold });
   const clusters = greedyCluster(vectors, threshold)
-    // `minClusterSize` is an LLM-cost throttle, NOT a dedup mechanism (default 1 = no gate). Cross-run
-    // de-duplication is now semantic, at write time (`addOrReinforcePitfall`), so a lone comment can
-    // mint a low-confidence pitfall that later recurrences reinforce — raise this only to require
-    // within-batch corroboration before spending an LLM call.
+    // `minClusterSize` is an LLM-cost throttle, NOT a dedup mechanism (default 1 = no gate; dedup is
+    // semantic at write time via `addOrReinforcePitfall`).
     .filter((idx) => idx.length >= config.analyze.minClusterSize)
     .map((idx) => ({
       comments: idx.map((i) => substantive[i]!),
@@ -113,11 +107,7 @@ export interface DistillOutcome {
   scannedPrs: number[];
 }
 
-/**
- * FULL standalone analysis: scan + distill each cluster with the configured LLM + store
- * pitfalls. Used by the CLI / cron. The MCP path uses `scanHistory` + agent distillation
- * instead (rides the subscription).
- */
+/** FULL standalone analysis: scan + distill each cluster with the configured LLM + store pitfalls. */
 export async function distillHistory(
   store: KnowledgeStore,
   embed: EmbeddingProvider,
@@ -138,18 +128,15 @@ export async function distillHistory(
   let skipped = 0;
   const learned: LearnedLesson[] = [];
   for (const cl of scan.clusters) {
-    const pitfall = await llmDistill(cl, llm); // the LLM decides what's worth storing
+    const pitfall = await llmDistill(cl, llm);
     if (!pitfall) {
       skipped++;
       continue;
     }
-    // Semantic match-or-reinforce (replaces exact-title dedup): a re-phrased recurrence of an
-    // existing principle reinforces it instead of minting a near-duplicate (the 322-pitfall fix).
+    // Semantic match-or-reinforce: a re-phrased recurrence reinforces an existing principle instead of minting a near-duplicate.
     const r = await addOrReinforcePitfall(store, pitfall);
     if (r.action === 'minted') pitfalls++;
     else reinforced++;
-    // Payoff: the CANONICAL stored lesson + its TOTAL evidence/file anchoring (from the store, so a
-    // reinforce reports the established title and the unioned counts — not this run's candidate).
     learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
   }
 

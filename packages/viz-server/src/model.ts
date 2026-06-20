@@ -1,8 +1,5 @@
-/**
- * The uniform graph shape the UI consumes, regardless of which store it came from. A `VizNode`'s
- * `props` is a flat, JSON-safe record shown verbatim in the detail panel — collectors must strip
- * heavy/secret fields (e.g. a pitfall's embedding vector) before they land here.
- */
+/** The uniform graph shape the UI consumes. `VizNode.props` is shown verbatim in the panel, so
+ *  collectors MUST strip heavy/secret fields (e.g. a pitfall's embedding vector) before they land here. */
 export type GraphKind = 'code' | 'brain' | 'knowledge' | 'lineage';
 
 export interface VizNode {
@@ -12,12 +9,8 @@ export interface VizNode {
   type: string;
   graph: GraphKind;
   props: Record<string, string | number | boolean>;
-  /**
-   * Cytoscape compound parent (the node id of the container this node nests inside). In the knowledge
-   * graph an Incident's parent is the Pitfall/Suppression it provenances, so each lesson renders as a
-   * box holding its history instead of a two-row hairball of crossing `from` edges. A node with a
-   * `parent` keeps its own type/colour; the containment replaces the redundant provenance edge.
-   */
+  /** Cytoscape compound parent (the container node id this nests inside) — in the knowledge graph an
+   *  Incident's parent is the Pitfall it provenances, replacing the redundant `from` edge. */
   parent?: string;
 }
 
@@ -28,12 +21,8 @@ export interface VizEdge {
   /** Relationship label — provenance for code edges (import/ref/co-change), role for brain/knowledge. */
   label: string;
   graph: GraphKind;
-  /**
-   * True for a **heuristic correlation** edge, not a recorded link — drawn dashed in the UI. The
-   * lineage view bridges the brain and knowledge stores by locality (same file) because, in Tier 1,
-   * an Incident carries no hard back-reference to the Finding it came from. Tier 2 (the durable
-   * lineage journal) replaces these with exact, recorded edges.
-   */
+  /** True for a heuristic correlation edge (not a recorded link) — drawn dashed; e.g. the lineage
+   *  same-file bridge between brain and knowledge. */
   inferred?: boolean;
 }
 

@@ -1,11 +1,6 @@
 import { cosineSimilarity } from '@plex/core';
 
-/**
- * Greedy single-pass clustering by embedding similarity — PURE. A comment joins the most
- * similar existing cluster above `threshold`, else starts a new one; centroids update as
- * a running mean. Good enough for the small comment sets per repo and needs no extra deps.
- * Returns clusters as arrays of original indices.
- */
+/** Greedy single-pass clustering by embedding similarity; returns clusters as arrays of original indices. */
 export function greedyCluster(vectors: number[][], threshold: number): number[][] {
   const clusters: { indices: number[]; centroid: number[] }[] = [];
 
@@ -15,9 +10,7 @@ export function greedyCluster(vectors: number[][], threshold: number): number[][
     let bestSim = threshold;
     for (let c = 0; c < clusters.length; c++) {
       const sim = cosineSimilarity(v, clusters[c]!.centroid);
-      // Never merge on non-positive similarity: orthogonal/anti-correlated (or zero) vectors
-      // must not be lumped together even if `threshold <= 0`. No effect for any positive
-      // threshold (the default is 0.6), where `sim >= threshold` already implies `sim > 0`.
+      // Never merge on non-positive similarity: orthogonal/anti-correlated vectors must not be lumped together even if `threshold <= 0`.
       if (sim > 0 && sim >= bestSim) {
         bestSim = sim;
         best = c;
@@ -39,12 +32,8 @@ export function greedyCluster(vectors: number[][], threshold: number): number[][
 
 /**
  * Adaptive cosine cut for clustering: `μ + k·σ` of the batch's OWN pairwise-cosine background
- * (tuning.md §6). A fixed cutoff (0.8) is fragile because embedding spaces are anisotropic — the
- * "unrelated" baseline cosine differs per model — so a constant means a different thing per model.
- * Estimating the cut from the batch auto-adapts: a pair is "unusually similar" only if it sits `k`
- * standard deviations above this batch's typical pair. Falls back to `fallback` when there aren't
- * enough vectors to estimate a background (n < 8), and is clamped to a sane band so a degenerate
- * batch can neither sink everything into one cluster nor shatter it into singletons. Pure.
+ * (tuning.md §6) — embedding spaces are anisotropic, so a fixed cut means a different thing per model.
+ * Falls back to `fallback` when n < 8, and is clamped to a sane band.
  */
 export function adaptiveCosineThreshold(
   vectors: number[][],

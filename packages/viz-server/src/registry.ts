@@ -3,19 +3,13 @@ import path from 'node:path';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import type { ReviewerConfig } from '@plex/core';
 
-/**
- * One machine-global daemon serves every indexed repo, so it discovers them by enumerating the
- * **repos root** — the dir under which `repoPaths` (engine) places each repo's `<id>/` data dir.
- * This mirrors that resolution WITHOUT importing the engine (viz-server depends only on
- * core/code-graph/knowledge): empty `dataDir` → `~/.plex/repos`; absolute → that path is the root.
- * A **relative** `dataDir` (the in-repo `PLEX_DATA_DIR=.plex` opt-in) has no central registry — it
- * lives inside each repo — so it returns null and the picker is empty (documented limitation, ADR-45).
- */
+/** The repos root to enumerate (mirrors engine `repoPaths` without importing it): empty `dataDir` →
+ *  `~/.plex/repos`; absolute → that path; relative (in-repo opt-in) → null, picker empty (ADR-45). */
 export function reposRoot(config: ReviewerConfig): string | null {
   const d = config.dataDir;
   if (!d) return path.join(os.homedir(), '.plex', 'repos');
   if (path.isAbsolute(d)) return d;
-  return null; // in-repo opt-in: no central root to enumerate
+  return null;
 }
 
 export interface RepoEntry {

@@ -48,23 +48,19 @@ import { loadWaivers } from './verdicts';
 import { cachedEmbed } from './embed-cache';
 import { recordFixAccepts, type AcceptedFix } from './reconcile';
 
-/**
- * Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only the
- * files changed since the graph's stored `headSha` and falls back to a full build when an
- * incremental update isn't possible (no prior graph / rewritten history — ADR-25).
- */
+/** Index a repo's code graph. Full rebuild by default; `incremental` re-extracts only changed files,
+ *  falling back to a full build when an incremental update isn't possible (ADR-25). */
 export async function indexRepo(
   repoPath: string,
   config: ReviewerConfig,
   opts: { incremental?: boolean } = {},
 ): Promise<BuildResult & { graphDir: string; incremental: boolean; seeded?: boolean; added?: number; modified?: number; deleted?: number }> {
   const p = repoPaths(repoPath, config.dataDir);
-  ensureDataDir(p.reviewerDir); // self-ignoring data dir — an in-repo `.plex` never needs hand-gitignoring
-  // Record this repo's path for orphan detection in `doctor gc`
+  ensureDataDir(p.reviewerDir);
+  // Record this repo's path for orphan detection in `doctor gc`.
   try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
   const stamp = async (): Promise<void> => {
-    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25): the
-    // review budget is two opens (neighborhood + brain, ADR-17) — staleness must not spend one.
+    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25).
     try {
       mkdirSync(path.dirname(p.headShaFile), { recursive: true });
       writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
@@ -72,8 +68,8 @@ export async function indexRepo(
       /* best-effort */
     }
   };
-  // Persist dependents of files an update DELETED into the sidecar — reviews consult it on
-  // any later round (the update captures the edges inside its own Kùzu open, pre-delete).
+  // Persist dependents of files an update DELETED into the sidecar — reviews consult it on any later
+  // round (captured inside the update's own Kùzu open, pre-delete).
   const persistDeleted = (res: { deletedEdges?: DeletedFileEdges }): void => {
     if (res.deletedEdges) {
       try {
@@ -95,18 +91,12 @@ export async function indexRepo(
     }
   }
 
-  // No graph yet → if this is a secondary git worktree whose base (default-branch checkout) is
-  // already indexed, COPY the base graph and refresh it to this worktree's head, instead of a full
-  // re-index. We do NOT share the base's graph read-only: Kùzu 0.11.3's read-only `Database` open
-  // SIGSEGVs on Linux (confirmed; no upstream fix available — ADR-32/ADR-39), so every secondary
-  // worktree gets its OWN graph and opens it normally. The copy is cheap vs a full re-index and
-  // independent, so concurrent worktree reviews never conflict on the single-writer lock.
-  // (Re)seed from the base (`main`) graph when EITHER there's no graph yet, OR `main` has advanced past
-  // the sha we seeded from AND main's own graph is already fresh — so the re-copy is cheap (ADR-43,
-  // user's model: keep the branch's base portion current). When main moved but its graph is itself
-  // stale (the copy CAN'T be cheaply brought current), we deliberately do NOT refresh main here — the
-  // review spawns the maintenance worker "tight" to refresh main, and the next review re-seeds cheap
-  // (the accepted first-review-may-be-stale trade-off). A full build below is the fallback when no base.
+  // No graph yet → if a secondary worktree's base is already indexed, COPY the base graph and refresh
+  // it to this worktree's head instead of a full re-index. We do NOT share the base's graph read-only:
+  // Kùzu 0.11.3's read-only `Database` open SIGSEGVs on Linux (ADR-32/ADR-39), so every secondary
+  // worktree gets its OWN graph. (Re)seed when there's no graph yet, OR `main` advanced past the seed
+  // sha AND main's graph is already fresh (cheap re-copy, ADR-43); when main moved but its graph is
+  // stale the review spawns the maintenance worker "tight" instead. Full build is the fallback.
   if (!existsSync(p.graphDir) || (await baseSeedState(p, config)) === 'reseed') {
     const base = baseWorktree(p.repoPath, config);
     if (base) {
@@ -137,11 +127,9 @@ export async function indexRepo(
 }
 
 /**
- * Resolve the CANONICAL base checkout (`main`) from any worktree — the default-branch worktree if one
- * is checked out, else the primary worktree, else `repoPath` itself (ADR-43, the maintenance sweep
- * always targets main: its data dir is centralized + durable, sidestepping the ADR-40 worktree-brain
- * death). Unlike `baseWorktree` there is NO graph-exists gate — the sweep's GraphFreshnessJob creates
- * main's graph. Best-effort: any git failure → `repoPath` (treat the current checkout as the base).
+ * Resolve the canonical base checkout (`main`) from any worktree — default-branch worktree, else
+ * primary, else `repoPath` (ADR-43, the maintenance sweep targets main). No graph-exists gate (unlike
+ * `baseWorktree`). Best-effort: any git failure → `repoPath`.
  */
 export function resolveMainRepoPath(repoPath: string): string {
   try {
@@ -177,11 +165,9 @@ function defaultBranch(repoPath: string): string | undefined {
 }
 
 /**
- * If `repoPath` is a secondary git worktree, return the worktree to seed from — preferring
- * the one on the **default branch** (the canonical base), else the primary worktree — when
- * its code graph already exists. `undefined` when this *is* the primary worktree, it isn't a
- * worktree, or no base is indexed. We never auto-checkout the default branch (that would
- * disrupt the user's worktrees); if it isn't checked out anywhere we fall back to primary.
+ * If `repoPath` is a secondary worktree, the worktree to seed from (default-branch one, else primary)
+ * when its code graph already exists. `undefined` when this IS the primary, it isn't a worktree, or no
+ * base is indexed. Never auto-checks-out the default branch.
  */
 function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string; graphDir: string } | undefined {
   try {
@@ -202,10 +188,8 @@ function baseWorktree(repoPath: string, config: ReviewerConfig): { path: string;
     if (!primary || path.resolve(primary.path) === self) return undefined; // we ARE the primary/base
 
     const def = defaultBranch(repoPath);
-    // A worktree that is ITSELF on the default branch is a canonical base — it must build its own
-    // graph, never share the (possibly non-default) primary. Without this, a default-branch secondary
-    // worktree shared the primary, leaving NO base graph for sibling feature worktrees to share, so
-    // they full-indexed. (Surfaced on Linux CI; macOS only passed via a path-resolution accident.)
+    // A worktree ITSELF on the default branch is a canonical base — it must build its own graph, never
+    // share the (possibly non-default) primary, else sibling feature worktrees have no base to share.
     const selfBranch = wts.find((w) => path.resolve(w.path) === self)?.branch;
     if (def && selfBranch === def) return undefined;
 
@@ -237,14 +221,11 @@ function readBaseSha(baseShaFile: string): string | undefined {
 }
 
 /**
- * A secondary worktree's base-graph staleness vs `main` (ADR-43, user's model). At review start we
- * compare the sha the worktree seeded from (`base.sha`) against main's current HEAD:
- *  - `fresh`        — main unchanged (or not a seeded worktree) → nothing to do.
- *  - `reseed`       — main advanced AND main's graph is already fresh → cheap re-copy (indexRepo does it).
- *  - `refresh-main` — main advanced but its graph is itself stale → the copy can't be cheaply updated,
- *                     so the review spawns the maintenance worker "tight" to refresh main; THIS review
- *                     proceeds on the current base (the accepted first-review-may-be-stale trade-off),
- *                     the next one re-seeds. Best-effort: any ambiguity → `fresh`.
+ * A secondary worktree's base-graph staleness vs `main` (ADR-43), comparing `base.sha` to main's HEAD:
+ *  - `fresh`        — main unchanged (or not a seeded worktree).
+ *  - `reseed`       — main advanced AND main's graph is fresh → cheap re-copy (indexRepo does it).
+ *  - `refresh-main` — main advanced but its graph is stale → the review spawns the worker "tight".
+ * Best-effort: any ambiguity → `fresh`.
  */
 type BaseSeedState = 'fresh' | 'reseed' | 'refresh-main';
 async function baseSeedState(p: RepoPaths, config: ReviewerConfig): Promise<BaseSeedState> {
@@ -264,15 +245,9 @@ async function baseSeedState(p: RepoPaths, config: ReviewerConfig): Promise<Base
 }
 
 /**
- * Refresh / build a graph in an ISOLATED child process (ADR-16/25): indexing opens Kùzu, and
- * doing that in the review process — which also opens Kùzu for the neighborhood + brain —
- * risks the native SIGSEGV. Spawning `plex index` keeps the review process to ONE Kùzu open.
- * Returns true if it ran (false in dev/tsx where the built CLI isn't beside argv[1]).
- *
- * Retries once on failure. A rare native Kùzu crash (ADR-17) can fail a single index — most
- * relevantly the worktree-seed full build, which opens the copied base graph. The retry of a
- * full build self-heals: a partial graph from the crashed attempt makes the next `plex index`
- * skip the seed and fall to `buildCodeGraph`, which clears the dir first and rebuilds clean.
+ * Refresh / build a graph in an ISOLATED child process (ADR-16/25): indexing must not open Kùzu in the
+ * review process, which already opens it for the neighborhood (native SIGSEGV risk). Returns true if it
+ * ran (false in dev/tsx with no built CLI beside argv[1]). Retries the transient Kùzu SIGSEGV (ADR-17).
  */
 export function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const entry = process.argv[1];
@@ -280,10 +255,8 @@ export function indexIsolated(repoPath: string, incremental: boolean): boolean {
   const cli = path.join(path.dirname(entry), 'plex.js');
   if (!existsSync(cli)) return false;
   const args = incremental ? [cli, 'index', repoPath, '--incremental'] : [cli, 'index', repoPath];
-  // Retry the transient Kùzu-native SIGSEGV (ADR-17) — a native crash, not a logic failure, and
-  // `index` is idempotent (rebuilds from scratch), so a fresh child recovers. This flake is frequent
-  // on Linux, where a single attempt would fail the auto-index/refresh. Only SIGSEGV retries; a real
-  // failure (non-zero exit) won't be fixed by re-running, so stop early.
+  // Retry ONLY the transient Kùzu SIGSEGV (ADR-17) — `index` is idempotent so a fresh child recovers; a
+  // real failure (non-zero exit) won't be fixed by re-running, so stop early.
   for (let attempt = 0; attempt < 5; attempt++) {
     const r = spawnSync(process.execPath, args, { stdio: 'ignore' });
     if (r.status === 0) return true;
@@ -295,13 +268,9 @@ export function indexIsolated(repoPath: string, incremental: boolean): boolean {
 const SWEEP_DEBOUNCE_MS = 10 * 60 * 1000; // ≤1 background sweep per 10 min per data dir
 
 /**
- * Fire-and-forget the background maintenance worker (ADR-43) for `main`. Unlike `indexIsolated` this
- * uses `spawn` + `detached` + `unref` — it must NOT block the triggering review/MCP call. Resolves
- * `main` (the sweep targets it from any worktree) and runs `plex sweep <main>`. Guards: no built CLI
- * beside `argv[1]` → no-op (dev/tsx); a marker younger than the debounce → skip (the worker's own
- * single-flight lock prevents overlap if two spawns still race). `force` bypasses the debounce — used
- * by the review-start base-staleness path when a review actually needs main refreshed now ("tight").
- * Returns true if it spawned. Best-effort: any failure → false, never throws into the caller.
+ * Fire-and-forget the background maintenance worker (ADR-43) for `main` (`spawn` + `detached` + `unref`
+ * — must NOT block the triggering call). No-op in dev/tsx or when debounced; `force` bypasses the
+ * debounce. Best-effort: any failure → false, never throws into the caller.
  */
 export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force = false): boolean {
   try {
@@ -321,14 +290,12 @@ export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force 
       if (isDebounced(markerMs, Date.now(), SWEEP_DEBOUNCE_MS)) return false;
     }
     const child = spawn(process.execPath, [cli, 'sweep', main], { detached: true, stdio: 'ignore' });
-    // A detached child reports fork failures (EMFILE/ENOMEM under process pressure) ASYNCHRONOUSLY via
-    // the 'error' event; with no listener Node escalates it to an uncaught exception on a later tick
-    // that the surrounding try/catch can't catch — which would crash the review. Swallow it (best-effort).
+    // A detached child reports fork failures asynchronously via 'error'; with no listener Node escalates
+    // to an uncaught exception the surrounding try/catch can't catch, crashing the review. Swallow it.
     child.on('error', () => {});
     child.unref();
-    // Stamp the debounce marker only AFTER the spawn succeeds — a spawn that throws should not
-    // suppress maintenance for the full window (the next trigger retries; the sweep's own
-    // single-flight lock prevents two near-simultaneous spawns from both running).
+    // Stamp the debounce marker only AFTER spawn succeeds — a throwing spawn must not suppress
+    // maintenance for the full window.
     try {
       mkdirSync(p.reviewerDir, { recursive: true });
       writeFileSync(p.sweepMarkerFile, new Date().toISOString(), 'utf8');
@@ -363,11 +330,8 @@ export interface ReviewContext {
   deterministic: Finding[];
   /** Relevant pitfalls retrieved from the knowledge base (ADR-01), boosted by code-path matches. */
   knowledge: RetrievedPitfall[];
-  /**
-   * Code-path memory (ADR — location-aware): pitfalls whose recorded history is at the symbols this
-   * diff touches (or their co-change neighbours). `regressionSentinel` flags a prior fix/accept at a
-   * symbol being changed again — the high-priority "don't regress this" signal. Ordered sentinels-first.
-   */
+  /** Code-path memory (ADR-47): pitfalls with recorded history at the symbols this diff touches.
+   *  `regressionSentinel` flags a prior fix/accept at a symbol being changed again. Sentinels first. */
   codePathAlerts?: CodePathAlert[];
   /** Stated motivation (PR title/body or commit subjects) — check the code against its claims. */
   changeContext?: ChangeContext;
@@ -379,29 +343,22 @@ export interface ReviewContext {
   round?: number;
   /** Prior rounds on this target (facts that cross rounds — ADR-02). */
   priorRounds?: RoundSummary[];
-  /**
-   * Regions changed since the previous round that NO prior finding or PR comment explains
-   * (semantic match — ADR-23). The highest-priority thing for the fresh reviewer to check.
-   */
+  /** Regions changed since the previous round that NO prior finding or PR comment explains (ADR-23). */
   unexplainedChanges?: AttributedChange[];
   /** PR-thread comments ingested this round (facts). */
   openComments?: PrComment[];
-  /** Prior-round findings auto-accepted as FIXED by this round's changes (ADR-28) — facts,
-   *  each naming the signal that matched (`semantic` | `locality`) so auto-accepts are auditable. */
+  /** Prior-round findings auto-accepted as FIXED by this round (ADR-28) — each naming the matching
+   *  signal (`semantic` | `locality`) so auto-accepts are auditable. */
   inferredAccepts?: import('./reconcile').AcceptedFix[];
-  /**
-   * Parallel-review advice (parallel-review.md): `single` (one reviewer) or `parallel` (fan
-   * out one reviewer per coupled cluster — the `units`), decided from the coupling graph. The
-   * orchestrator obeys this; consolidation is one `submit_findings` over all units' findings.
-   */
+  /** Parallel-review advice (parallel-review.md): `single` or `parallel` (one reviewer per coupled
+   *  cluster), decided from the coupling graph. */
   reviewPlan?: ReviewPlan;
   /** Guidance for the reviewing agent. */
   notes: string[];
 }
 
-/** Undirected coupling edges AMONG the changed files (co-change ∪ import ∪ ref) — the input
- *  to the parallel-review partition. Edges to *unchanged* files are dropped (those are blast
- *  radius, not review units). Deduped, self-loops removed. */
+/** Undirected coupling edges AMONG the changed files (co-change ∪ import ∪ ref) for the parallel-review
+ *  partition. Edges to unchanged files are dropped (those are blast radius). Deduped, self-loops removed. */
 async function changedFileCoupling(db: CodeGraphDB, files: string[]): Promise<[string, string][]> {
   if (files.length < 2) return [];
   const inDiff = new Set(files);
@@ -451,21 +408,17 @@ interface BrainContext {
 }
 
 /**
- * Build the PR-brain context for this review (ADR-22/23/30): determine the round, ingest PR
- * comments, and — when the head moved since the last round — attribute what changed (ADR-23)
- * and infer fixes (ADR-28), persisting the round to the embedded Kùzu brain. Embeddings are
- * OPTIONAL (ADR-30): without a provider the round/findings still record and fix inference falls
- * back to file/line LOCALITY; only the semantic change-attribution (unexplainedChanges) is skipped.
+ * Build the PR-brain context for this review (ADR-22/23/30): determine the round, ingest PR comments,
+ * and — when the head moved — attribute changes (ADR-23) + infer fixes (ADR-28). Embeddings are OPTIONAL
+ * (ADR-30): without a provider, round/findings still record and fix inference falls back to LOCALITY;
+ * only the semantic change-attribution is skipped.
  */
 async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: string): Promise<BrainContext> {
   const config = opts.config;
   const cwd = repoPaths(opts.repoPath, config.dataDir).repoPath;
-  // Key the brain off the repo PATH (basename), NOT the graph's `repo` meta — otherwise a
-  // worktree seeded from a differently-named base (ADR-32) records rounds under the base name
-  // while findings land under the worktree name, splitting the brain (see reviewTargetFor).
+  // Key the brain off the BASE repo basename, NOT the graph's `repo` meta — else a worktree splits the
+  // brain across names (see reviewTargetFor, ADR-46).
   const target = reviewTargetFor(opts.repoPath, opts);
-  // Embeddings are now OPTIONAL (ADR-30): without a provider the brain still records rounds
-  // and findings; only the semantic signals (unexplained changes + fix inference) are skipped.
   const embedder = createEmbeddingProvider(config.embedding);
 
   const headSha =
@@ -473,8 +426,8 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 
   const brain = await Brain.open(opts.repoPath, config);
   try {
-    // The lineage store is base-keyed and durable (ADR-46), so a worktree review and the base share
-    // one target — no split to heal (the old `healSplitTarget` guard retired with the Kùzu brain).
+    // Lineage is base-keyed + durable (ADR-46), so a worktree and its base share one target — no split
+    // to heal (`healSplitTarget` retired).
     const state = await brain.loadRoundState(target);
     const sameRound = state.lastN > 0 && headSha !== '' && state.lastHeadSha === headSha;
     const round = sameRound ? state.lastN : state.lastN + 1;
@@ -485,24 +438,18 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
       comments = raw.map((c) => ({ id: c.id, file: c.path, line: c.line, body: c.body, author: c.author, createdAt: c.createdAt }));
     }
 
-    // Attribute changes since the previous round (ADR-23) + infer fixes (ADR-28). Embeddings power
-    // the SEMANTIC signals (unexplained-change attribution + semantic fix match); the file/line
-    // LOCALITY fix-match needs none (ADR-30). So run fix inference whenever the head moved — with a
-    // provider it adds the semantic signal, without one it still reconciles restructuring fixes by
-    // locality. This mirrors reconcileOutcomes, so a no-embeddings standalone review closes the SAME
-    // accept-loop the responder's `reconcile` would — `priorFindings` is already filtered to
-    // un-outcomed findings (brain.ts), so neither path double-accepts the other's.
+    // Attribute changes since the previous round (ADR-23) + infer fixes (ADR-28). Embeddings power the
+    // SEMANTIC signals; the LOCALITY fix-match needs none (ADR-30), so run fix inference whenever the
+    // head moved.
     let unexplainedChanges: AttributedChange[] = [];
     let inferredAccepts: AcceptedFix[] = [];
-    // Anchor attribution on the PRIOR round's head, not the latest recorded round's — so a crash-retry
-    // that already recorded THIS round (the Linux Kùzu close-time SIGSEGV) reproduces the same signal
-    // instead of comparing the head to itself and silently dropping it (priorRoundHeadSha, guards.ts).
+    // Anchor on the PRIOR round's head, not the latest — so a crash-retry that already recorded THIS
+    // round reproduces the signal instead of comparing the head to itself (priorRoundHeadSha, guards.ts).
     const priorHead = priorRoundHeadSha(state.rounds, round);
     if (state.lastN > 0 && priorHead && headSha && priorHead !== headSha) {
       const changed = await getChangedFileTexts(cwd, priorHead, headSha);
       if (changed.length > 0) {
-        // Locality-only by default (empty vectors → semantic never fires); a configured provider
-        // fills these in below for the semantic half + unexplained-change attribution.
+        // Locality-only by default (empty vectors → semantic never fires); a provider fills these below.
         let regionEmb: number[][] = changed.map(() => []);
         let findingEmb: number[][] = state.priorFindings.map(() => []);
         if (embedder) {
@@ -511,27 +458,21 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
             ...comments.map((c) => ({ text: c.body, label: `comment: ${c.body.slice(0, 60)}` })),
           ].filter((s) => s.text.trim());
 
-          // Changes with NO signal to explain them are "unexplained" — the round-aware
-          // changed-without-feedback signal (M6). This needs NO embeddings, so mark it up front,
-          // independent of whether we embed below. (With signals present, classifyChanges decides.)
+          // Changes with NO signal explaining them are "unexplained" (M6) — needs NO embeddings, so mark
+          // it up front. (With signals present, classifyChanges decides below.)
           if (signals.length === 0) {
             unexplainedChanges = changed.map((c) => ({ file: c.file, start: c.start, end: c.end, attribution: 'unexplained' as const }));
           }
 
-          // Embeddings only buy two things: classifying changes AGAINST signals, and semantic
-          // fix-match against PRIOR FINDINGS. With neither, the locality fix-match below covers
-          // everything an embed could — so the batch can't change the outcome. Skip it (the common
-          // quiet re-review: no comments, prior findings already resolved → `priorFindings` empty).
-          // This is the bulk of the wasted Voyage spend on an actively-pushed PR.
+          // Embeddings only buy classifying changes against signals + semantic fix-match against prior
+          // findings. With neither, locality covers it — skip the batch (the bulk of wasted embed spend).
           if (signals.length > 0 || state.priorFindings.length > 0) {
             const regionTexts = changed.map((c) => c.text);
-            // Region + signal texts are per-round CONTENT — embed fresh. safeEmbed caps + chunks the
-            // (comment-heavy, unbounded) batch so it can't exceed a provider's array/token limit
-            // (B-G1), and returns null on a transient failure (m5) → locality-only, never a hard fail.
+            // Per-round CONTENT — embed fresh. safeEmbed caps + chunks the batch (B-G1) and returns null
+            // on a transient failure (m5) → locality-only, never a hard fail.
             const vecs = await safeEmbed(embedder, [...regionTexts, ...signals.map((s) => s.text)]);
-            // Finding TITLES recur round over round — serve them from the content-addressed cache so
-            // an N-round PR embeds each title ONCE, not once per round. null only if a cache miss had
-            // to be embedded and that embed failed; degrade exactly like `vecs` null.
+            // Finding TITLES recur round over round — serve from the cache so each embeds ONCE. null if
+            // a cache miss had to be embedded and that embed failed; degrade like `vecs` null.
             const findingVecs = await cachedEmbed(
               embedder,
               repoPaths(opts.repoPath, config.dataDir).embedCacheFile,
@@ -553,11 +494,8 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
       }
     }
 
-    // A round with an empty headSha would poison the next round's attribution anchor (#2/#9). When the
-    // current head is unresolved (a git/PR-head lookup that failed even past the spawn-retry), carry
-    // the last known anchor forward so the round still records — comments persist, a Round row exists
-    // (no false split-signature for healSplitTarget), and the next round keeps a valid anchor. Skip +
-    // log ONLY when there's no prior anchor either (a first-ever review whose git is broken).
+    // An empty headSha would poison the next round's attribution anchor (#2/#9); carry the last known
+    // anchor forward so the round still records (recordableHeadSha). Skip + log only when there's none.
     const recordSha = recordableHeadSha(headSha, state.lastHeadSha);
     if (recordSha) {
       await brain.recordRound(target, { target, n: round, ts: new Date().toISOString(), headSha: recordSha, baseRef }, comments);
@@ -573,10 +511,8 @@ async function buildBrainContext(opts: AssembleOptions, repo: string, baseRef: s
 }
 
 /**
- * Weight the raw edges `updateCodeGraph` captured for DELETED files into per-file neighbor
- * entries (association strength for co-change, the fixed import/ref base weights, distance
- * 1 — a deleted module's blast is dominated by its direct importers anyway). Pure: the
- * capture happens inside the update's own Kùzu open (re-opening the same dir in one
+ * Weight the raw edges `updateCodeGraph` captured for DELETED files into per-file neighbor entries
+ * (distance 1). Pure: capture happens inside the update's own Kùzu open (re-opening the same dir in one
  * process SIGSEGVs).
  */
 function weightDeletedNeighbors(raw: DeletedFileEdges): Map<string, NeighborEntry[]> {
@@ -607,12 +543,9 @@ function weightDeletedNeighbors(raw: DeletedFileEdges): Map<string, NeighborEntr
   return out;
 }
 
-// --- deleted-neighbors sidecar -----------------------------------------------------------
-// The incremental update DETACH-DELETEs a deleted file's node, after which its dependents
-// are unrecoverable from the graph. So `indexRepo` captures them at deletion time into this
-// sidecar, and reviews consult it for the diff's deleted files on ANY later round — the
-// in-review pre-refresh capture (the first fix) only covered the single round that happened
-// to trigger the refresh (the dogfood round-2 catch). Best-effort JSON; capped.
+// The incremental update DETACH-DELETEs a deleted file's node, after which its dependents are
+// unrecoverable from the graph — so `indexRepo` captures them at deletion time into this sidecar, which
+// reviews consult for the diff's deleted files on ANY later round. Best-effort JSON; capped.
 
 const DELETED_SIDECAR_CAP = 500;
 interface DeletedSidecarEntry {
@@ -652,14 +585,12 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     resolveChangeContext(opts.repoPath, opts.config, opts),
   ]);
 
-  // A secondary worktree has its OWN graph (copied from the base by `indexRepo`, ADR-32/ADR-39),
-  // opened normally — NOT the base's graph shared read-only (Kùzu's read-only open SIGSEGVs on
-  // Linux). So `graphP` is just this repo's own data dir, worktree or not.
+  // A secondary worktree has its OWN graph (copied by `indexRepo`, ADR-32/ADR-39), opened normally —
+  // NOT shared read-only (Kùzu's read-only open SIGSEGVs on Linux). So `graphP` is this repo's own dir.
   const graphP = p;
   ensureDataDir(p.reviewerDir);
 
-  // Auto-index on first use (ADR-30): build/seed this repo's graph in an ISOLATED child so THIS
-  // process opens Kùzu only for the neighborhood + brain.
+  // Auto-index on first use (ADR-30): build/seed this repo's graph in an ISOLATED child.
   if (!existsSync(graphP.graphDir)) {
     if (opts.autoIndex !== false) indexIsolated(graphP.repoPath, false);
     if (!existsSync(graphP.graphDir)) {
@@ -667,8 +598,8 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     }
   }
 
-  // Keep the BASE graph fresh BEFORE computing blast radius (ADR-25). Staleness is read from
-  // the sidecar sha (no Kùzu), and any refresh runs in an ISOLATED child process.
+  // Keep the graph fresh BEFORE computing blast radius (ADR-25): staleness from the sidecar sha (no
+  // Kùzu), any refresh in an ISOLATED child.
   let graphStale: GraphStaleness | undefined;
   {
     const indexedSha = readIndexedSha(graphP.headShaFile);
@@ -681,13 +612,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     }
   }
 
-  // Query Kùzu fully (now fresh), then close (ADR-16) — ONE open, normal mode (the worktree owns
-  // its copied graph, so no read-only share).
+  // Query Kùzu fully, then close (ADR-16) — ONE open, normal mode.
   const changedPaths = diff.files.map((f) => f.path);
-  // A detached background sweep (ADR-43) may briefly hold the graph's single-writer lock while it
-  // re-indexes main (ADR-46). The review is foreground, so retry the open/query a few times on a
-  // transient `RepoBusyError` (~3s budget) rather than failing the whole review for a moment of
-  // contention; the lock can surface at open OR lazily at first query, so the retry wraps both.
+  // A detached sweep (ADR-43) may briefly hold the graph's single-writer lock; the foreground review
+  // retries the open/query on a transient `RepoBusyError` (~3s budget). The lock can surface at open OR
+  // lazily at first query, so the retry wraps both.
   let result: { repo: string; nb: ReviewNeighborhood; coupling: [string, string][]; couplingDeg: Map<string, number> } | undefined;
   for (let attempt = 0; result === undefined; attempt++) {
     let db: CodeGraphDB | undefined;
@@ -707,15 +636,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   }
   const { repo, nb, coupling, couplingDeg } = result;
 
-  // Merge dependents of COMMITTED deletions from the sidecar — their nodes were
-  // DETACH-DELETEd by whichever incremental update ingested the deletion (this round's
-  // refresh or an earlier one), so the walk above couldn't see them on ANY round. Direct
-  // (1-hop) entries, deduped against what the walk did find, re-sorted and re-capped.
-  // (Uncommitted deletions keep their node and were already seeded by the walk itself.)
+  // Merge dependents of COMMITTED deletions from the sidecar — their nodes were DETACH-DELETEd by the
+  // update, so the walk couldn't see them. Direct entries, deduped against the walk, re-sorted + re-capped.
+  // (Uncommitted deletions keep their node and were already seeded by the walk.)
   const deletedDiffFiles = diff.files.filter((f) => f.status === 'deleted').map((f) => f.path);
   if (deletedDiffFiles.length > 0) {
-    // Read from the BASE graph's reviewerDir — that's where `indexRepo` wrote deleted-neighbor
-    // entries when the base was refreshed (worktrees share the base graph, so they share its sidecar too).
     const sidecar = readDeletedNeighborsSidecar(graphP.reviewerDir);
     const captured = deletedDiffFiles.flatMap((f) => sidecar[f]?.neighbors ?? []);
     if (captured.length > 0) {
@@ -736,10 +661,8 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     }
   }
 
-  // Persist a per-file blast map for submit_findings to enrich each finding's `blast` (tuning.md §5):
-  // changed files get their batch-relative coupling centrality, neighbors their coupling-to-change
-  // score. Computed HERE while the graph is already open, so submit needs no extra Kùzu open
-  // (ADR-17). Best-effort — a write failure never breaks the review.
+  // Persist a per-file blast map for submit_findings to enrich each finding's `blast` (tuning.md §5),
+  // computed HERE while the graph is open so submit needs no extra Kùzu open (ADR-17). Best-effort.
   try {
     const maxDeg = Math.max(1, ...[...couplingDeg.values()]);
     const files: Record<string, number> = {};
@@ -750,54 +673,45 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     /* best-effort: blast enrichment is optional */
   }
 
-  // Parallel-review guardrail (ADR-34/parallel-review): advise single vs fan-out from the
-  // coupling graph alone (zero LLM). `surface` ≈ total changed lines.
+  // Parallel-review guardrail (ADR-34/parallel-review): advise single vs fan-out from the coupling
+  // graph alone. `surface` ≈ total changed lines.
   const surface = diff.files.reduce(
     (s, f) => s + f.hunks.reduce((h, hk) => h + hk.newRanges.reduce((r, rg) => r + (rg.end - rg.start + 1), 0), 0),
     0,
   );
   const plan = reviewPlan(changedPaths, coupling, { surface, ...opts.config.reviewPlan });
 
-  // Codified findings, minus any the user has already waived — a `pattern-repo` waiver on a rule
-  // tag (e.g. `no-console`) suppresses that rule repo-wide, a file/line waiver the instance. This
-  // is the SAME `loadWaivers`/`isWaived` suppression `rankFindings` applies at submit time, pulled
-  // one step earlier so a waived rule never even primes the agent (it was previously surfaced here
-  // as "incorporate these" and only dropped from the final stream). Identity-only (no embeddings):
-  // the up-front context stays free of embedding cost; submit-time still adds the semantic pass.
+  // Codified findings, minus any the user has waived — the SAME `loadWaivers`/`isWaived` suppression
+  // `rankFindings` applies at submit time, pulled earlier so a waived rule never primes the agent.
+  // Identity-only (no embeddings); submit-time still adds the semantic pass.
   const detRaw = await runDeterministic(p.repoPath, diff, { repoName: repo });
-  // Only EXPLICIT suppressions (`waive` = false positive, `acknowledge` = intentional) keep a rule
-  // from priming the agent. A `reject` ("not now") must NOT — that's the weighted negative-knowledge
-  // path, not a permanent kill (docs/design/negative-knowledge.md, C1).
+  // Only EXPLICIT suppressions (`waive`/`acknowledge`) keep a rule from priming the agent — a `reject`
+  // ("not now") must NOT (the weighted negative-knowledge path, not a permanent kill; C1).
   const detWaivers = await loadWaivers(p.repoPath, opts.config, new Set(['waive', 'acknowledge']));
   const deterministic = detWaivers.length ? detRaw.filter((f) => !isWaived(f, detWaivers)) : detRaw;
 
   const query = buildKnowledgeQuery(nb.changed, deterministic, diff.files.map((f) => f.path));
   const retrieved = await getRelevantKnowledge(opts.config, query, 5, repo);
-  // Code-path memory (ADR — location-aware retrieval): match the retrieved pitfalls' incident history
-  // against the symbols this diff actually touches (+ their co-change neighbours). A direct hit at a
-  // symbol with a prior `fixed`/accepted outcome is a REGRESSION SENTINEL. Pure JS over the JSON store
-  // + the already-computed neighbourhood — no extra Kùzu open (ADR-17), works without embeddings.
-  // Built for `matchCodePath`, which only traverses `historyOf` by RETRIEVED-pitfall id — so building
-  // from the top-K pitfalls (not the whole store) is sufficient. NOTE: the symbol/file indexes
-  // (`concernsAt`/`concernsInFile`) are still incident-COMPLETE (every store incident), so they are NOT
-  // scoped to the retrieved/repo set — a future consumer reaching for them here must scope themselves.
+  // Code-path memory (ADR-47): match retrieved pitfalls' incident history against the diff's changed
+  // symbols + co-change neighbours. Pure JS, no extra Kùzu open (ADR-17), works without embeddings.
+  // NOTE: the graph's symbol/file indexes are incident-COMPLETE (every store incident), NOT scoped to
+  // the retrieved/repo set — a future consumer reaching for them here must scope themselves.
   const kg = buildKnowledgeGraph(retrieved.map((r) => r.pitfall), await knowledgeStore(opts.config).incidents());
   const cp = matchCodePath(retrieved, kg, nb.changed, nb.neighbors);
   const knowledge = applyCodePathBoost(retrieved, cp.boostByPitfall);
   const sentinelCount = cp.alerts.filter((a) => a.regressionSentinel).length;
-  // Cold-start nudge: only when nothing was retrieved AND the store is genuinely empty (one cheap read,
-  // skipped whenever a pitfall matched). Gated on embeddings because the seed path (`analyze`) needs them.
+  // Cold-start nudge: only when nothing was retrieved AND the store is empty. Gated on embeddings (the
+  // seed path `analyze` needs them).
   const coldKnowledge =
     knowledge.length === 0 && embeddingReady(opts.config) && (await knowledgeStore(opts.config).pitfalls()).length === 0;
 
-  // PR brain (ADR-22/23/30): embedded Kùzu, always on — rounds, comments, findings, and the
-  // semantic "changed-without-feedback" + fix-inference signals (the latter when embeddings
-  // are configured). No service, no Docker.
+  // PR brain (ADR-22/23/30): rounds, comments, findings + the changed-without-feedback + fix-inference
+  // signals (the latter when embeddings are configured).
   const brain = await buildBrainContext(opts, repo, diff.baseRef);
   const target = brain.target;
   const round = brain.round;
 
-  // Attribution audit log (ADR-24) — graph-independent; logs what was PROVIDED, not reasoning.
+  // Attribution audit log (ADR-24) — logs what was PROVIDED, not reasoning.
   await logAudit(opts.repoPath, opts.config, {
     type: 'context_assembled',
     repo,
@@ -812,10 +726,9 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     unexplainedChanges: brain.unexplainedChanges.length,
   });
 
-  // Background maintenance worker (ADR-43): now that this review's Kùzu opens are closed, fire-and-
-  // forget a debounced sweep that keeps `main` fresh + closes landed loops. Force it "tight" (bypass
-  // the debounce) when this worktree's base copy is stale and main itself needs refreshing first — so
-  // the next review re-seeds from a current main. Best-effort; never blocks or breaks the review.
+  // Background maintenance worker (ADR-43): now this review's Kùzu opens are closed, fire-and-forget a
+  // debounced sweep. Force it "tight" when the base copy is stale and main needs refreshing first.
+  // Best-effort; never blocks or breaks the review.
   try {
     const seedState = await baseSeedState(repoPaths(opts.repoPath, opts.config.dataDir), opts.config);
     maybeSpawnSweep(opts.repoPath, opts.config, seedState === 'refresh-main');

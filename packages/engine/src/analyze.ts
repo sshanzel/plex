@@ -17,10 +17,6 @@ import { confidenceFromOutcomes, addOrReinforcePitfall } from '@plex/knowledge';
 import { knowledgeStore, requireEmbeddings, consolidateKnowledge } from './knowledge';
 import { repoPaths } from './paths';
 
-// The product feature is "analyze your PR review history"; the technique it uses (cluster +
-// LLM-distill) lives in @plex/distill. Cursor state is `analyze-state.json`; incident provenance
-// is `inc:analyzed:`.
-
 /** Per-repo incremental scan cursor (ADR-11): which PRs have been scanned. */
 export interface AnalyzeState {
   repo: string;
@@ -56,10 +52,7 @@ export interface AnalyzeOptions {
   limit?: number;
 }
 
-/**
- * Analyze a repo's PR review history into the knowledge base, incrementally — only PRs not
- * in the saved cursor are pulled, and the cursor is updated afterward (ADR-11).
- */
+/** Analyze a repo's PR review history into the knowledge base, incrementally (ADR-11). */
 export async function analyzeRepo(
   repoPath: string,
   config: ReviewerConfig,
@@ -84,11 +77,6 @@ export async function analyzeRepo(
   return { ...result, totalScanned: scannedPrs.length };
 }
 
-// ---------------------------------------------------------------------------
-// Agent-driven analysis (rides the connected agent's subscription — no API key).
-// analyze_scan returns clusters; the agent distills; add_pitfalls stores them.
-// ---------------------------------------------------------------------------
-
 export interface ReviewCluster {
   id: string;
   size: number;
@@ -107,10 +95,7 @@ export interface ScanForAnalysisResult {
   totalScanned: number;
 }
 
-/**
- * Mechanical scan for the agent path: fetch new PRs, denoise, record incidents, cluster,
- * advance the cursor, and return the clusters for the agent to distill.
- */
+/** Scan for the agent path: fetch new PRs, record incidents, cluster, advance the cursor. */
 export async function scanForAnalysis(
   repoPath: string,
   config: ReviewerConfig,
@@ -166,13 +151,7 @@ export interface AgentPitfall {
   incidentIds?: string[];
 }
 
-/**
- * Store agent-distilled pitfalls (embedding computed here). De-duplicates **semantically** at write
- * time (`addOrReinforcePitfall`): a candidate whose principle matches an existing pitfall reinforces
- * it (no duplicate) rather than minting a near-identical lesson. Pitfalls default to `repo` scope
- * (specific to this project) unless the agent marks them `global`; `repo` is stamped so retrieval can
- * scope them (ADR-21).
- */
+/** Store agent-distilled pitfalls, deduping semantically at write time; default `repo` scope (ADR-21). */
 export async function addAnalyzedPitfalls(
   config: ReviewerConfig,
   pitfalls: AgentPitfall[],
@@ -180,10 +159,6 @@ export async function addAnalyzedPitfalls(
 ): Promise<{ added: number; reinforced: number; learned: LearnedLesson[] }> {
   const store = knowledgeStore(config);
   const embed = requireEmbeddings(config);
-  // Map each provenance incident → its observed outcome (for the Wilson confidence) and its file (for
-  // the "anchored to N files" payoff) in one pass over the store's incidents.
-  // Outcome by id → the Wilson confidence default (the SAME estimator distill uses). `files`/`incidents`
-  // for the payoff come from `addOrReinforcePitfall` (the canonical stored shape), not re-derived here.
   const outcomeById = new Map((await store.incidents()).map((i) => [i.id, i.outcome]));
   let added = 0;
   let reinforced = 0;
@@ -214,20 +189,14 @@ export async function addAnalyzedPitfalls(
   return { added, reinforced, learned };
 }
 
-// ---------------------------------------------------------------------------
-// Outcome backfill (ADR-50) — re-derive analyzed incidents' outcomes from current GitHub state, then
-// consolidate so confidence lifts. NOT a re-distill: no LLM, no clustering, no new pitfalls. The fix
-// for "every distilled pitfall sits at confidence 0 because the confirm signal never fired" — paired
-// with the broadened `outcomeFor` (reply-agreement). Also the prospective freshener as threads resolve.
-// ---------------------------------------------------------------------------
+// Outcome backfill (ADR-50): re-derive analyzed incidents' outcomes from current GitHub state.
 
 const ANALYZED_PREFIX = 'inc:analyzed:';
 const isAnalyzedIncident = (i: Incident): boolean => i.source === 'analyzed' && i.id.startsWith(ANALYZED_PREFIX);
-/** Confirm strength so backfill only ever UPGRADES an outcome (monotonic, idempotent, never downgrades
- *  a prior `fixed` on a transient fetch miss). `corroborated` (weak) < observed change; abstain = 0. */
+/** Confirm strength so backfill only ever UPGRADES an outcome (monotonic, never downgrades on a fetch miss). */
 const outcomeRank = (o?: IncidentOutcome): number =>
   o === 'fixed' || o === 'accepted' || o === 'reverted' ? 2 : o === 'corroborated' ? 1 : 0;
-const isConfirm = (o?: IncidentOutcome): boolean => outcomeRank(o) > 0; // `rejected` → rank 0, so already excluded
+const isConfirm = (o?: IncidentOutcome): boolean => outcomeRank(o) > 0;
 
 export interface RefreshOutcomesResult {
   /** Could `gh` list the repo's PRs? `false` = repo not checked out here / not authed → safe no-op. */
@@ -245,19 +214,10 @@ export interface RefreshOutcomesResult {
 }
 
 /**
- * Backfill analyzed incidents' outcomes from current GitHub state, then consolidate (ADR-50). Re-lists
- * merged PRs, re-fetches each comment thread, recomputes `outcomeFor` (now incl. reply-agreement), and
- * **upgrades** the matching `inc:analyzed:<commentId>` incident's outcome — then `consolidateKnowledge`
- * recomputes Wilson confidence so well-corroborated lessons lift off zero.
- *
- * Safety (the load-bearing constraints):
- *  - **Only ever touches `source:'analyzed'` incidents.** The whole incident set is read and rewritten;
- *    live `source:'review'` accepts (NOT re-derivable from GitHub) pass through untouched.
- *  - **Never downgrades.** A confirm only replaces a weaker outcome (`outcomeRank`), so a fetch miss
- *    (`fetchCommentsForPr` returns `[]` on error) or a now-abstaining comment leaves the incident as-is.
- *  - **Idempotent.** A second run with the same GitHub state upgrades nothing and rewrites nothing.
- *  - **Safe no-op when the repo is unreachable** (not checked out / `gh` unauthed) — reports it rather
- *    than silently "succeeding" with zero changes. No embeddings required (pure outcome + consolidate).
+ * Backfill analyzed incidents' outcomes from current GitHub state, then consolidate (ADR-50).
+ * Invariants (load-bearing): only ever touches `source:'analyzed'` incidents (live `review` accepts
+ * pass through untouched); never downgrades (a confirm only replaces a weaker outcome, so a fetch miss
+ * leaves the incident as-is); idempotent; safe no-op when the repo is unreachable.
  */
 export async function refreshAnalyzedOutcomes(
   repoPath: string,
@@ -282,7 +242,7 @@ export async function refreshAnalyzedOutcomes(
   try {
     prs = await api.listPrs({ cwd: p.repoPath, maxPrs: config.analyze.maxPrs, state: opts.state ?? 'merged' });
   } catch {
-    // `gh` can't resolve the repo (not checked out here / not authed). Safe no-op — change nothing.
+    // `gh` can't resolve the repo (not checked out / not authed) — safe no-op.
     return {
       repoReachable: false,
       ...base,
@@ -291,8 +251,7 @@ export async function refreshAnalyzedOutcomes(
     };
   }
 
-  // commentIncidentId → recomputed outcome (only successfully-fetched comments appear; a fetch miss is
-  // simply absent → the incident is never downgraded).
+  // Only successfully-fetched comments appear; a fetch miss is absent → the incident is never downgraded.
   const fetchedOutcome = new Map<string, IncidentOutcome | undefined>();
   for (const pr of prs) {
     for (const c of await api.fetchCommentsForPr(p.repoPath, pr)) {
@@ -315,7 +274,7 @@ export async function refreshAnalyzedOutcomes(
 
   if (upgraded > 0) {
     await store.replaceIncidents(next);
-    await consolidateKnowledge(config); // recompute Wilson confidence from the upgraded outcomes
+    await consolidateKnowledge(config);
   }
 
   const confirms = next.filter((i) => isAnalyzedIncident(i) && isConfirm(i.outcome)).length;

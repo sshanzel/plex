@@ -20,15 +20,10 @@ export interface RankOptions {
   /** Cosine ≥ this lets pattern/category waivers suppress the same issue semantically (ADR-27). */
   semanticThreshold?: number;
   /**
-   * LEARNED suppression decisions, keyed by a finding tag (a deterministic rule tag). Computed
-   * upstream from accumulated dismissals via Wilson (`@plex/knowledge` `suppressionTier`) and passed
-   * here as a plain decision so this package stays dep-light. `'suppress'` → suppressed bucket;
-   * `'demote'` → the low `demoted` bucket (still visible — a weighted "you keep skipping this", NOT a
-   * one-click kill, C1). An explicit waiver always wins over a learned demote.
-   *
-   * Each decision carries a LOCATION SCOPE (ADR-48): `repoWide` applies everywhere, otherwise it only
-   * matches a finding whose `file#name` symbol is in `symbols` — so dismissing one `console.log` never
-   * silences the same rule at a different symbol.
+   * LEARNED suppression decisions, keyed by a finding tag. `'suppress'` → suppressed bucket; `'demote'`
+   * → the low `demoted` bucket (still visible, NOT a one-click kill, C1); an explicit waiver wins over
+   * a demote. Each carries a LOCATION SCOPE (ADR-48): `repoWide`, else matches only a finding whose
+   * `file#name` is in `symbols` — so dismissing one `console.log` never silences the rule elsewhere.
    */
   suppressions?: Map<string, LearnedSuppression>;
 }
@@ -44,10 +39,7 @@ const TRIAGE_PRIORITY: Record<RankedFinding['triage'], number> = {
 
 /**
  * The strongest learned-suppression decision across a finding's tags (suppress > demote), gated by
- * LOCATION (ADR-48): a decision applies only if it's `repoWide` OR the finding's own `file#name`
- * symbol is among the symbols the rule was dismissed at. A symbol-scoped decision that doesn't match
- * the finding's symbol (different symbol, or the finding has no symbol) does NOT suppress — so the
- * rule still surfaces elsewhere.
+ * LOCATION (ADR-48): applies only if `repoWide` OR the finding's `file#name` is in the dismissed symbols.
  */
 function learnedSuppression(
   f: Finding,
@@ -89,9 +81,9 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
     let triage: RankedFinding['triage'];
     const learned = learnedSuppression(f, opts.suppressions);
     if (isWaived(f, waivers, opts.semanticThreshold)) {
-      triage = 'suppressed'; // an `acknowledge` on a matching note lands here too
+      triage = 'suppressed';
     } else if (learned === 'suppress') {
-      triage = 'suppressed'; // enough consistent dismissals to be 95%-confident (Wilson) — earned
+      triage = 'suppressed';
     } else if (f.severity === 'note') {
       triage = 'note';
     } else if ((f.prevalence ?? 0) >= threshold) {
@@ -101,10 +93,8 @@ export function rankFindings(findings: Finding[], opts: RankOptions = {}): Ranke
     } else {
       triage = 'surface';
     }
-    // `embedding` is set transiently (engine) only so `isWaived` above can match semantically —
-    // it must NOT travel into the returned/persisted stream. It's a 1024-float vector no consumer
-    // reads, and shipping it on every finding floods the agent's context with dead tokens (same
-    // class as the retrieve.ts pitfall strip). Drop it from the result; the match already happened.
+    // Strip the transient `embedding` (set by engine only for `isWaived` above): it must NOT travel
+    // into the returned/persisted stream — a per-finding vector no consumer reads floods agent context.
     const { embedding: _embedding, ...rest } = f;
     return { ...rest, signal, triage };
   });

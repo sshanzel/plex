@@ -1,14 +1,8 @@
 /**
- * The durable lineage layer (ADR-46) is an append-only JSONL **event log** per review target; this
- * module is the **pure fold** that replays events → current state. No I/O — the engine's `Brain` and
- * the viz-server's `collect` each read their own files and call `foldLineage`, so the
- * last-write-wins / outcome-stickiness rules live in exactly one place (and `@plex/core` stays
- * dependency-free).
- *
- * **Outcome is orthogonal to the finding record** (mirrors the retired Kùzu brain, ADR-28): a
- * `finding` event updates every field EXCEPT outcome (`writeFindings` was `ON CREATE outcome='' / ON
- * MATCH …` — never touching outcome); only an `outcome` event sets it (`markFindingOutcome`). So a
- * re-raised finding never resets a `fixed`/dispositioned outcome — the single most important rule.
+ * Pure fold for the durable lineage layer (ADR-46): replays a per-target append-only JSONL event log
+ * → current state. No I/O; the engine `Brain` and the viz-server both call it so the rules live once.
+ * INVARIANT: outcome is orthogonal to the finding record (ADR-28) — a `finding` event updates every
+ * field EXCEPT outcome (only an `outcome` event sets it), so a re-raised finding never resets a `fixed`.
  */
 
 export type LineageEvent =

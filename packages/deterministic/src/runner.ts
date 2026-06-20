@@ -7,12 +7,7 @@ export interface DeterministicOptions {
   repoName?: string;
   /** Only emit findings on changed lines (default true) — review new code, not old. */
   onlyChangedRanges?: boolean;
-  /**
-   * Stamp each finding with its rule's MEASURED repo prevalence (default true) — the
-   * fraction of sampled source files with ≥1 hit of the same rule. This is what makes
-   * ADR-05's prevalence-by-severity read rest on data for codified findings (common style
-   * → convention; common bug → systemic) instead of an agent's guess.
-   */
+  /** Stamp each finding with its rule's MEASURED repo prevalence (default true) — grounds ADR-05's prevalence-by-severity read on data. */
   rulePrevalence?: boolean;
   /** Max files sampled for prevalence (breadth-first; default 400 — keeps the scan sub-second). */
   prevalenceFileCap?: number;
@@ -45,10 +40,7 @@ async function listSourceFiles(root: string, cap: number): Promise<string[]> {
   return out;
 }
 
-/**
- * Measure each rule's prevalence: the fraction of sampled files with ≥1 hit. A rule firing
- * in 40% of the repo is a convention (or a systemic bug), not news about this diff.
- */
+/** Measure each rule's prevalence: the fraction of sampled files with ≥1 hit (a rule firing in 40% of the repo is a convention, not news). */
 async function computeRulePrevalence(
   repoPath: string,
   rules: ReadonlySet<string>,
@@ -57,8 +49,7 @@ async function computeRulePrevalence(
   const files = await listSourceFiles(repoPath, cap);
   if (files.length === 0) return new Map();
   const hits = new Map<string, number>([...rules].map((r) => [r, 0]));
-  // Read in parallel chunks (the parse stays sequential — it's CPU-bound anyway); fully
-  // sequential reads made the scan IO-latency-bound on its 400-file cap.
+  // Read in parallel chunks (parse stays sequential — CPU-bound); fully sequential reads were IO-latency-bound.
   const CHUNK = 32;
   for (let i = 0; i < files.length; i += CHUNK) {
     const chunk = files.slice(i, i + CHUNK);
@@ -111,24 +102,21 @@ export async function runDeterministic(
   const repo = opts.repoName ?? path.basename(path.resolve(repoPath));
   const onlyChanged = opts.onlyChangedRanges !== false;
   const out: Finding[] = [];
-  // Resolve the repo root once (canonicalized, so symlinks in repoPath itself don't false-positive).
+  // Canonicalize the repo root once so symlinks in repoPath itself don't false-positive the containment check.
   const realRoot = await fs.realpath(repoPath).catch(() => path.resolve(repoPath));
 
   for (const f of diff.files) {
-    // Generated artifacts are dropped at diff normalization, but this runner is also called
-    // with hand-built diffs — keep the belt-and-suspenders skip (a .min.js IS "supported").
+    // Belt-and-suspenders for hand-built diffs (normalization already drops these; a .min.js IS "supported").
     if (f.status === 'deleted' || !isSupportedSource(f.path) || isGeneratedArtifact(f.path)) continue;
-    // Containment: a hostile diff (e.g. a malicious PR) can carry a path that escapes the repo —
-    // either lexically (`../../etc/x.ts`) OR through a symlink IN the tree pointing outside. realpath
-    // resolves both before we read; never read outside the repo root. This is the only disk read of a
-    // diff-supplied path — other consumers treat it as an inert graph key.
+    // Containment: a hostile diff can carry a path escaping the repo — lexically (`../../etc/x.ts`) OR via
+    // a symlink in-tree. realpath resolves both before we read; never read outside the repo root.
     let text: string;
     try {
       const abs = await fs.realpath(path.join(repoPath, f.path));
       if (abs !== realRoot && !abs.startsWith(realRoot + path.sep)) continue;
       text = await fs.readFile(abs, 'utf8');
     } catch {
-      continue; // missing file or unresolvable path — skip (matches the prior missing-file behavior)
+      continue; // missing file or unresolvable path — skip
     }
     const ranges = f.hunks.flatMap((h) => h.newRanges);
     for (const raw of analyzeSource(f.path, text)) {

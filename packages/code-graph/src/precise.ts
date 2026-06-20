@@ -16,10 +16,8 @@ export interface PreciseEdge {
 }
 
 /**
- * Resolve import specifiers with the TypeScript compiler's real module resolution —
- * honoring tsconfig `paths` aliases, `baseUrl`, extensions, and index files (ADR-15).
- * This captures couplings the M1 relative-only resolver misses (e.g. `@/services`),
- * which become `precise-ref` edges (ADR-06).
+ * Resolve import specifiers via the TS compiler's real module resolution (tsconfig `paths`/`baseUrl`/
+ * extensions/index files, ADR-15) — captures aliased couplings the relative resolver misses → `Refs` edges (ADR-06).
  */
 export function resolvePreciseImports(
   repoPath: string,

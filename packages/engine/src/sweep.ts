@@ -16,23 +16,15 @@ import { CLOSED_TARGET, deadPrSentinel, headAdvanced, isDeadTarget, isPidAlive, 
 export { headAdvanced, isDebounced, jobDue } from './sweep-helpers';
 
 /**
- * The background maintenance worker (ADR-43). It is the reliable owner of every deferred Plex job
- * that otherwise only runs when someone runs a manual command on `main` — which nobody does. Spawned
- * best-effort + detached by ordinary Plex activity (`maybeSpawnSweep`, review.ts), it **maintains
- * `main` as the canonical, always-fresh base**: it resolves main from any worktree, then runs four
- * idempotent jobs against main's centralized + durable data dir (so it sidesteps the ADR-40
- * worktree-brain death). It supersedes both the flaky pr-responder loop-closing and the git hooks
- * ADR-36 removed. See docs/design/maintenance-worker.md.
- *
- * Each job is idempotent under SEQUENTIAL re-runs (re-running changes nothing): reconcile rides
- * `submitVerdict`'s learning-idempotency + a per-target head cursor; consolidate is a pure overwrite;
- * index is a no-op when fresh; analyze rides the `analyze-state.json` scan cursor. So a sweep can fire
- * as often as the debounce allows without duplicating work. The single-flight lock keeps runs
- * sequential; its steal path is best-effort (not a distributed mutex — see `acquireLock`), so a rare
- * concurrent double-run is idempotency-bounded, not guaranteed-once.
+ * The background maintenance worker (ADR-43): spawned detached by ordinary Plex activity
+ * (`maybeSpawnSweep`), it maintains `main` (resolved from any worktree) via four jobs against main's
+ * centralized + durable data dir. Each job is idempotent under sequential re-runs (cursors +
+ * `submitVerdict` dedup), so a sweep can fire as often as the debounce allows. The single-flight lock
+ * keeps runs sequential; its steal path is best-effort (not a distributed mutex), so a rare double-run is
+ * idempotency-bounded. See docs/design/maintenance-worker.md.
  */
 
-const CONSOLIDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // recompute decay/prune at most every 6h (cheap, slow-moving)
+const CONSOLIDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // recompute decay/prune at most every 6h
 const ANALYZE_INTERVAL_MS = 24 * 60 * 60 * 1000; // distil new merged PRs at most daily (heaviest job)
 const STALE_LOCK_MS = 30 * 60 * 1000; // a lock older than this is from a crashed sweep — steal it
 
@@ -73,10 +65,8 @@ function loadSweepState(file: string, repo: string): SweepState {
 function saveSweepState(file: string, state: SweepState): void {
   try {
     mkdirSync(path.dirname(file), { recursive: true });
-    // Atomic write (mirror `KnowledgeStore.replacePitfalls`): a kill mid-`writeFileSync`, or a
-    // stolen-lock double-run, would otherwise truncate the file → `loadSweepState` resets to `{}` and
-    // every reconcile cursor + cadence stamp is lost (full re-reconcile, heavy jobs re-fire). tmp+rename
-    // makes the swap atomic — a reader sees either the old whole file or the new whole file, never a torn one.
+    // Atomic write (tmp+rename): a kill mid-`writeFileSync` would truncate the file → `loadSweepState`
+    // resets to `{}` and every cursor + cadence stamp is lost (full re-reconcile, heavy jobs re-fire).
     const tmp = `${file}.tmp-${process.pid}`;
     try {
       writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
@@ -94,18 +84,11 @@ function saveSweepState(file: string, state: SweepState): void {
   }
 }
 
-/** Acquire the single-flight lock (one sweep per data dir). `openSync(.., 'wx')` is the atomic O_EXCL
- *  create — the loser of a race gets EEXIST and returns false. A held lock is STOLEN when the holder is
- *  provably gone: its stamped pid is dead (`isPidAlive` — closes the 30-min-block-after-crash, no
- *  waiting on mtime) OR the lock is older than `STALE_LOCK_MS` (pid unknowable / wrapped).
- *
- *  Best-effort debounce, NOT a distributed mutex — `idempotency-bounded`. The steal's unlink→create has
- *  a tiny TOCTOU window where two sweeps both seeing the same dead holder could both proceed; the jobs
- *  tolerate it (cursors + `submitVerdict` dedup make a double-run mostly a no-op), and the one genuinely
- *  dangerous shared resource — the brain — is guarded by Kùzu's OWN single-writer file lock, which
- *  surfaces as `RepoBusyError` and is caught per-job (the colliding sweep just retries next sweep). The
- *  residual (two near-simultaneous accepts of the same finding writing two ts-keyed Incidents) is
- *  vanishingly rare and self-corrects on the next `consolidate`. */
+/** Acquire the single-flight lock (one sweep per data dir) via atomic `openSync(.., 'wx')`. A held lock
+ *  is STOLEN when the holder is provably gone (`isPidAlive` dead) or older than `STALE_LOCK_MS`.
+ *  Best-effort, NOT a distributed mutex: the steal's unlink→create has a tiny TOCTOU window, but the jobs
+ *  tolerate a double-run (cursors + `submitVerdict` dedup), and the brain is guarded by Kùzu's own
+ *  single-writer lock (surfaces as `RepoBusyError`, caught per-job). */
 function acquireLock(lockFile: string, nowMs: number): boolean {
   const claim = (): boolean => {
     const fd = openSync(lockFile, 'wx'); // throws EEXIST if held
@@ -184,10 +167,8 @@ async function reconcileJob(ctx: JobCtx): Promise<JobResult> {
       continue; // transient head-resolution failure → retry next sweep
     }
     if (!head) {
-      // `getPrHeadSha` returns '' for a closed PR — BUT ALSO for any transient gh failure (network /
-      // rate-limit / auth, or gh missing in the detached sweep env). Only condemn the target to the
-      // dead sentinel when `gh` CONFIRMS the PR is CLOSED/MERGED; a transient empty just retries next
-      // sweep (bounded by the debounce), so one outage can't permanently disable a live PR's closure.
+      // '' means a closed PR OR a transient gh failure — condemn to the dead sentinel only when `gh`
+      // CONFIRMS CLOSED/MERGED (deadPrSentinel), so one outage can't disable a live PR's closure.
       if (src.source === 'pr' && src.pr != null) {
         let prState = '';
         try {
@@ -226,10 +207,8 @@ async function graphFreshnessJob(ctx: JobCtx): Promise<JobResult> {
   }
   const indexed = readIndexedSha(p.headShaFile);
   if (indexed === head) return { name: 'graph', ran: false, detail: 'graph fresh' };
-  // Index in an ISOLATED child (ADR-17), exactly as the review does — NEVER in-process: the sweep
-  // already opens the brain (reconcile job), and opening the code graph for a write in the same
-  // process SIGSEGVs Kùzu. `indexIsolated` spawns `node dist/plex.js index` and waits; it no-ops in
-  // dev/tsx (no built CLI beside argv[1]), so the graph just stays as-is there.
+  // Index in an ISOLATED child (ADR-17), NEVER in-process — opening the code graph for a write in the
+  // sweep process (which already opens the brain) SIGSEGVs Kùzu. No-ops in dev/tsx.
   const ran = indexIsolated(mainRepoPath, !!indexed); // incremental if a graph exists, else full build
   return { name: 'graph', ran, detail: ran ? `re-indexed main → ${head.slice(0, 8)}` : 'index skipped (no built CLI / dev)' };
 }
@@ -260,9 +239,8 @@ async function analyzeJob(ctx: JobCtx): Promise<JobResult> {
 }
 
 /**
- * Run the maintenance jobs against `main` (resolved from `repoPath`). Single-flight + best-effort:
- * each job is isolated in try/catch (one failing never blocks the next), and the whole run never
- * throws — it is spawned fire-and-forget. Returns a structured summary for the CLI/manual path.
+ * Run the maintenance jobs against `main` (resolved from `repoPath`). Single-flight + best-effort: each
+ * job is isolated in try/catch (one failing never blocks the next), and the whole run never throws.
  */
 export async function sweepRepo(repoPath: string, config: ReviewerConfig, now: Date = new Date()): Promise<SweepResult> {
   const mainRepoPath = resolveMainRepoPath(repoPath);

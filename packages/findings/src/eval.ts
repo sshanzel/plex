@@ -1,23 +1,9 @@
 /**
- * Ranking-quality evaluation (tuning.md §5).
- *
- * The ranking WEIGHTS in `signal.ts` (severity × confidence × blast × deviation × agreement) can't
- * be derived from a formula — they encode a preference and need LABELED relevance to fit/validate.
- * We already produce those labels two ways:
- *   - live `record_outcome` verdicts (accept/reject/acknowledge), and
- *   - at scale, ANALYZED PR history — every substantive review comment is a finding a human cared
- *     about, and its outcome grades it (the analysis pipeline already pulls comment → outcome).
- *
- * This module is the measuring stick: nDCG (Järvelin & Kekäläinen 2002) of a ranked finding list
- * against those labels — so a ranking change becomes a measured delta instead of a guess, and later
- * the objective an offline weight-fit maximizes. Pure (no I/O): callers supply the labels.
+ * Ranking-quality evaluation (tuning.md §5): nDCG of a ranked finding list against outcome labels, so
+ * a ranking change is a measured delta. Pure (no I/O): callers supply the labels.
  */
 
-/**
- * Graded relevance of an outcome label: a confirmed defect is most relevant, an intentional flag
- * mild, a rejected/never-actioned finding irrelevant. Mirrors the `record_outcome` verdict kinds
- * and the analyzed-incident outcomes (`accepted`/`fixed`/`rejected`).
- */
+/** Graded relevance of an outcome label: confirmed defect most relevant, intentional flag mild, rejected/unlabeled irrelevant. */
 export function relevanceOfOutcome(outcome: string | undefined): number {
   switch (outcome) {
     case 'accepted':
@@ -32,12 +18,7 @@ export function relevanceOfOutcome(outcome: string | undefined): number {
   }
 }
 
-/**
- * Data-sufficiency + headroom gates for attempting the ranking re-weight (tuning.md §"deferred #1").
- * The operational definition of "is #1 ready": a fit is worth BUILDING only when there's enough
- * balanced, multi-round labeled data AND the current ranking is measurably leaving headroom. Each
- * value is the honest floor, not a guess (see citations).
- */
+/** Data-sufficiency + headroom gates for attempting the ranking re-weight (tuning.md §"deferred #1"). */
 export const READINESS = {
   /** Grouped (by-round) held-out CV needs enough independent rounds to train+test without overfitting one PR. */
   minEvaluableRounds: 25,
@@ -66,12 +47,7 @@ export interface ReadinessInput {
   blastNonZeroShare: number;
 }
 
-/**
- * Decide whether a ranking re-weight is worth building yet, and why (pure — unit-testable without I/O).
- * Gates are checked in priority order: data sufficiency (rounds → positives → label balance) first,
- * then headroom. `ready` means BUILD a candidate fit — it must still beat the defaults on grouped
- * held-out CV before shipping (that CV harness is itself step 1 of #1).
- */
+/** Decide whether a ranking re-weight is worth building yet, and why. Gates in priority order: data sufficiency, then headroom. Pure. */
 export function rankingReadiness(m: ReadinessInput): { verdict: RankingVerdict; note: string } {
   const minorityShare = m.labeledFindings ? Math.min(m.positives, m.negatives) / m.labeledFindings : 0;
   if (m.meanNdcg == null || m.evaluableRounds < READINESS.minEvaluableRounds) {
@@ -110,20 +86,13 @@ export function dcg(relevances: number[]): number {
   return relevances.reduce((sum, rel, i) => sum + rel / Math.log2(i + 2), 0);
 }
 
-/**
- * Normalized DCG ∈ [0,1]: `dcg(ranked) / dcg(ideal)`. 1 = the ranking already matches the ideal
- * (most-relevant-first) order. Returns 1 for an all-zero-relevance list (nothing to order). Pure.
- */
+/** Normalized DCG ∈ [0,1]: `dcg(ranked) / dcg(ideal)`. Returns 1 for an all-zero-relevance list. Pure. */
 export function ndcg(rankedRelevances: number[]): number {
   const ideal = dcg([...rankedRelevances].sort((a, b) => b - a));
   return ideal > 0 ? dcg(rankedRelevances) / ideal : 1;
 }
 
-/**
- * nDCG of a finding list (in the order Plex ranked it) against an outcome-label map
- * (findingId → outcome). The bridge from labels — live verdicts OR analyzed incidents — to one
- * ranking-quality number. Pure.
- */
+/** nDCG of a ranked finding list against an outcome-label map (findingId → outcome). Pure. */
 export function rankingNdcg(
   rankedFindingIds: readonly string[],
   outcomeById: Map<string, string | undefined>,

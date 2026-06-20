@@ -1,10 +1,7 @@
 const TRIVIAL =
   /^(lgtm|nit|ship\s*it|done|thanks?|ty|\+1|👍|🚀|💯|nice|good catch|same|agreed?|ok(ay)?|sounds good|wfm)\b/i;
 
-/**
- * Keep substantive review comments, drop the noise (LGTM, one-word approvals, emoji).
- * ~70% of review comments are noise; this is the denoise step (plan §analysis).
- */
+/** Keep substantive review comments, drop the noise (LGTM, one-word approvals, emoji). */
 export function isSubstantive(body: string): boolean {
   const t = body.trim();
   if (t.length < 15) return false;

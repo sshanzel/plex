@@ -29,11 +29,8 @@ const SYSTEM =
   'You distill code-review comments into review knowledge. You decide what is worth remembering: SKIP only if a cluster is trivial or not a real, reusable lesson. Project-specific lessons are NOT skipped — keep them and mark scope "repo" (they help whenever working on that project); mark broadly-applicable lessons scope "global". Output ONLY JSON.';
 
 /**
- * Distill a cluster of similar review comments into ONE pitfall using the LLM's judgment
- * (ADR-20). The model itself decides whether the cluster is worth storing — returns
- * `null` to SKIP. Throws if the LLM call itself fails (so a broken provider surfaces
- * loudly rather than silently dropping everything). Confidence/provenance/embedding are
- * computed mechanically; the LLM supplies the semantic content + the keep/skip decision.
+ * Distill a cluster of similar review comments into ONE pitfall using the LLM's judgment (ADR-20);
+ * returns `null` to SKIP. Throws if the LLM call fails (a broken provider must not silently drop everything).
  */
 export async function llmDistill(input: ClusterInput, llm: CompletionProvider): Promise<Pitfall | null> {
   const comments = input.comments;
@@ -59,12 +56,8 @@ export async function llmDistill(input: ClusterInput, llm: CompletionProvider): 
   const json = extractJson(raw);
   if (!json || json.skip === true || typeof json.title !== 'string' || !json.title) return null;
 
-  // Confidence is the Wilson lower bound of the cluster's OBSERVED confirm rate (confirm = a comment
-  // whose flagged code was provably changed-and-shipped; see outcomeFor) — the SAME estimator the
-  // consolidation/retrieval paths use, so there's one principled definition of confidence and no
-  // hand-tuned `0.3 + 0.1·n` polynomial. A cluster with no observed fixes starts at 0 (honest: no
-  // positive evidence yet) and rises as live reviews confirm it; retrieval floors the tilt so a
-  // 0-confidence pitfall still surfaces on cosine relevance.
+  // Confidence = Wilson lower bound of the cluster's OBSERVED confirm rate (ADR-44; same estimator as
+  // consolidation/retrieval). No observed fixes → 0; retrieval floors the tilt so it still surfaces.
   const confidence = confidenceFromOutcomes(comments.map(outcomeFor));
   const tier: PitfallTier = json.tier === 'codifiable' ? 'codifiable' : 'judgmental';
   const scope: 'global' | 'repo' = json.scope === 'global' ? 'global' : 'repo';

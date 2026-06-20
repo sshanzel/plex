@@ -44,12 +44,7 @@ export async function getCoChangeEdges(db: CodeGraphDB, ids: string[]): Promise<
   }));
 }
 
-/**
- * Co-change "degree" of each file in `ids` — the sum of its incident CoChange edge weights. Used
- * to normalize pair strength into an association-strength / Salton-cosine score (tuning.md §4), so a
- * file that co-changes with *everything* (a config, lockfile, or barrel) doesn't dominate the blast
- * radius. Read-only over the stored weights — no schema or incremental-merge change.
- */
+/** Co-change degree per file — sum of incident CoChange edge weights; normalizes pair strength into association strength (tuning.md §4). */
 export async function getCoChangeDegrees(db: CodeGraphDB, ids: string[]): Promise<Map<string, number>> {
   if (ids.length === 0) return new Map();
   const rows = await db.run(
@@ -62,10 +57,8 @@ export async function getCoChangeDegrees(db: CodeGraphDB, ids: string[]): Promis
 }
 
 /**
- * Total coupling degree of each file — the count of incident File↔File edges (CoChange ∪ Imports ∪
- * Refs, enumerated explicitly: CoChangePending is a staging lane reads must never count). A proxy
- * for "how widely depended-on this file is", used to enrich a finding's `blast` (how much could
- * break if this code is wrong).
+ * Total coupling degree per file — count of incident File↔File edges (CoChange ∪ Imports ∪ Refs,
+ * enumerated explicitly: CoChangePending is a staging lane reads must never count). Proxy for how widely depended-on a file is.
  */
 export async function getCouplingDegrees(db: CodeGraphDB, ids: string[]): Promise<Map<string, number>> {
   if (ids.length === 0) return new Map();
@@ -105,15 +98,8 @@ export async function getRefEdges(
 }
 
 /**
- * Identify **barrel / re-export files** — `index.ts`-style modules that are almost pure
- * `export … from './x'` plumbing (ADR-06 refinement). Heuristic, no type checker: a file that
- * declares **zero own symbols** yet has an import degree ≥ `minImportDegree` (its captured
- * `export…from` specifiers count as Imports, `extract-ts.ts`). The blast-radius walk treats these
- * as **transparent** — they pass coupling through to their consumers/targets instead of ranking as
- * a top "neighbor" (a barrel has no code to review) and inflating the normalization ceiling.
- *
- * Conservative by design: a file with no declared symbols + several import relationships is
- * overwhelmingly plumbing, so mislabeling a real module is unlikely.
+ * Identify barrel / re-export files (ADR-06 refinement) — heuristic, no type checker: zero own symbols
+ * yet import degree ≥ `minImportDegree`. The blast-radius walk treats these as transparent (pass coupling through).
  */
 export async function getBarrelFiles(db: CodeGraphDB, minImportDegree = 3): Promise<Set<string>> {
   const symCount = new Map<string, number>();

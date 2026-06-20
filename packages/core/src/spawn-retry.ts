@@ -1,22 +1,12 @@
 /**
- * Shared retry policy for child-process spawns under resource pressure (ADR — silent-failure audit #1).
+ * Shared child-process spawn retry policy. INVARIANT: retry ONLY errnos meaning the child NEVER
+ * spawned (safe to re-run a deterministic command) — never a non-zero EXIT (a real failure must
+ * surface). It's a correctness fix, not just flake suppression: an un-retried spawn failure makes a
+ * git getter return '' → an empty `headSha` → drift attribution and reconcile (both keyed on it) go dead.
  *
- * Resource errnos that mean the child **never spawned** (the OS couldn't fork/exec under load) — as
- * opposed to a command that RAN and exited non-zero. Only the former is safe to retry: the command
- * never executed, so re-running it can't change a deterministic result; a non-zero exit (`code` is a
- * NUMBER — a bad ref, etc.) is a real failure and must surface. Under CI fork-storm (the kuzu E2Es), a
- * transient spawn failure here would otherwise silently make a git getter return '' → a review round
- * recorded with an empty `headSha` → round-over-round drift attribution AND reconcile (both keyed on
- * `lastHeadSha`) go dead. So the retry is a correctness fix, not just flake suppression.
- *
- * This lives in `@plex/core` (dependency-free) so BOTH `@plex/ingest` (`runGit`) and
- * `@plex/code-graph` (`headSha`) route their git spawns through the SAME tested policy — the audit
- * found `code-graph`'s `headSha` was an un-retried twin of the one `ingest` had already hardened.
- *
- * The set is exactly the errnos a fork/exec raises when the child never came to exist: EAGAIN/ENOMEM
- * (no process slot / memory to fork), ENFILE/EMFILE (fd table exhausted), ETXTBSY (the binary is being
- * written). NOT included: ENOENT (binary genuinely missing — retrying never helps) or ESRCH (signal to
- * a dead pid — a post-spawn signalling failure, not a failed fork).
+ * The set is exactly the fork/exec "never came to exist" errnos: EAGAIN/ENOMEM (no slot/memory),
+ * ENFILE/EMFILE (fd table full), ETXTBSY (binary being written). NOT ENOENT (missing binary — retry
+ * never helps) or ESRCH (signal to a dead pid — post-spawn, not a failed fork).
  */
 const TRANSIENT_SPAWN_ERRNOS = new Set(['EAGAIN', 'ENOMEM', 'ENFILE', 'EMFILE', 'ETXTBSY']);
 
@@ -35,11 +25,7 @@ export interface RetrySpawnOpts {
   baseMs?: number;
 }
 
-/**
- * Run `fn` (a child-process spawn returning a promise), retrying ONLY transient spawn failures with a
- * brief linear backoff. A non-zero exit or any non-spawn error propagates immediately on the first
- * occurrence — a real failure must not be masked by retries.
- */
+/** Run `fn` (a spawn), retrying ONLY transient spawn failures (linear backoff); any other error propagates immediately. */
 export async function retryTransientSpawn<T>(fn: () => Promise<T>, opts: RetrySpawnOpts = {}): Promise<T> {
   const attempts = opts.attempts ?? 5;
   const baseMs = opts.baseMs ?? 25;
@@ -48,7 +34,7 @@ export async function retryTransientSpawn<T>(fn: () => Promise<T>, opts: RetrySp
       return await fn();
     } catch (e) {
       if (attempt < attempts - 1 && isTransientSpawnError(e)) {
-        await delay(baseMs * (attempt + 1)); // the fork-capacity dip is momentary
+        await delay(baseMs * (attempt + 1));
         continue;
       }
       throw e;

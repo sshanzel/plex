@@ -1,13 +1,9 @@
 /**
- * Core domain types shared across the reviewer.
- *
- * Design note (ADR-04): **severity and confidence are independent axes.**
- * A "potential bug" is severity `bug` + lower `confidence` — not its own severity.
+ * Core domain types. INVARIANT (ADR-04): severity and confidence are independent axes — a "potential
+ * bug" is severity `bug` + lower `confidence`, not its own severity.
  */
 
-// ---------------------------------------------------------------------------
-// Diffs (normalized — see ADR-14: local and PR inputs both reduce to this)
-// ---------------------------------------------------------------------------
+// Diffs (normalized — ADR-14: local and PR inputs both reduce to this)
 
 export type DiffFileStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
@@ -40,19 +36,11 @@ export interface NormalizedDiff {
   baseRef: string;
   headRef?: string;
   files: DiffFile[];
-  /**
-   * Machine-generated files (lockfiles, bundles — `isGeneratedArtifact`) the diff touched
-   * but normalization DROPPED from `files`. Kept as a fact so a lockfile-only change is
-   * still visible as a supply-chain signal, just never read line-by-line.
-   */
+  /** Generated files the diff touched but normalization DROPPED from `files` — kept as a supply-chain signal. */
   generatedPaths?: string[];
 }
 
-/**
- * The *stated motivation* behind a change — PR title/description or commit messages.
- * Lets the reviewer check the code AGAINST its claimed intent (e.g. flag overclaims, or
- * behavior that contradicts the description).
- */
+/** The stated motivation behind a change (PR title/description, commits) — for checking code against claimed intent. */
 export interface ChangeContext {
   title?: string;
   description?: string;
@@ -61,9 +49,7 @@ export interface ChangeContext {
   url?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Code graph (durable, per-repo) — unioned edge sources by provenance (ADR-06)
-// ---------------------------------------------------------------------------
 
 export type EdgeProvenance = 'import' | 'co-change' | 'precise-call' | 'precise-ref';
 
@@ -90,9 +76,7 @@ export interface CodeLocation {
   symbol?: string;
 }
 
-// ---------------------------------------------------------------------------
 // Review neighborhood (ephemeral, per-PR) — the materialized blast radius
-// ---------------------------------------------------------------------------
 
 export interface NeighborEntry {
   node: GraphNode;
@@ -112,17 +96,11 @@ export interface ReviewNeighborhood {
   neighbors: NeighborEntry[];
 }
 
-// ---------------------------------------------------------------------------
 // Findings (one ranked stream from three sources — ADR-03)
-// ---------------------------------------------------------------------------
 
 /**
- * `bug`/`improvement`/`nit` are the "fix this" axis (ordered by how bad). `note` is
- * a different intent (ADR-31): "noticed, worth confirming" — surfacing it IS the value
- * even when nothing needs changing (e.g. two emit sites for the same event). It is never
- * a nit and is surfaced in its own bucket, not buried in the defect ranking. (It was
- * named `awareness` through M12; renamed to `note` — the displayed label — since "awareness"
- * was vague and read like a severity rung. Severity and confidence stay separate axes, ADR-04.)
+ * `bug`/`improvement`/`nit` are the "fix this" axis. `note` is a different intent (ADR-31): "noticed,
+ * worth confirming" — never a nit, surfaced in its OWN bucket, not buried in the defect ranking.
  */
 export type Severity = 'bug' | 'improvement' | 'nit' | 'note';
 export type FindingSource = 'first-principles' | 'knowledge' | 'deterministic';
@@ -159,15 +137,11 @@ export interface RankedFinding extends Finding {
   triage: 'surface' | 'systemic-migration' | 'convention' | 'note' | 'demoted' | 'suppressed';
 }
 
-// ---------------------------------------------------------------------------
 // Feedback loop (ADR-10) — verdicts reweight knowledge; scope matters
-// ---------------------------------------------------------------------------
 
 /**
- * `accept`/`reject`/`waive` are the defect verdicts. `acknowledge` (ADR-31) confirms a
- * `note` was a *good* catch but intentional this time: it suppresses the same
- * note going forward (like a semantic waiver) WITHOUT down-weighting the knowledge that
- * raised it — so a *materially changed* instance (e.g. a 3rd site) re-surfaces.
+ * `accept`/`reject`/`waive` are the defect verdicts. `acknowledge` (ADR-31): a `note` was a good catch
+ * but intentional — suppresses it going forward WITHOUT down-weighting the knowledge that raised it.
  */
 export type VerdictKind = 'accept' | 'reject' | 'waive' | 'acknowledge';
 
@@ -185,20 +159,13 @@ export interface Verdict {
   scope?: WaiverScope;
   note?: string;
   /**
-   * True when this verdict was INFERRED by fix matching (ADR-28 auto-accepts) rather than
-   * recorded explicitly. Inferred accepts skip retroactive pitfall inference — a ±5-line
-   * locality match feeding a title-similarity match would compound two inferences into
-   * knowledge confidence; explicit verdicts (or an explicit `pattern` link) are the only
-   * paths that move a pitfall.
+   * INFERRED by fix matching (ADR-28 auto-accept) vs recorded explicitly. Inferred accepts skip
+   * retroactive pitfall inference — compounding two inferences would corrupt knowledge confidence.
    */
   inferred?: boolean;
 }
 
-/**
- * A self-contained suppression rule derived from a `waive` verdict. Because finding ids
- * are per-run, a waiver carries the identity fields needed to re-match future findings
- * at its scope (ADR-10).
- */
+/** A self-contained suppression rule from a `waive` verdict — carries identity fields to re-match future findings (ADR-10). */
 export interface Waiver {
   scope: WaiverScope;
   file?: string;
@@ -210,23 +177,15 @@ export interface Waiver {
   /** Category tag for category-scope match. */
   category?: string;
   /**
-   * The `file#name` symbol key the waived finding was anchored to (ADR-48, code-path memory). When
-   * set, a `file`/`line`-scoped waiver matches ONLY a finding at the SAME symbol — so acknowledging
-   * one intentional instance doesn't silence the same kind of finding elsewhere in the file. Absent
-   * (no `findingId`/brain finding) ⇒ the waiver keeps pure file/line matching (back-compat).
+   * `file#name` symbol key the waived finding was anchored to (ADR-48). When set, a `file`/`line` waiver
+   * matches ONLY a finding at the SAME symbol. Absent ⇒ pure file/line matching (back-compat).
    */
   symbol?: string;
-  /**
-   * Embedding of the waived finding (set when a provider is configured). Lets pattern/
-   * category-scoped waivers suppress the *same issue* across rounds by meaning, surviving
-   * line drift and wording changes — not just exact title/line identity (ADR-27).
-   */
+  /** Embedding of the waived finding — lets pattern/category waivers suppress the same issue by meaning across drift (ADR-27). */
   embedding?: number[];
 }
 
-// ---------------------------------------------------------------------------
 // Knowledge base (ADR-08) — curated, provenance-backed, retrieved at review time
-// ---------------------------------------------------------------------------
 
 /** codifiable → can become a deterministic rule; judgmental → needs the model. */
 export type PitfallTier = 'codifiable' | 'judgmental';
@@ -242,44 +201,28 @@ export interface Pitfall {
   tier: PitfallTier;
   /** 0..1, grows with corroborating incidents and accepted outcomes. */
   confidence: number;
-  /**
-   * `global` applies to every repo; `repo` is specific to its origin project but still
-   * stored (it helps whenever working on that project). Undefined = global (back-compat).
-   */
+  /** `global` applies everywhere; `repo` is origin-specific but still stored. Undefined = global (back-compat). */
   scope?: 'global' | 'repo';
   /** Origin repo — set for repo-scoped / analyzed pitfalls; used to filter retrieval. */
   repo?: string;
   /**
-   * `positive` = surface this ("watch for X"); `negative` = SUPPRESS this (a learned dismissal,
-   * docs/design/negative-knowledge.md). Undefined = positive (back-compat). A negative pitfall's
-   * `confidence` is how strongly the user has dismissed `suppressKey` — read by ranking as a
-   * weighted demote→suppress, never a one-click permanent kill (C1).
+   * `negative` = SUPPRESS this (a learned dismissal); `positive`/undefined = surface. A negative
+   * pitfall's `confidence` drives a weighted demote→suppress, never a one-click kill (C1, negative-knowledge.md).
    */
   polarity?: 'positive' | 'negative';
-  /**
-   * The stable identity a NEGATIVE pitfall suppresses against — a deterministic rule tag
-   * (`no-console`) or a pattern. A finding is suppression-matched when one of its tags equals this.
-   */
+  /** Stable identity a NEGATIVE pitfall suppresses against (a rule tag/pattern); matched when a finding's tag equals it. */
   suppressKey?: string;
-  /**
-   * Language this pitfall is scoped to (`ts`, `py`, …). Undefined = language-agnostic. Global
-   * promotion is language-AWARE (C2): a TS-only rule may reach `global@ts` but never language-blind
-   * global, so a multi-language user never gets a TS rule applied to a Python repo.
-   */
+  /** Language scope (`ts`/`py`/…); undefined = agnostic. Promotion is language-AWARE (C2): a TS rule never reaches a Python repo. */
   language?: string;
   /** Provenance: ids of the incidents this pitfall was distilled from. */
   incidentIds: string[];
-  /** Wall-clock ts (ISO) of the most recent incident folded in by consolidation — the single field
-   * retrieval recency-tilt reads, so it never joins incidents at read time (ADR-42). Undefined =
-   * never reinforced (prior-only) → retrieval treats it as full weight (no decay). */
+  /** ISO ts of the most recent folded incident — the single field retrieval recency-tilt reads (ADR-42). Undefined ⇒ full weight. */
   lastReinforcedAt?: string;
   /** Retrieval vector (set when the pitfall is written). */
   embedding?: number[];
 }
 
-// ---------------------------------------------------------------------------
-// Review brain (M6/M11) — per-PR working memory, persisted in the embedded Kùzu brain (ADR-30)
-// ---------------------------------------------------------------------------
+// Review brain (M6/M11) — per-PR working memory (ADR-30)
 
 /** A review invocation on a target at a distinct head — rounds accumulate (ADR-23). */
 export interface ReviewRound {
@@ -312,11 +255,7 @@ export interface ChangedRegion {
 
 export type ChangeAttribution = 'feedback-driven' | 'unexplained';
 
-/**
- * A region changed since the previous round, classified by whether a prior finding or
- * PR comment explains it (ADR-23). `unexplained` = changed with nothing driving it →
- * the highest-value signal for the fresh reviewer to scrutinize.
- */
+/** A region changed since the previous round (ADR-23). `unexplained` (nothing drove it) = the highest-value signal to scrutinize. */
 export interface AttributedChange extends ChangedRegion {
   attribution: ChangeAttribution;
   /** What explains a feedback-driven change (a comment/finding reference). */
@@ -325,14 +264,10 @@ export interface AttributedChange extends ChangedRegion {
 
 export type IncidentSource = 'review' | 'analyzed';
 /**
- * The observed disposition of a flagged issue.
- *  - `fixed`/`accepted`/`reverted` — a STRONG confirm (weight 1): observed code change, a live accept,
- *    or a later revert. The reviewer was right.
- *  - `corroborated` — a WEAK confirm (fractional, ADR-50): mined from analysis when the PR author
- *    replied in agreement ("done"/"fixed") on a merged PR but no diff change was observed. Real but
- *    softer evidence than `fixed`; weighted by `CORROBORATED_WEIGHT` in the Wilson confidence so a
- *    noisier signal can't inflate confidence like an observed change.
- *  - `rejected` — a refute: a human dismissed the finding in a live review (analysis never emits this).
+ * Observed disposition of a flagged issue (ADR-50):
+ *  - `fixed`/`accepted`/`reverted` — STRONG confirm (weight 1): observed change, live accept, or revert.
+ *  - `corroborated` — WEAK confirm (fractional, `CORROBORATED_WEIGHT`): PR-author reply-agreement, no observed diff.
+ *  - `rejected` — a refute (live-review only; analysis never emits this).
  */
 export type IncidentOutcome = 'fixed' | 'accepted' | 'rejected' | 'reverted' | 'corroborated';
 
@@ -343,37 +278,23 @@ export interface Incident {
   repo?: string;
   file?: string;
   /**
-   * Code-path anchor (ADR — code-path memory): WHERE this concern was raised. `line` is the 1-based
-   * line (mined: the comment's line; live-accept: the finding's line); `symbol` is the drift-tolerant
-   * `symbolKey(file, name)` = `file#name` resolved from the brain finding at accept time (absent on
-   * mined incidents in v1 — no graph at analyze time). Together they let a review match a pitfall's
-   * history to the symbols a diff is touching (`matchCodePath`) — the "this was fixed HERE before"
-   * signal. Optional/best-effort; never affects confidence math.
+   * Code-path anchor (ADR-47): WHERE this concern was raised. `line` 1-based; `symbol` the drift-tolerant
+   * `file#name`. Feed `matchCodePath` ("fixed HERE before"). Optional/best-effort; never affects confidence math.
    */
   line?: number;
   symbol?: string;
   snippet?: string;
   outcome?: IncidentOutcome;
-  /**
-   * Provenance note — free text recording WHY this incident exists. For a learned-suppression
-   * dismissal it carries the originating verb + round (`reject @round3`), which `outcome:'rejected'`
-   * alone loses, so the history can answer "this rule got suppressed because it was waived once and
-   * rejected three times across rounds 2–5."
-   */
+  /** Provenance note — free text WHY this incident exists (e.g. a dismissal's verb + round, which `outcome` alone loses). */
   note?: string;
   /**
-   * The dismissal verb for a learned-suppression incident (`reject` = "not now" → fast decay;
-   * `waive` = "this is wrong" → slow decay). The authoritative source for recency-decay half-life
-   * selection (ADR-41) — `outcome: 'rejected'` alone flattens the two. Absent on corrections and
-   * pre-decay incidents (which default to `reject`, the conservative short half-life).
+   * Dismissal verb for a learned-suppression incident — the authoritative source for recency-decay
+   * half-life selection (ADR-41; `outcome:'rejected'` alone flattens reject vs waive). Absent ⇒ defaults to `reject`.
    */
   verb?: 'reject' | 'waive';
   /**
-   * Provenance back to the review event that produced this incident (ADR-46, Tier-2 increment 1):
-   * the brain `Finding.id` it was confirmed from, and the review `target` (`<repo>__pr_<n>` /
-   * `__<mode>`). Lets the knowledge graph draw a **recorded** finding→incident→pitfall edge — "where
-   * this pitfall came from" — instead of the explorer's same-file *inferred* bridge. Optional/
-   * best-effort (absent on analyzed incidents and pre-Tier-2 records); never affects confidence math.
+   * Provenance back to the review event (ADR-46): the brain `Finding.id` confirmed from + the review
+   * `target` — a recorded finding→incident→pitfall edge. Optional/best-effort; never affects confidence math.
    */
   findingId?: string;
   target?: string;

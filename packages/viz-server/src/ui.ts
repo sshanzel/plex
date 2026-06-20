@@ -1,9 +1,7 @@
 /**
- * The interactive UI, served as one self-contained HTML document (ADR-45). Cytoscape is loaded from
- * a CDN with the SAME SRI-pinned hash as the M5 static viz (engine/viz.ts). The page renders nothing
- * server-side from store data — it fetches the JSON API and builds the DOM with `textContent` (never
- * `innerHTML` of store text), so a malicious file path / finding title can't inject script. `version`
- * is the only interpolated value and is our own build string.
+ * The interactive UI as one self-contained HTML document (ADR-45); Cytoscape via CDN, SRI-pinned. The
+ * page builds the DOM with `textContent` (never `innerHTML` of store text), so a malicious file path /
+ * finding title can't inject script; `version` is the only interpolated value (our own build string).
  */
 const CYTOSCAPE_CDN = 'https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js';
 const CYTOSCAPE_SRI = 'sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4';

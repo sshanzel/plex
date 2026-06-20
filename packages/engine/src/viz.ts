@@ -25,9 +25,8 @@ const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 /**
- * Render a self-contained HTML visualization of the review neighborhood (M5 product
- * viz). Cytoscape loaded from a CDN. All interpolated strings are escaped — repo and
- * ref names are user-controlled, and the JSON payload escapes `<` so a file path can
+ * Render a self-contained HTML visualization of the review neighborhood (M5). All interpolated strings
+ * are escaped — repo/ref names are user-controlled, and the JSON payload escapes `<` so a file path can
  * never break out of the script block.
  */
 export function reviewContextToHtml(ctx: ReviewContext): string {

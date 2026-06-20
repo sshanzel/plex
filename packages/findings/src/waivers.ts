@@ -3,13 +3,9 @@ import { cosineSimilarity, symbolKey } from '@plex/core';
 import { normalizeTitle } from './dedupe';
 
 /**
- * Does a stored waiver suppress this finding, per its scope (ADR-10)?
- *
- * For the "this KIND of issue" scopes (pattern/category), a waiver also matches
- * **semantically** (ADR-27): if both carry an embedding and their cosine ≥
- * `semanticThreshold`, the same issue is suppressed even after its wording changed or its
- * lines moved. The default threshold (1.01) disables semantic matching, preserving the
- * pure identity behavior when embeddings aren't supplied.
+ * Does a stored waiver suppress this finding, per its scope (ADR-10)? Pattern/category scopes also
+ * match SEMANTICALLY (ADR-27) when both carry an embedding and cosine ≥ `semanticThreshold`. The
+ * default 1.01 disables semantic matching (pure identity behavior when no embeddings supplied).
  */
 export function waiverMatches(f: Finding, w: Waiver, semanticThreshold = 1.01): boolean {
   const semantic =
@@ -17,9 +13,7 @@ export function waiverMatches(f: Finding, w: Waiver, semanticThreshold = 1.01): 
     f.embedding != null &&
     cosineSimilarity(w.embedding, f.embedding) >= semanticThreshold;
   // Symbol gate (ADR-48): a file/line waiver carrying a `symbol` suppresses only a finding at the SAME
-  // `file#name` — so acknowledging one intentional instance doesn't silence the same kind of finding
-  // elsewhere in the file. A symbol-less waiver (no `findingId` resolved it, or a `reject`'s line
-  // waiver) keeps pure file/line matching (back-compat).
+  // `file#name` (else the rule still surfaces elsewhere); a symbol-less waiver keeps file/line matching.
   const symbolOk =
     w.symbol == null ||
     (f.location.symbol != null && symbolKey(f.location.file, f.location.symbol) === w.symbol);
@@ -47,11 +41,8 @@ export function isWaived(f: Finding, waivers: Waiver[], semanticThreshold?: numb
 }
 
 /**
- * Audit helper (ADR-41): of the embedding-keyed (first-principles) suppression decisions, the subset
- * that actually FIRED — i.e. matched at least one finding through the same `pattern-repo` semantic
- * cosine test the ranking used. These shaped the output and belong in the `findings_submitted` audit
- * trail, which the tag-based scan misses (a semantic suppression carries no tag). Pure — literal
- * vectors in tests; the matching predicate is `waiverMatches`, so the audit can't drift from ranking.
+ * Audit helper (ADR-41): the embedding-keyed suppression decisions that actually FIRED — matched a
+ * finding through the same `pattern-repo` semantic test the ranking used (so the audit can't drift). Pure.
  */
 export function firedSemanticSuppressions<T extends { embedding?: number[] }>(
   decisions: T[],

@@ -1,8 +1,6 @@
 /**
- * Parallel-review guardrail (design: docs/design/parallel-review.md) — PURE, zero-LLM.
- * Decides whether a review should fan out into subagents, and into which units, from the
- * coupling graph alone. Fanning out a small or tightly-coupled change is *worse* (N× tokens
- * for a slower, dumber review), so the default is `single` unless fan-out clearly wins.
+ * Parallel-review guardrail (docs/design/parallel-review.md) — PURE, zero-LLM. Decides single vs
+ * fan-out (and into which units) from the coupling graph alone; defaults to `single` unless fan-out clearly wins.
  */
 
 export interface ReviewUnit {
@@ -61,11 +59,7 @@ export function partitionByCoupling(files: string[], coupled: ReadonlyArray<read
   return [...groups.values()];
 }
 
-/**
- * THE GUARDRAIL: single-agent vs parallel fan-out, decided from coupling + surface alone.
- * Conservative — returns `single` unless the change splits into ≥2 significant clusters AND
- * is big enough to be worth the N× cost.
- */
+/** Single-agent vs parallel fan-out from coupling + surface. Conservative — `single` unless ≥2 significant clusters AND big enough. */
 export function reviewPlan(
   files: string[],
   coupled: ReadonlyArray<readonly [string, string]>,

@@ -5,11 +5,8 @@ type Row = Record<string, unknown>;
 type Params = Record<string, unknown>;
 
 /**
- * Thin wrapper over a Kùzu database + connection.
- *
- * Use `run(stmt, params)` with named `$params` for anything containing file paths or
- * user data — never string-concatenate (AGENTS.md). `insertMany` reuses a single
- * prepared statement for bulk DML.
+ * Thin wrapper over a Kùzu database + connection. Use `run(stmt, params)` with named `$params` for
+ * anything containing file paths or user data — never string-concatenate Cypher (AGENTS.md).
  */
 export class CodeGraphDB {
   private readonly db: Database;
@@ -17,10 +14,8 @@ export class CodeGraphDB {
 
   constructor(public readonly dir: string, opts?: { readOnly?: boolean }) {
     try {
-      // Kùzu's single-writer file lock can bite HERE or lazily at first query (`rethrow`
-      // handles the lazy path) — either way a same-path concurrent open becomes a clear
-      // RepoBusyError. readOnly=true lets multiple secondary worktrees share the base's
-      // graph concurrently without conflicting on the write lock (ADR-32).
+      // Kùzu's single-writer file lock can bite HERE or lazily at first query (`rethrow` handles the
+      // lazy path) → RepoBusyError. readOnly=true lets worktrees share the base's graph (ADR-32).
       this.db = opts?.readOnly ? new Database(dir, 0, true, true) : new Database(dir);
       this.conn = new Connection(this.db);
     } catch (e) {
@@ -34,8 +29,7 @@ export class CodeGraphDB {
     return qr ? (qr.getAll() as Promise<Row[]>) : Promise.resolve([]);
   }
 
-  /** Translate Kùzu's lazy file-lock IOException (it locks at first query, not at open) into a
-   *  clear RepoBusyError; pass every other error through untouched. */
+  /** Translate Kùzu's lazy file-lock IOException (locks at first query, not at open) into RepoBusyError; pass others through. */
   private rethrow(e: unknown): never {
     if (isLockError(e)) throw new RepoBusyError(this.dir);
     throw e;
@@ -56,19 +50,12 @@ export class CodeGraphDB {
   }
 
   /**
-   * Bulk insert under explicit transactions — a PERFORMANCE fix. Without a transaction Kùzu
-   * auto-commits (fsyncs) EVERY row, so a large first index was ~14k serial commit round-trips (most
-   * of a ~70s wait on a ~1.3k-file repo). Committing per CHUNK instead drops that to a handful of
-   * commits (~17× on that repo). Chunking (vs one giant transaction) bounds the WAL/undo buffer so a
-   * huge monorepo can't balloon memory — playright's largest batch (<5k rows) still commits once, so
-   * normal repos are unaffected; only >`CHUNK`-row batches split.
-   *
-   * NOT an atomicity guarantee: a chunk commits as it fills, and callers issue several `insertMany`s
-   * (and, on the incremental path, a prior auto-committed `DETACH DELETE`) that this does NOT wrap into
-   * one unit — a mid-build failure can leave a partial graph, recovered by the next full rebuild (the
-   * sweep's GraphFreshness job / a fresh `index`). ROLLBACK on error closes the open transaction so the
-   * REUSED long-lived connection isn't left mid-transaction (which would make the next `insertMany`'s
-   * BEGIN fail with an unrelated "active transaction" error); the ORIGINAL error is surfaced.
+   * Bulk insert under explicit per-CHUNK transactions — batching avoids Kùzu auto-committing (fsync)
+   * every row (a large first index was ~14k serial commits); chunking bounds the WAL/undo buffer so a
+   * huge monorepo can't balloon memory. NOT atomic: a chunk commits as it fills and callers issue
+   * several `insertMany`s — a mid-build failure leaves a partial graph, recovered by the next full rebuild.
+   * ROLLBACK on error closes the txn so the REUSED long-lived connection isn't left mid-transaction
+   * (the next BEGIN would fail); the ORIGINAL error is surfaced.
    */
   async insertMany(stmt: string, rows: Params[]): Promise<void> {
     if (rows.length === 0) return;
@@ -90,7 +77,7 @@ export class CodeGraphDB {
         }
         if (inTxn) await this.conn.query('COMMIT');
       } catch (e) {
-        if (inTxn) await this.conn.query('ROLLBACK').catch(() => {}); // close the txn; surface the original error
+        if (inTxn) await this.conn.query('ROLLBACK').catch(() => {});
         throw e;
       }
     } catch (e) {
@@ -99,8 +86,7 @@ export class CodeGraphDB {
   }
 
   async close(): Promise<void> {
-    // Close the connection before the database — leaving the Connection's native
-    // handle open leaks libuv resources and crashes worker teardown under vitest.
+    // Close the Connection before the Database — the reverse leaks the native handle and crashes vitest teardown.
     await this.conn.close();
     await this.db.close();
   }

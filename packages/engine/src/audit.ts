@@ -4,10 +4,8 @@ import type { ReviewerConfig, RankedFinding, VerdictKind, WaiverScope } from '@p
 import { repoPaths } from './paths';
 
 /**
- * Review audit log (ADR-24) — an append-only, greppable record of *what the reviewer
- * saw and produced*, for attribution and self-improvement. It logs what was PROVIDED
- * and SUBMITTED, never the agent's chain-of-thought (ADR-02), so attribution is
- * correlational ("finding X surfaced while pitfalls A,B + files C,D were in context").
+ * Review audit log (ADR-24): append-only record of what was PROVIDED and SUBMITTED, never the
+ * agent's chain-of-thought (ADR-02).
  */
 
 interface AuditBase {
@@ -45,12 +43,7 @@ export interface FindingsSubmittedEvent extends AuditBase {
     line: number;
     triage: string;
   }[];
-  /**
-   * Learned-suppression decisions ACTIVE for this review and their evidence basis — the provenance
-   * trail for "why did this rule end up demoted/suppressed?" (docs/design/negative-knowledge.md).
-   * Each entry is a rule key with its dismissal/correction counts and the Wilson-derived tier; the
-   * per-dismissal verbs/timestamps live on the linked knowledge Incidents (`note`).
-   */
+  /** Learned-suppression decisions active for this review + their evidence basis (docs/design/negative-knowledge.md). */
   suppressions?: { key: string; tier: string; dismissals: number; corrections: number }[];
 }
 
@@ -83,7 +76,7 @@ export async function readAudit(repoPath: string, config: ReviewerConfig): Promi
   try {
     txt = await readFile(repoPaths(repoPath, config.dataDir).logFile, 'utf8');
   } catch {
-    return []; // no log yet
+    return [];
   }
   // Per-line parse: one corrupt event must not drop the whole audit trail.
   const out: AuditEvent[] = [];
