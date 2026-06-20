@@ -227,7 +227,7 @@ const isAnalyzedIncident = (i: Incident): boolean => i.source === 'analyzed' && 
  *  a prior `fixed` on a transient fetch miss). `corroborated` (weak) < observed change; abstain = 0. */
 const outcomeRank = (o?: IncidentOutcome): number =>
   o === 'fixed' || o === 'accepted' || o === 'reverted' ? 2 : o === 'corroborated' ? 1 : 0;
-const isConfirm = (o?: IncidentOutcome): boolean => outcomeRank(o) > 0 && o !== 'rejected';
+const isConfirm = (o?: IncidentOutcome): boolean => outcomeRank(o) > 0; // `rejected` → rank 0, so already excluded
 
 export interface RefreshOutcomesResult {
   /** Could `gh` list the repo's PRs? `false` = repo not checked out here / not authed → safe no-op. */

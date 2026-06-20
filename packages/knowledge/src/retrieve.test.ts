@@ -279,4 +279,26 @@ describe('retrieval recurrence tilt (ADR-49 — how often a lesson recurs, decay
     const inflated = res.find((r) => r.pitfall.id === 'inflated')!;
     expect(inflated.score).toBeCloseTo(lean.score, 6); // accept volume did not lift recurrence
   });
+
+  it('does not miscount a review incident on a file slugged "analyzed" (collision-shaped id)', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kn-rec5-'));
+    const store = new KnowledgeStore(dir);
+    const [qv] = await provider.embed(['tenant id validation']);
+    // A real analyzed id is `inc:analyzed:<commentId>` (no further colon). A review incident whose file
+    // slugifies to `analyzed` is `inc:analyzed:<hash>:<ts>` (extra colons) and must NOT count as analyzed.
+    await store.addPitfall(pf({ id: 'oneAnalyzed', title: 'A', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:101'] }));
+    await store.addPitfall(pf({ id: 'collisionOnly', title: 'B', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:h0:t0', 'inc:analyzed:h1:t1'] }));
+    const res = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const real = res.find((r) => r.pitfall.id === 'oneAnalyzed')!;
+    const collision = res.find((r) => r.pitfall.id === 'collisionOnly')!;
+    // real: n=1 → 1/2 = .5 (== floor); collision: n=0 → floor .5 — equal, i.e. the collision ids scored 0.
+    expect(collision.score).toBeCloseTo(real.score, 6);
+    // And a genuinely-analyzed pair (n=2 → .667) DOES outrank the collision-only pitfall, proving the
+    // collision ids were excluded rather than the filter just zeroing everything.
+    await store.addPitfall(pf({ id: 'twoAnalyzed', title: 'C', embedding: qv, confidence: 0.5, incidentIds: ['inc:analyzed:201', 'inc:analyzed:202'] }));
+    const res2 = await retrieveRelevant(store, provider, 'tenant id validation', 5, 0);
+    const two = res2.find((r) => r.pitfall.id === 'twoAnalyzed')!;
+    const coll2 = res2.find((r) => r.pitfall.id === 'collisionOnly')!;
+    expect(two.score).toBeGreaterThan(coll2.score);
+  });
 });

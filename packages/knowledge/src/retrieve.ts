@@ -62,6 +62,11 @@ export function lexicalScores(queryText: string, pitfalls: Pitfall[]): number[] 
 const inScope = (p: Pitfall, repo?: string): boolean =>
   (p.scope ?? 'global') !== 'repo' || p.repo === repo;
 
+/** An analyzed-provenance incident id, EXACTLY `inc:analyzed:<commentId>` (commentId numeric → no
+ *  further colon). Used to count recurrence without miscounting a review incident on a file slugged
+ *  `analyzed` (`inc:analyzed:<hash>:<ts>`, which has extra colons). */
+const ANALYZED_INCIDENT_ID = /^inc:analyzed:[^:]+$/;
+
 /**
  * Recurrence tilt (ADR-49): `max(tiltFloor, n/(n+1))` where `n` is the pitfall's provenance-incident
  * count — how often the lesson was independently raised. Monotonic + saturating, so a long-recurring
@@ -72,13 +77,15 @@ const inScope = (p: Pitfall, repo?: string): boolean =>
  */
 export function recurrenceWeight(p: Pitfall, tiltFloor: number): number {
   if ((p.polarity ?? 'positive') !== 'positive') return 1;
-  // Count only ANALYZED-provenance incidents (`inc:analyzed:*`). `consolidatePitfalls` writes back the
-  // UNION of a pitfall's incidents (forward `incidentIds` ∪ reverse-linked live `accept` incidents), so
-  // a plain `incidentIds.length` would let accept VOLUME inflate recurrence — re-coupling it to the
-  // confidence axis it's meant to be independent of (a live accept is the confidence signal). Analyzed
-  // incidents are the independent "raised in history" events recurrence is about. (The `inc:analyzed:`
-  // prefix is the source marker minted in the analyze pipeline; a review incident is `inc:<slug>:…`.)
-  const n = (p.incidentIds ?? []).filter((id) => id.startsWith('inc:analyzed:')).length;
+  // Count only ANALYZED-provenance incidents. `consolidatePitfalls` writes back the UNION of a pitfall's
+  // incidents (forward `incidentIds` ∪ reverse-linked live `accept` incidents), so a plain
+  // `incidentIds.length` would let accept VOLUME inflate recurrence — re-coupling it to the confidence
+  // axis it's meant to be independent of (a live accept is the confidence signal). Analyzed incidents are
+  // the independent "raised in history" events recurrence is about. The analyze pipeline mints exactly
+  // `inc:analyzed:<commentId>` (commentId numeric → no further colon), so we match that EXACT shape
+  // rather than a bare prefix: a review incident on a file that happens to slugify to `analyzed`
+  // (`inc:analyzed:<hash>:<ts>` — extra colons) must NOT be miscounted as analyzed provenance.
+  const n = (p.incidentIds ?? []).filter((id) => ANALYZED_INCIDENT_ID.test(id)).length;
   return Math.max(tiltFloor, n / (n + 1));
 }
 
