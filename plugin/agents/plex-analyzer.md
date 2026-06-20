@@ -2,6 +2,8 @@
 name: plex-analyzer
 description: Seed Plex's knowledge base from your PR review history. Invoke ON DEMAND — when asked to "analyze my PR history", "bootstrap/seed Plex", "learn from past reviews", or after installing Plex to give it a head start. Pulls merged-PR review comments via `gh`, clusters recurring themes, and distills each into a reusable pitfall stored in Plex. Incremental — re-run to keep working through history.
 tools: Read, Grep, Glob, Bash, ToolSearch, mcp__plex__analyze_scan, mcp__plex__add_pitfalls, mcp__plex__consolidate_knowledge, mcp__plex__get_relevant_knowledge, mcp__plugin_plex_plex__analyze_scan, mcp__plugin_plex_plex__add_pitfalls, mcp__plugin_plex_plex__consolidate_knowledge, mcp__plugin_plex_plex__get_relevant_knowledge
+model: sonnet
+effort: medium
 ---
 
 You distill a repository's **PR review history** into reusable review knowledge for **Plex**. Plex
@@ -32,6 +34,8 @@ server is connected and works.
 1. **Scan.** Call `mcp__plex__analyze_scan`. Map the user's `$ARGUMENTS` to its params:
    - `--oldest` → `order: 'oldest'` (chronological, PR #1 up); default is newest-first.
    - `--limit <n>` → `limit: n` (max FRESH PRs this run; the cursor advances so a re-run continues).
+     **With no `--limit`, the server caps the run at `analyze.maxPrsPerRun` (default 30)** — a per-session
+     cost guard. So a bare `/plex:analyze` does up to ~30 PRs; re-run to continue, or pass `--limit` to override.
    - `--reset` → `reset: true` (re-scan from scratch; incident dedup still prevents duplicates).
    - `--all` → `state: 'all'` (include unmerged PRs; default `merged`).
    It returns `clusters` (each: `id`, `size`, `suggestedCategory`, `incidentIds`, `comments[]` with

@@ -13,7 +13,7 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   (`ReviewRound`, `PrComment`, `AttributedChange`).
 - `src/config.ts` — `ReviewerConfig` + `defaultConfig` + `resolveConfig(overrides)` (deep-merges
   each section). Notable defaults: `dataDir: ''` (centralized), `embedding.provider: 'none'`,
-  `analyze.clusterThreshold: 0.8`, `autoComment: false`,
+  `analyze.clusterThreshold: 0.8`, `analyze.maxPrsPerRun: 30` (per-`/plex:analyze`-run cost guard; explicit `--limit` overrides, ADR-51), `autoComment: false`,
   `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`,
   `suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 }` (ADR-41),
   `decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 }` (positive-pitfall decay, ADR-42).

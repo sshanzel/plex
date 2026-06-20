@@ -28,7 +28,7 @@ const substantive = (pr: number, id: string): RawComment => ({
   prMerged: true,
   body: 'a real, substantive review comment about validating the tenant id on this query',
 });
-const config = resolveConfig({ analyze: { maxPrs: 100, clusterThreshold: 0.8, minClusterSize: 1 } });
+const config = resolveConfig({ analyze: { maxPrs: 100, clusterThreshold: 0.8, minClusterSize: 1, maxPrsPerRun: 30 } });
 
 describe('scanHistory', () => {
   it('widens the fetch window for order:oldest so it reaches the chronological start (ADR-51 parity)', async () => {
@@ -44,6 +44,21 @@ describe('scanHistory', () => {
     await scanHistory(store(), new FakeEmbeddingProvider(), config, { cwd: '/x', order: 'newest', fetch });
     expect(maxPrsSeen[0]).toBeGreaterThanOrEqual(1000); // oldest widens past the default cap → reaches PR #1
     expect(maxPrsSeen[1]).toBe(100); // newest uses the configured cap
+  });
+
+  it('caps fresh PRs at maxPrsPerRun when no explicit --limit (per-run cost guard, ADR-51)', async () => {
+    const fetch = {
+      listPrs: async (): Promise<PrRef[]> => [1, 2, 3, 4, 5].map((n) => ({ number: n, mergedAt: `2026-01-0${n}` })),
+      fetchCommentsForPr: async (_c: string, pr: PrRef): Promise<RawComment[]> => [substantive(pr.number, `c${pr.number}`)],
+    };
+    const capped = resolveConfig({ analyze: { maxPrs: 100, clusterThreshold: 0.8, minClusterSize: 1, maxPrsPerRun: 2 } });
+    // No `limit` passed → the cap bounds it to 2 (oldest-first); re-running would continue at #3.
+    const r = await scanHistory(store(), new FakeEmbeddingProvider(), capped, { cwd: '/x', order: 'oldest', fetch });
+    expect(r.prsScanned).toBe(2);
+    expect(r.scannedPrs).toEqual([1, 2]);
+    // An explicit --limit OVERRIDES the cap (the user's deliberate choice).
+    const r2 = await scanHistory(store(), new FakeEmbeddingProvider(), capped, { cwd: '/x', order: 'oldest', limit: 4, fetch });
+    expect(r2.prsScanned).toBe(4);
   });
 
   it('limit bounds the fresh PRs this run, oldest-first; the cursor advances', async () => {

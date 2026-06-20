@@ -55,7 +55,10 @@ export async function scanHistory(
   const all = await api.listPrs({ cwd: opts.cwd, maxPrs, state: opts.state });
   const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
   const unscanned = ordered.filter((p) => !skip.has(p.number));
-  const fresh = opts.limit != null ? unscanned.slice(0, opts.limit) : unscanned;
+  // Per-run cost guard (ADR-51): with no explicit `--limit`, cap fresh PRs at `maxPrsPerRun` so a
+  // bare `/plex:analyze` can't distill an unbounded run; an explicit `--limit` is the user's override.
+  const limit = opts.limit ?? config.analyze.maxPrsPerRun;
+  const fresh = unscanned.slice(0, limit);
 
   const raw: RawComment[] = [];
   for (const pr of fresh) raw.push(...(await api.fetchCommentsForPr(opts.cwd, pr)));

@@ -85,7 +85,7 @@ Switching providers later invalidates the stored vectors, since they are not com
 
 Plex gets sharper as you review, but you can give it a head start. Run **`/plex:analyze`** in your agent (e.g. `/plex:analyze --oldest --limit 50`) and it pulls your past PR review comments, clusters the recurring themes, and distills them into pitfalls anchored to your code — so the reviewer is useful from day one instead of learning from scratch.
 
-Your connected agent does the distilling (no API key, no separate LLM), on the repo your terminal is in. It needs the GitHub CLI (`gh`) authenticated and an embedding key set (see [Embeddings](#embeddings)). It's incremental: re-run to keep working through your history — `--oldest` goes chronologically from your first PRs, drop it for your most recent, `--limit <n>` bounds a run.
+Your connected agent does the distilling (no API key, no separate LLM), on the repo your terminal is in. It needs the GitHub CLI (`gh`) authenticated and an embedding key set (see [Embeddings](#embeddings)). It's incremental and bounded: each run distills up to ~30 fresh PRs by default (a cost guard) and the cursor advances, so just re-run to keep working through your history — `--oldest` goes chronologically from your first PRs, drop it for your most recent, `--limit <n>` overrides the per-run cap.
 
 ## Command-line use (optional)
 
