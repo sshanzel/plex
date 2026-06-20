@@ -1,12 +1,11 @@
-import type { ReviewerConfig, EmbeddingProvider, Incident, CompletionProvider } from '@plex/core';
-import { KnowledgeStore, addOrReinforcePitfall } from '@plex/knowledge';
+import type { ReviewerConfig, EmbeddingProvider, Incident } from '@plex/core';
+import { KnowledgeStore } from '@plex/knowledge';
 import { listPrs, fetchCommentsForPr } from './github';
 import { isSubstantive, categorize } from './classify';
 import { greedyCluster, centroid, adaptiveCosineThreshold } from './cluster';
-import { llmDistill, type ClusterInput } from './distill';
-import { createCompletionProvider } from './llm';
+import type { ClusterInput } from './distill';
 import { outcomeFor } from './outcome';
-import type { RawComment, DistillResult, LearnedLesson } from './types';
+import type { RawComment } from './types';
 
 export interface DistillOptions {
   cwd: string;
@@ -24,8 +23,6 @@ export interface DistillOptions {
     listPrs: typeof listPrs;
     fetchCommentsForPr: typeof fetchCommentsForPr;
   };
-  /** Inject the LLM distiller (defaults to the configured provider) — for tests. */
-  llm?: CompletionProvider;
 }
 
 export interface ScanResult {
@@ -41,7 +38,7 @@ export interface ScanResult {
 
 /**
  * MECHANICAL half of analysis (no LLM): list new PRs, denoise, record provenance incidents, embed,
- * and cluster. Returns clusters for a distiller (standalone `distillHistory` or the MCP agent path).
+ * and cluster. Returns clusters for the connected agent to distill (the MCP `analyze_scan` path).
  */
 export async function scanHistory(
   store: KnowledgeStore,
@@ -51,10 +48,17 @@ export async function scanHistory(
 ): Promise<ScanResult> {
   const api = opts.fetch ?? { listPrs, fetchCommentsForPr };
   const skip = new Set(opts.alreadyScanned ?? []);
-  const all = await api.listPrs({ cwd: opts.cwd, maxPrs: config.analyze.maxPrs, state: opts.state });
+  // `oldest` must reach the chronological start, so widen the fetch window past the default cap (this
+  // lived in the old `plex analyze` CLI handler; it moves here so the MCP `analyze_scan` path keeps it,
+  // ADR-51). Otherwise "oldest" only sorts the most-recent `maxPrs` PRs and never reaches PR #1.
+  const maxPrs = opts.order === 'oldest' ? Math.max(config.analyze.maxPrs, 1000) : config.analyze.maxPrs;
+  const all = await api.listPrs({ cwd: opts.cwd, maxPrs, state: opts.state });
   const ordered = [...all].sort((a, b) => (opts.order === 'oldest' ? a.number - b.number : b.number - a.number));
   const unscanned = ordered.filter((p) => !skip.has(p.number));
-  const fresh = opts.limit != null ? unscanned.slice(0, opts.limit) : unscanned;
+  // Per-run cost guard (ADR-51): with no explicit `--limit`, cap fresh PRs at `maxPrsPerRun` so a
+  // bare `/plex:analyze` can't distill an unbounded run; an explicit `--limit` is the user's override.
+  const limit = opts.limit ?? config.analyze.maxPrsPerRun;
+  const fresh = unscanned.slice(0, limit);
 
   const raw: RawComment[] = [];
   for (const pr of fresh) raw.push(...(await api.fetchCommentsForPr(opts.cwd, pr)));
@@ -100,61 +104,6 @@ export async function scanHistory(
     }));
 
   return { clusters, scannedPrs, prsScanned: fresh.length, comments: raw.length, substantive: substantive.length, incidents };
-}
-
-export interface DistillOutcome {
-  result: DistillResult;
-  scannedPrs: number[];
-}
-
-/** FULL standalone analysis: scan + distill each cluster with the configured LLM + store pitfalls. */
-export async function distillHistory(
-  store: KnowledgeStore,
-  embed: EmbeddingProvider,
-  config: ReviewerConfig,
-  opts: DistillOptions,
-): Promise<DistillOutcome> {
-  const scan = await scanHistory(store, embed, config, opts);
-  const llm = opts.llm ?? createCompletionProvider(config.llm);
-  if (!llm) {
-    throw new Error(
-      `Analysis requires an LLM distiller (ADR-20). Provider '${config.llm.provider}' is unavailable — ` +
-        `the 'claude' CLI isn't installed or the API key is missing. Set PLEX_LLM_PROVIDER (claude-cli|anthropic|openai).`,
-    );
-  }
-
-  let pitfalls = 0;
-  let reinforced = 0;
-  let skipped = 0;
-  const learned: LearnedLesson[] = [];
-  for (const cl of scan.clusters) {
-    const pitfall = await llmDistill(cl, llm);
-    if (!pitfall) {
-      skipped++;
-      continue;
-    }
-    // Semantic match-or-reinforce: a re-phrased recurrence reinforces an existing principle instead of minting a near-duplicate.
-    const r = await addOrReinforcePitfall(store, pitfall);
-    if (r.action === 'minted') pitfalls++;
-    else reinforced++;
-    learned.push({ title: r.title, scope: r.scope, incidents: r.incidents, files: r.files, action: r.action });
-  }
-
-  return {
-    result: {
-      prsScanned: scan.prsScanned,
-      comments: scan.comments,
-      substantive: scan.substantive,
-      clusters: scan.clusters.length,
-      pitfalls,
-      reinforced,
-      skipped,
-      incidents: scan.incidents,
-      distiller: llm.name,
-      learned,
-    },
-    scannedPrs: scan.scannedPrs,
-  };
 }
 
 export { categorize };

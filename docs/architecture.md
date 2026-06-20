@@ -23,7 +23,7 @@ Everything is **embedded** (Kùzu + JSON files) — no Docker, no services (ADR-
 | Store | Tech / location | Scope | Holds | Why this tech |
 |---|---|---|---|---|
 | **Code graph** ("the map") | Kùzu · `~/.plex/repos/<id>/graph.kuzu` | per-repo, durable | `File`/`Symbol` nodes; `Imports`, `Refs` (precise TS alias-resolved), `Declares`, `CoChange` (git, weighted+decayed) edges | needs **multi-hop** traversal (blast radius = follow edges) → a real graph DB |
-| **PR brain** ("working memory") | Kùzu · `~/.plex/repos/<id>/brain.kuzu` | per-repo, per **target** | `Round`/`Finding`/`Verdict`/`Comment` nodes keyed by `<repo>__pr_N` | structured per-PR state queried by target; embedded, same engine as the graph |
+| **PR brain** ("working memory") | JSONL · `~/.plex/repos/<baseId>/lineage/<target>.jsonl` | per **base repo**, per **target** | append-only `round`/`finding`/`verdict`/`comment`/`outcome` events, folded by `foldLineage` | durable append-only lineage; base-keyed so it survives `git worktree remove` — a review opens Kùzu only for the code graph (ADR-46) |
 | **Knowledge base** ("the learning") | JSON/JSONL · `~/.plex/knowledge/` | **global** (cross-repo) | `Pitfall`s (+embeddings, confidence) ← `Incident`s (provenance); `scope: global \| repo` | needs **semantic** retrieval, not multi-hop → flat store + embeddings (ADR-18) |
 | **Steering / logs** | markdown + JSONL · in-repo / `~/.plex/repos/<id>/` | per-repo | `plex.md` (human rules), `verdicts.jsonl` (waivers), `log/events.jsonl` (attribution) | human-editable + greppable |
 
@@ -39,7 +39,7 @@ Everything is **embedded** (Kùzu + JSON files) — no Docker, no services (ADR-
  (local /   │  (diff vs base)  ──►  BFS blast radius   ──►   relevant pitfalls (sem.) ─► built-in/ext   │
   gh PR)    │  + change context    (multi-hop over edges)                                              │
             │                                                                                          │
-            │  PR brain (Kùzu): record round · ingest PR comments · changed-without-feedback ·         │
+            │  PR brain (JSONL lineage): record round · ingest PR comments · changed-without-feedback ·│
             │                    auto-accept fixes from prior rounds                                   │
             └──────────────────────────────────┬───────────────────────────────────────────────────-─┘
                                                 ▼  get_review_context  (assembled bundle)
@@ -104,9 +104,9 @@ The knowledge base is the learned engine — populated by analyzing PR history a
 | `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
 | `knowledge` | embeddings, JSON store, semantic retrieval, outcome consolidation (ADR-18) | ✅ |
-| `distill` | gh PR-history → denoise → cluster → distill → pitfalls; incremental cursor (ADR-11/20) | ✅ |
-| `engine` | orchestration: index, assemble context, **Kùzu PR brain**, rank, verdicts, knowledge, reconcile, setup | ✅ |
+| `distill` | gh PR-history → denoise → cluster (the connected agent distills via `analyze_scan`); incremental cursor (ADR-11/20/51) | ✅ |
+| `engine` | orchestration: index, assemble context, **JSONL PR brain**, rank, verdicts, knowledge, reconcile, setup | ✅ |
 | `mcp-server` | the 14-tool MCP surface | ✅ |
-| `cli` | `init · doctor · index · review · reconcile · blast · verdict · consolidate · analyze` | ✅ |
+| `cli` | `init · index · serve · sweep` (setup + maintenance; the review + analyze run in the agent) | ✅ |
 
-> **Embedded, no services (ADR-30):** the brain is Kùzu, not FalkorDB — no Docker. Per-repo data lives outside the repo at `~/.plex/repos/<id>/`. Embeddings are **optional** (they add semantic knowledge + the semantic review signals). Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19). The multi-repo workspace is intentionally **out of scope**.
+> **Embedded, no services (ADR-30):** the brain is durable JSONL (ADR-46), not FalkorDB — no Docker; a review opens Kùzu only for the code graph. Per-repo data lives outside the repo at `~/.plex/repos/<id>/`. Embeddings are **optional** (they add semantic knowledge + the semantic review signals). Build/run: `pnpm build` then `pnpm start:mcp` (node — stable with the Kùzu addon; ADR-17/19). The multi-repo workspace is intentionally **out of scope**.

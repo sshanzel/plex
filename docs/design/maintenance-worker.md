@@ -13,7 +13,9 @@ Every deferred Plex job runs only on a manual command, and nobody runs commands 
 - **Knowledge consolidation** — ADR-42's positive-path **decay + pruning** only take effect when
   `consolidatePitfalls` runs, i.e. `plex consolidate`. Nobody runs it → the decay ships **dormant**.
 - **Base-graph freshness** — `main`'s code graph drifts; branch/worktree copies seed from a stale base.
-- **Review-history analysis** — distilling merged PRs into pitfalls is a manual `plex analyze`.
+
+(Review-history analysis is **not** a worker job: distillation is agent-only — `/plex:analyze` — since
+the detached worker can't call back into the connected agent that does the reasoning, ADR-51.)
 
 The hard constraint: the PR brain is **per-machine, path-keyed** (`<repo-data>/brain.kuzu`). A CI runner
 is a *different machine with an empty brain*, so CI closure is structurally impossible, and a shared
@@ -50,8 +52,10 @@ the lock. Each job is best-effort and idempotent:
    SIGSEGVs Kùzu (ADR-17), the exact reason the review uses an isolated child.
 3. **Consolidate.** Run `consolidateKnowledge` → ADR-42 decay + pruning on the global KB. **Without this
    job ADR-42 is dormant.** Cadence-gated (≈6h).
-4. **Analyze.** `analyzeRepo` incrementally — gated on a real embedding provider + an LLM (else
-   skipped). The heaviest job (tokens); cadence-gated (daily), runs last.
+
+(There were originally **four** jobs; the fourth — incremental `analyzeRepo` — was removed when the
+standalone distiller was deleted: distillation is agent-only via `/plex:analyze`, ADR-51. The worker
+now runs **three** jobs.)
 
 ## Triggers — two modes
 

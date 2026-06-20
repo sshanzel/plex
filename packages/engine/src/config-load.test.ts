@@ -9,7 +9,7 @@ import { writeHomeConfig } from './home-config';
 // REAL home config via os.homedir(), so every test sandboxes $HOME to a temp dir (verified:
 // os.homedir() honors $HOME here) and clears PLEX_* env — otherwise results leak from the
 // dev machine. No Kùzu → vitest-safe.
-const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_LLM_PROVIDER', 'PLEX_LLM_MODEL', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS', 'PLEX_DECAY_HALFLIFE_DAYS', 'PLEX_DECAY_RETRIEVAL_TILT_FLOOR', 'PLEX_DECAY_PRUNE_FLOOR', 'PLEX_DECAY_PRUNE_MIN_AGE_DAYS', 'PLEX_UI_AUTOSTART', 'PLEX_UI_PORT'];
+const ENV = ['PLEX_DATA_DIR', 'PLEX_KNOWLEDGE_DIR', 'PLEX_EMBEDDING_PROVIDER', 'PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS', 'PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS', 'PLEX_DECAY_HALFLIFE_DAYS', 'PLEX_DECAY_RETRIEVAL_TILT_FLOOR', 'PLEX_DECAY_PRUNE_FLOOR', 'PLEX_DECAY_PRUNE_MIN_AGE_DAYS', 'PLEX_UI_AUTOSTART', 'PLEX_UI_PORT'];
 let home: string;
 let saved: Record<string, string | undefined>;
 
@@ -36,7 +36,6 @@ describe('loadConfig precedence', () => {
     const c = loadConfig();
     expect(c.dataDir).toBe('');
     expect(c.embedding.provider).toBe('none');
-    expect(c.llm.provider).toBe('claude-cli');
   });
 
   it('surfaces an embedding provider + key written to ~/.plex/config.json', () => {
@@ -54,13 +53,6 @@ describe('loadConfig precedence', () => {
     expect(c.embedding.apiKey).toBe('k'); // not dropped by the env override
   });
 
-  it('PLEX_LLM_MODEL alone keeps the home llm provider', () => {
-    writeHomeConfig({ llm: { provider: 'anthropic' } });
-    process.env.PLEX_LLM_MODEL = 'claude-x';
-    const c = loadConfig();
-    expect(c.llm.provider).toBe('anthropic');
-    expect(c.llm.model).toBe('claude-x');
-  });
 
   it('env scalars apply (PLEX_DATA_DIR), and explicit overrides beat env', () => {
     process.env.PLEX_DATA_DIR = 'Y';

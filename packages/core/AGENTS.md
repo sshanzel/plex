@@ -13,7 +13,7 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   (`ReviewRound`, `PrComment`, `AttributedChange`).
 - `src/config.ts` — `ReviewerConfig` + `defaultConfig` + `resolveConfig(overrides)` (deep-merges
   each section). Notable defaults: `dataDir: ''` (centralized), `embedding.provider: 'none'`,
-  `llm.provider: 'claude-cli'`, `analyze.clusterThreshold: 0.8`, `autoComment: false`,
+  `analyze.clusterThreshold: 0.8`, `analyze.maxPrsPerRun: 30` (per-`/plex:analyze`-run cost guard; explicit `--limit` overrides, ADR-51), `autoComment: false`,
   `reviewPlan: { minFiles: 6, minSurface: 150, maxAgents: 5, minClusterFiles: 2 }`,
   `suppression: { rejectHalfLifeDays: 30, waiveHalfLifeDays: 365 }` (ADR-41),
   `decay: { halfLifeDays: 365, retrievalTiltFloor: 0.5, pruneFloor: 0.1, pruneMinAgeDays: 365 }` (positive-pitfall decay, ADR-42).
@@ -21,8 +21,7 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   retry policy (retry a never-forked SPAWN failure under fork-storm, never a non-zero EXIT). Lives here
   so `@plex/ingest` (`runGit`) and `@plex/code-graph` (`headSha`) can't drift apart — the audit found
   code-graph's `headSha` was an un-retried twin of the one ingest had hardened.
-- `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) and `CompletionProvider`
-  (offline analysis only, ADR-02/20) interfaces, plus pure helpers: `safeEmbed` (cap + chunk +
+- `src/providers.ts` — `EmbeddingProvider` (text → vector; ADR-13) interface, plus pure helpers: `safeEmbed` (cap + chunk +
   **result-length check** + null-on-failure so callers degrade instead of failing — a provider that
   returns a different count than its input would silently misalign every `vecs[i]`), `cosineSimilarity`,
   `isGeneratedArtifact` (lockfiles/minified bundles/source maps/snapshots — the
@@ -61,7 +60,6 @@ made self-ignoring by `ensureDataDir` (a `.gitignore` of `*` inside).
   default).
 - `EmbeddingConfig.apiKeyEnv` is preferred over `apiKey` (keeps secrets out of serialized config);
   `apiKey` exists for the `~/.plex/config.json` flow (ADR-29).
-- Generative LLMs are not embedding models — `LlmConfig` is for the analysis distiller only.
 - Keep this package pure (no I/O, no deps): the scoring/threshold helpers here are unit-testable
   precisely because of that.
 

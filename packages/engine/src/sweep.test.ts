@@ -76,7 +76,7 @@ describe('isDebounced — at most one sweep per interval per data dir', () => {
   });
 });
 
-describe('jobDue — cadence gate for the cheap/heavy periodic jobs (consolidate, analyze)', () => {
+describe('jobDue — cadence gate for the cheap/heavy periodic jobs (consolidate)', () => {
   const NOW = Date.parse('2026-06-01T12:00:00.000Z');
   const SIX_H = 6 * 60 * 60 * 1000;
   it('is due when it has never run', () => {

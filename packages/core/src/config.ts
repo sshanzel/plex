@@ -24,15 +24,6 @@ export interface CoChangeConfig {
   maxCommits: number;
 }
 
-/** Generative LLM used ONLY by the offline analysis/distillation pipeline (ADR-02). */
-export type LlmProviderName = 'heuristic' | 'claude-cli' | 'anthropic' | 'openai';
-export interface LlmConfig {
-  provider: LlmProviderName;
-  model?: string;
-  apiKeyEnv?: string;
-  baseUrl?: string;
-}
-
 export interface AnalyzeConfig {
   /** Merged PRs to scan, most recent first (0 = as many as gh returns). */
   maxPrs: number;
@@ -44,6 +35,13 @@ export interface AnalyzeConfig {
   clusterThreshold: number;
   /** Minimum cluster size sent to the distiller. Default 1: the LLM is the quality gate (SKIPs non-lessons). */
   minClusterSize: number;
+  /**
+   * Default cap on FRESH (unscanned) PRs distilled per `/plex:analyze` run — the per-session cost guard
+   * (the agent distills every cluster, so an unbounded run can burn a lot of tokens). Applied when no
+   * explicit `--limit` is passed; an explicit `--limit` overrides it. The incremental cursor advances,
+   * so re-running continues from where the last run stopped.
+   */
+  maxPrsPerRun: number;
 }
 
 export interface ReviewerConfig {
@@ -63,8 +61,6 @@ export interface ReviewerConfig {
     /** Minimum aggregate coupling score to include a neighbor. */
     minScore: number;
   };
-  /** Generative LLM for analysis/distillation (offline only). */
-  llm: LlmConfig;
   analyze: AnalyzeConfig;
   /** Post ranked findings back to a reviewed GitHub PR (deduped per round). Off by default; non-PR reviews never post. */
   autoComment: boolean;
@@ -127,16 +123,11 @@ export const defaultConfig: ReviewerConfig = {
     maxNeighbors: 40,
     minScore: 0.05,
   },
-  llm: {
-    // Analysis distillation is LLM-only (ADR-20); default to the local `claude` CLI (subscription, no key).
-    provider: 'claude-cli',
-    model: 'claude-haiku-4-5-20251001',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-  },
   analyze: {
     maxPrs: 100,
     clusterThreshold: 0.8, // <~0.7 sinks everything into one cluster (see AnalyzeConfig)
     minClusterSize: 1,
+    maxPrsPerRun: 30, // per-run cost guard; an explicit `--limit` overrides (ADR-51)
   },
   autoComment: false,
   autoCommentSkipNits: false,
@@ -153,7 +144,6 @@ export function resolveConfig(overrides: Partial<ReviewerConfig> = {}): Reviewer
     embedding: { ...defaultConfig.embedding, ...overrides.embedding },
     coChange: { ...defaultConfig.coChange, ...overrides.coChange },
     neighborhood: { ...defaultConfig.neighborhood, ...overrides.neighborhood },
-    llm: { ...defaultConfig.llm, ...overrides.llm },
     analyze: { ...defaultConfig.analyze, ...overrides.analyze },
     reviewPlan: { ...defaultConfig.reviewPlan, ...overrides.reviewPlan },
     suppression: { ...defaultConfig.suppression, ...overrides.suppression },

@@ -1,12 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
-import type { EmbeddingProviderName, LlmProviderName } from '@plex/core';
+import type { EmbeddingProviderName } from '@plex/core';
 
 /** Persistent global config at `~/.plex/config.json` (chmod 600 — it can hold an API key). Env vars override it. */
 export interface HomeConfig {
   embedding?: { provider?: EmbeddingProviderName; apiKey?: string; model?: string };
-  llm?: { provider?: LlmProviderName; model?: string };
   /** Learned-suppression recency-decay half-lives (ADR-41). */
   suppression?: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number };
   /** Positive-pitfall recency-decay knobs (ADR-42). */
@@ -33,7 +32,6 @@ export function writeHomeConfig(patch: HomeConfig): HomeConfig {
     ...current,
     ...patch,
     embedding: { ...current.embedding, ...patch.embedding },
-    llm: { ...current.llm, ...patch.llm },
     suppression: { ...current.suppression, ...patch.suppression },
     decay: { ...current.decay, ...patch.decay },
     ui: { ...current.ui, ...patch.ui },

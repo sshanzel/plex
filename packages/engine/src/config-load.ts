@@ -3,7 +3,6 @@ import {
   defaultConfig,
   type ReviewerConfig,
   type EmbeddingProviderName,
-  type LlmProviderName,
 } from '@plex/core';
 import { readHomeConfig } from './home-config';
 
@@ -27,7 +26,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
       ...(home.embedding.model ? { model: home.embedding.model } : {}),
     };
   }
-  if (home.llm?.provider) o.llm = { provider: home.llm.provider, ...(home.llm.model ? { model: home.llm.model } : {}) };
   // Suppression half-lives (ADR-41). Collect home values; env may override below.
   const supp: { rejectHalfLifeDays?: number; waiveHalfLifeDays?: number } = {};
   if (typeof home.suppression?.rejectHalfLifeDays === 'number') supp.rejectHalfLifeDays = home.suppression.rejectHalfLifeDays;
@@ -45,12 +43,6 @@ export function loadConfig(overrides: Partial<ReviewerConfig> = {}): ReviewerCon
   if (env.PLEX_AUTO_COMMENT_SKIP_NITS) o.autoCommentSkipNits = /^(1|true|yes)$/i.test(env.PLEX_AUTO_COMMENT_SKIP_NITS);
   if (env.PLEX_EMBEDDING_PROVIDER) {
     o.embedding = { ...(o.embedding ?? {}), provider: env.PLEX_EMBEDDING_PROVIDER as EmbeddingProviderName };
-  }
-  if (env.PLEX_LLM_PROVIDER || env.PLEX_LLM_MODEL) {
-    o.llm = {
-      provider: (env.PLEX_LLM_PROVIDER as LlmProviderName) ?? o.llm?.provider ?? 'claude-cli',
-      ...(env.PLEX_LLM_MODEL ? { model: env.PLEX_LLM_MODEL } : o.llm?.model ? { model: o.llm.model } : {}),
-    };
   }
   const reEnv = numEnv(env.PLEX_SUPPRESSION_REJECT_HALFLIFE_DAYS);
   const waEnv = numEnv(env.PLEX_SUPPRESSION_WAIVE_HALFLIFE_DAYS);

@@ -39,9 +39,7 @@ export {
   consolidateKnowledge,
   loadSuppressions,
 } from './knowledge';
-export { reviewContextToHtml } from './viz';
 export {
-  analyzeRepo,
   scanForAnalysis,
   addAnalyzedPitfalls,
   refreshAnalyzedOutcomes,
@@ -55,6 +53,6 @@ export type {
   AgentPitfall,
   RefreshOutcomesResult,
 } from './analyze';
-export type { DistillResult, LearnedLesson } from '@plex/distill';
+export type { LearnedLesson } from '@plex/distill';
 export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
 export type { StoredVerdict, VerdictInput, WaiverIdentity } from './verdicts';

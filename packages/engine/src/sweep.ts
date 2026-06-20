@@ -7,8 +7,7 @@ import { repoPaths } from './paths';
 import { Brain } from './brain';
 import { diffSourceFromTarget } from './target';
 import { reconcileOutcomes } from './reconcile';
-import { consolidateKnowledge, embeddingReady } from './knowledge';
-import { analyzeRepo } from './analyze';
+import { consolidateKnowledge } from './knowledge';
 import { indexIsolated, readIndexedSha, resolveMainRepoPath } from './review';
 import { CLOSED_TARGET, deadPrSentinel, headAdvanced, isDeadTarget, isPidAlive, jobDue } from './sweep-helpers';
 
@@ -17,7 +16,7 @@ export { headAdvanced, isDebounced, jobDue } from './sweep-helpers';
 
 /**
  * The background maintenance worker (ADR-43): spawned detached by ordinary Plex activity
- * (`maybeSpawnSweep`), it maintains `main` (resolved from any worktree) via four jobs against main's
+ * (`maybeSpawnSweep`), it maintains `main` (resolved from any worktree) via three jobs against main's
  * centralized + durable data dir. Each job is idempotent under sequential re-runs (cursors +
  * `submitVerdict` dedup), so a sweep can fire as often as the debounce allows. The single-flight lock
  * keeps runs sequential; its steal path is best-effort (not a distributed mutex), so a rare double-run is
@@ -25,14 +24,13 @@ export { headAdvanced, isDebounced, jobDue } from './sweep-helpers';
  */
 
 const CONSOLIDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // recompute decay/prune at most every 6h
-const ANALYZE_INTERVAL_MS = 24 * 60 * 60 * 1000; // distil new merged PRs at most daily (heaviest job)
 const STALE_LOCK_MS = 30 * 60 * 1000; // a lock older than this is from a crashed sweep — steal it
 
 export interface SweepState {
   repo: string;
   /** Per reconcile-target: the head sha we last swept it at (head unchanged → skip). */
   cursors: Record<string, string>;
-  /** Per cadence-gated job: ISO ts of its last run (consolidate / analyze). */
+  /** Per cadence-gated job: ISO ts of its last run (consolidate). */
   jobs: Record<string, string>;
 }
 
@@ -223,21 +221,6 @@ async function consolidateJob(ctx: JobCtx): Promise<JobResult> {
   return { name: 'consolidate', ran: true, detail: `reinforced ${r.reinforced}/${r.pitfalls}, pruned ${r.pruned}` };
 }
 
-/** Job 4 — incremental analyze: distil newly-merged PR review history into pitfalls. Gated on a real
- *  embedding provider + an LLM being available; the heaviest job (tokens), so it runs last + daily. */
-async function analyzeJob(ctx: JobCtx): Promise<JobResult> {
-  const { mainRepoPath, config, now, state } = ctx;
-  if (!embeddingReady(config)) return { name: 'analyze', ran: false, detail: 'no embeddings — skipped' };
-  if (!jobDue(state.jobs.analyze, now.getTime(), ANALYZE_INTERVAL_MS)) return { name: 'analyze', ran: false, detail: 'ran recently' };
-  try {
-    const r = await analyzeRepo(mainRepoPath, config);
-    state.jobs.analyze = now.toISOString(); // only stamp on success
-    return { name: 'analyze', ran: true, detail: `scanned ${r.totalScanned} PR(s)` };
-  } catch (e) {
-    return { name: 'analyze', ran: false, detail: `skipped: ${errMsg(e)}` }; // no LLM / rate limit → degrade
-  }
-}
-
 /**
  * Run the maintenance jobs against `main` (resolved from `repoPath`). Single-flight + best-effort: each
  * job is isolated in try/catch (one failing never blocks the next), and the whole run never throws.
@@ -251,7 +234,7 @@ export async function sweepRepo(repoPath: string, config: ReviewerConfig, now: D
   try {
     const state = loadSweepState(p.sweepStateFile, repo);
     const ctx: JobCtx = { mainRepoPath, cwd: p.repoPath, config, now, state };
-    const jobs = [reconcileJob, graphFreshnessJob, consolidateJob, analyzeJob];
+    const jobs = [reconcileJob, graphFreshnessJob, consolidateJob];
     const results: JobResult[] = [];
     let busy = false;
     for (const job of jobs) {

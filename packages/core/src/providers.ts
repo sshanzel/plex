@@ -1,6 +1,5 @@
 /**
- * Pluggable provider interfaces (ADR-13). Generative LLMs are NOT embedding models — an embedding
- * provider must wrap an actual embedding endpoint.
+ * Pluggable provider interfaces (ADR-13). The embedding provider must wrap an actual embedding endpoint.
  */
 import { createHash } from 'node:crypto';
 
@@ -10,12 +9,6 @@ export interface EmbeddingProvider {
   readonly dimensions: number;
   /** Embed a batch of texts; result[i] corresponds to texts[i]. */
   embed(texts: string[]): Promise<number[][]>;
-}
-
-/** Generative completion, used ONLY by the offline analysis/distillation pipeline (ADR-02), never the interactive review. */
-export interface CompletionProvider {
-  readonly name: string;
-  complete(prompt: string, opts?: { system?: string; maxTokens?: number }): Promise<string>;
 }
 
 /** URL/id-safe slug: lowercase, non-alphanumerics → '-', trimmed, capped. */
