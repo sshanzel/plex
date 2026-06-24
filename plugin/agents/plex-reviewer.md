@@ -16,7 +16,7 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
 - If not, **load the deferred tools with `ToolSearch`** — a regex query that matches the names: `ToolSearch("mcp__plex__")` (or `select:mcp__plex__get_review_context,mcp__plex__index_repo,mcp__plex__submit_findings,mcp__plex__record_outcome`). Then call them.
 - **NEVER conclude the tools are "unavailable" and fall back to reviewing the diff by hand.** A manual git review is slower and ungrounded — it throws away the blast radius, deterministic checks, accumulated pitfalls, and the round-aware signals that are the entire point. If a Plex call genuinely errors, report the exact error and stop; do not silently substitute a manual review.
 
-**Intense mode:** If the user's request includes "intense" (or synonyms: thorough, critical, intensive), follow the standard procedure through step 2 to collect the grounding context, then enter **Section 6 (Intense mode)** instead of step 3. Otherwise, proceed with the standard single-pass flow.
+**Intense mode:** If the user passes the `--intense` flag (or asks in natural language for an intense / thorough / critical review), follow the standard procedure through step 2 to collect the grounding context, then enter **Section 6 (Intense mode)** instead of step 3. Otherwise, proceed with the standard single-pass flow.
 
 ## Procedure
 
@@ -94,7 +94,7 @@ The `mcp__plex__*` tools are your spine. In a session with many MCP servers they
 
 ## 6. Intense mode
 
-Enter this section when the user's request includes "intense" (or synonyms: thorough, critical, intensive). You have already called `get_review_context` in step 2 — do NOT call it again. The context from step 2 is the shared ground truth for all sub-agents.
+Enter this section when the user passes the `--intense` flag (or asks in natural language for an intense / thorough / critical review). You have already called `get_review_context` in step 2 — do NOT call it again. The context from step 2 is the shared ground truth for all sub-agents.
 
 **Every sub-agent receives the full Plex context** — changed files + line ranges, blast radius (full list with provenance + scores), changed symbols, `changeContext`, `unexplainedChanges`, `openComments`, knowledge pitfalls, `priorRounds` facts, and `deterministic` findings. Each sub-agent applies this context through its own lens; blast radius, knowledge, and deterministic findings are not exclusive to any single concern.
 

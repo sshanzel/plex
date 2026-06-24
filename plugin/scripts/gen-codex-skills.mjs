@@ -42,18 +42,18 @@ facts; you provide the reasoning.
   the entire point. If a Plex call genuinely errors, report the exact error and stop; never
   silently substitute a manual review.
 
-**Intense mode:** If the user's request includes "intense" (or synonyms: thorough, critical,
-intensive), follow the standard procedure through step 2 to collect the grounding context, then
-enter the **Intense mode** section below instead of step 3. In Codex, intense mode runs
-sequentially through each concern rather than fanning out sub-agents.
+**Intense mode:** If the user passes the \`--intense\` flag (or asks in natural language for an
+intense / thorough / critical review), follow the standard procedure through step 2 to collect the
+grounding context, then enter the **Intense mode** section below instead of step 3. In Codex,
+intense mode runs sequentially through each concern rather than fanning out sub-agents.
 `;
 
 // Codex-neutral replacement for the "## 6. Intense mode" section — no Agent tool in Codex,
 // so it becomes a sequential structured sweep through each concern in order.
 const CODEX_INTENSE_SECTION = `## 6. Intense mode (Codex: sequential concern sweep)
 
-Enter this section when the user's request includes "intense" (or synonyms: thorough, critical,
-intensive). You have already called \`get_review_context\` in step 2 — do NOT call it again.
+Enter this section when the user passes the \`--intense\` flag (or asks in natural language for an
+intense / thorough / critical review). You have already called \`get_review_context\` in step 2 — do NOT call it again.
 
 Since Codex does not support parallel sub-agents, run each concern sweep **in order**,
 collecting findings as you go. Use the \`Read\` tool to inspect actual file contents at every
@@ -127,7 +127,7 @@ const written = [];
 {
   const name = 'plex-review';
   const description =
-    'Run a fresh-context, unbiased Plex code review of the current changes — grounded in the blast-radius code graph, deterministic checks, and accumulated review knowledge via the plex MCP. Use when the user asks to review a diff/branch/PR with Plex, or when a unit of work is complete and ready for review (a finished feature/branch, opening a PR, before a push). On-demand, not after every edit — a full review takes minutes. Include "intense" in the request to run a sequential concern sweep (Security → Correctness → Test Coverage → Line-by-Line) for high-stakes or large changes.';
+    'Run a fresh-context, unbiased Plex code review of the current changes — grounded in the blast-radius code graph, deterministic checks, and accumulated review knowledge via the plex MCP. Use when the user asks to review a diff/branch/PR with Plex, or when a unit of work is complete and ready for review (a finished feature/branch, opening a PR, before a push). On-demand, not after every edit — a full review takes minutes. Pass the `--intense` flag (or ask for an intense/thorough review) to run a sequential concern sweep (Security → Correctness → Test Coverage → Line-by-Line) for high-stakes or large changes.';
   let body = stripFrontmatter(readFileSync(join(ROOT, 'agents', 'plex-reviewer.md'), 'utf8'));
   // Replace the whole Claude-specific "## 0. Load the Plex tools FIRST …" section up to the next header.
   body = body.replace(/## 0\. Load the Plex tools FIRST[\s\S]*?(?=\n## )/, CODEX_SECTION_0);

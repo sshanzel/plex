@@ -1,8 +1,8 @@
 # Design note — intense mode (concern-focused sub-agent review)
 
-**Status:** implemented. Shipped as `intense` mode inside `plex-reviewer` — invoked with
-`/plex:review intense` or by including "intense" (or: thorough, critical, intensive) in the
-review request.
+**Status:** implemented. Shipped as `intense` mode inside `plex-reviewer` — invoked with the
+`--intense` flag (`/plex:review --intense`) or by asking in natural language for an intense
+(or: thorough, critical, intensive) review.
 
 **Supersedes:** `docs/design/parallel-review.md` (parallel-by-coupling-cluster, retired — the
 cluster-fan-out never fired in practice because real changes are tightly coupled; a single

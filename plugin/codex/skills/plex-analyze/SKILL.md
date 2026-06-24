@@ -32,6 +32,8 @@ configures (its `.mcp.json` launches `@sshanzel/plex` via `npx`). Plex does the 
 1. **Scan.** Call `mcp__plex__analyze_scan`. Map the user's `$ARGUMENTS` to its params:
    - `--oldest` → `order: 'oldest'` (chronological, PR #1 up); default is newest-first.
    - `--limit <n>` → `limit: n` (max FRESH PRs this run; the cursor advances so a re-run continues).
+     **With no `--limit`, the server caps the run at `analyze.maxPrsPerRun` (default 30)** — a per-session
+     cost guard. So a bare `/plex:analyze` does up to ~30 PRs; re-run to continue, or pass `--limit` to override.
    - `--reset` → `reset: true` (re-scan from scratch; incident dedup still prevents duplicates).
    - `--all` → `state: 'all'` (include unmerged PRs; default `merged`).
    It returns `clusters` (each: `id`, `size`, `suggestedCategory`, `incidentIds`, `comments[]` with
