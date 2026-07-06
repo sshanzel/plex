@@ -57,6 +57,8 @@ export interface BuildResult {
   refs: number;
   coChangePairs: number;
   commits: number;
+  /** Present when a language runtime failed to load and its files were skipped (degraded build). */
+  skippedLanguages?: string[];
 }
 
 /** Raw graph edges of files an update DELETED, captured before their nodes were removed. Raw on
@@ -82,25 +84,30 @@ export interface UpdateResult extends BuildResult {
 /** Reason an incremental update couldn't run and a full rebuild is required. */
 export class FullRebuildRequired extends Error {}
 
-interface ExtractBatch {
+export interface ExtractBatch {
   symbolRows: Record<string, unknown>[];
   declareRows: Record<string, unknown>[];
   importRows: { from: string; to: string }[];
   refRows: { from: string; to: string }[];
+  /** Plugin ids whose runtime failed to load — their files were skipped, and the build must NOT be
+   *  stamped as version-current (the sidecar/version gate then retries until the language heals). */
+  skippedLanguages: string[];
 }
 
 /**
  * Extraction + import resolution shared by the full build and the incremental update: per-file
  * plugin dispatch in the given order (deterministic order keeps `uniqueSymbolId` suffixes stable
  * across re-indexes), then ONE batch `resolve` per plugin (Python needs a whole-fileSet module
- * index before any single import can resolve).
+ * index before any single import can resolve). Exported for unit tests (`resolvePlugin` injectable);
+ * production callers are the two build paths below.
  */
-async function extractAndResolve(
+export async function extractAndResolve(
   repoPath: string,
   rels: readonly string[],
   absByRel: ReadonlyMap<string, string>,
   fileSet: ReadonlySet<string>,
   precise: boolean,
+  resolvePlugin: (file: string) => LanguagePlugin | undefined = pluginFor,
 ): Promise<ExtractBatch> {
   const symbolRows: Record<string, unknown>[] = [];
   const declareRows: Record<string, unknown>[] = [];
@@ -109,7 +116,7 @@ async function extractAndResolve(
   const failedPlugins = new Set<LanguagePlugin>();
 
   for (const rel of rels) {
-    const plugin = pluginFor(rel);
+    const plugin = resolvePlugin(rel);
     if (!plugin || failedPlugins.has(plugin)) continue;
     try {
       await plugin.init?.();
@@ -119,13 +126,16 @@ async function extractAndResolve(
       failedPlugins.add(plugin);
       continue;
     }
-    let text: string;
+    let extracted;
     try {
-      text = await fs.readFile(absByRel.get(rel)!, 'utf8');
+      const text = await fs.readFile(absByRel.get(rel)!, 'utf8');
+      extracted = plugin.extract(rel, text);
     } catch {
+      // Per-file guard, same spirit as uniqueSymbolId: ONE pathological file (unreadable, or an
+      // extractor throw on wasm memory exhaustion etc.) must never abort the whole index.
       continue;
     }
-    const { symbols, imports } = plugin.extract(rel, text);
+    const { symbols, imports } = extracted;
     for (const s of symbols) {
       const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
       symbolRows.push({
@@ -157,7 +167,7 @@ async function extractAndResolve(
     }
     refRows.push(...resolved.refs);
   }
-  return { symbolRows, declareRows, importRows, refRows };
+  return { symbolRows, declareRows, importRows, refRows, skippedLanguages: [...failedPlugins].map((p) => p.id) };
 }
 
 const indexable = (relOrName: string): boolean =>
@@ -255,7 +265,12 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     const sha = await headSha(repoPath);
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'headSha', v: sha });
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'repo', v: repoName });
-    await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'graphVersion', v: GRAPH_VERSION });
+    // A DEGRADED build (a language runtime failed to load, its files skipped) is never stamped
+    // version-current: the absent stamp makes the next incremental throw FullRebuildRequired, so
+    // the graph self-heals the moment the runtime loads again instead of staying silently partial.
+    if (batch.skippedLanguages.length === 0) {
+      await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'graphVersion', v: GRAPH_VERSION });
+    }
 
     return {
       files: relFiles.length,
@@ -264,6 +279,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
       refs: batch.refRows.length,
       coChangePairs,
       commits,
+      ...(batch.skippedLanguages.length > 0 ? { skippedLanguages: batch.skippedLanguages } : {}),
     };
   } finally {
     await db.close();
@@ -299,6 +315,23 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     const relFiles = absFiles.map((f) => path.relative(repoPath, f).split(path.sep).join('/'));
     const fileSet = new Set(relFiles);
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
+
+    // Preflight the language runtimes BEFORE any destructive step: the modified files' symbols are
+    // DETACH-DELETEd below, so a runtime that fails to load mid-update would ERASE them while
+    // headSha still advances. Failing over to the full rebuild keeps the graph consistent (the full
+    // build degrades by skipping the language and withholds the version stamp — see buildCodeGraph).
+    const preflight = new Set<LanguagePlugin>();
+    for (const rel of [...delta.added, ...delta.modified]) {
+      const plugin = pluginFor(rel);
+      if (plugin) preflight.add(plugin);
+    }
+    for (const plugin of preflight) {
+      try {
+        await plugin.init?.();
+      } catch {
+        throw new FullRebuildRequired(`the '${plugin.id}' language runtime failed to load; falling back to a full rebuild`);
+      }
+    }
 
     // 1. Deleted (and rename-from): capture each file's edges FIRST within THIS open (re-opening the
     //    same Kùzu dir later in one process SIGSEGVs — ADR-17), THEN remove the File node + its Symbols.
@@ -415,6 +448,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       coChangePairs,
       commits,
       deletedEdges,
+      ...(batch.skippedLanguages.length > 0 ? { skippedLanguages: batch.skippedLanguages } : {}),
     };
   } finally {
     await db.close();
