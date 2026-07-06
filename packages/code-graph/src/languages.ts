@@ -37,11 +37,13 @@ export const PLUGINS: readonly LanguagePlugin[] = [tsPlugin, pythonPlugin];
 
 const PLUGIN_BY_EXT = new Map(PLUGINS.flatMap((p) => p.exts.map((e) => [e, p] as const)));
 
+// Lowercased to stay aligned with the deterministic gate (@plex/core languageOf, also
+// case-insensitive) — a `foo.PY` must not be analyzed by one layer and invisible to the other.
 export function pluginFor(file: string): LanguagePlugin | undefined {
-  return PLUGIN_BY_EXT.get(path.extname(file));
+  return PLUGIN_BY_EXT.get(path.extname(file).toLowerCase());
 }
 
 /** The indexable-file allowlist: the union of every registered plugin's extensions. */
 export function isSupportedSource(file: string): boolean {
-  return PLUGIN_BY_EXT.has(path.extname(file));
+  return PLUGIN_BY_EXT.has(path.extname(file).toLowerCase());
 }
