@@ -33,7 +33,8 @@ to ADR-52; read that first for the decision and its rejected alternatives.
 | method of a nested class | `Inner.m` | innermost class only |
 | def nested in a function/method body | its plain name | TS parity; `exported: false` |
 | module-level `NAME = lambda …` | `NAME` | kind `const` (the arrow-fn-initializer mirror) |
-| PEP 695 `type X = …` | `X` | kind `type` |
+| PEP 695 `type X = …` (incl. generic `type X[T] = …`) | `X` | kind `type`; the bare identifier, never `X[T]` |
+| def under a module-level `if`/`try` (version guard, ImportError fallback) | its plain name | module-level `exported` semantics; both arms extracted, distinguished by line |
 | decorated definition | — | span starts at the FIRST decorator (changed-line attribution) |
 
 The dotted method name deliberately diverges from the TS analyzer's unqualified `enclosingSymbol`:

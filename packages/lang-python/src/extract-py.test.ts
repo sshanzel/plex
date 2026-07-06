@@ -90,6 +90,76 @@ def unlisted(): pass
     expect(sym(src, 'unlisted')!.exported).toBe(false);
   });
 
+  it('a comment inside a literal __all__ does not discard the list', () => {
+    const src = `__all__ = [
+    "_weird",
+    # section header
+    "other",
+]
+
+def _weird(): pass
+def other(): pass
+def unlisted(): pass
+`;
+    expect(sym(src, '_weird')!.exported).toBe(true);
+    expect(sym(src, 'other')!.exported).toBe(true);
+    expect(sym(src, 'unlisted')!.exported).toBe(false);
+  });
+
+  it('a tuple __all__ works like a list', () => {
+    const src = `__all__ = ("a",)
+
+def a(): pass
+def b(): pass
+`;
+    expect(sym(src, 'a')!.exported).toBe(true);
+    expect(sym(src, 'b')!.exported).toBe(false);
+  });
+
+  it('any non-literal __all__ entry falls back to the underscore convention (no partial trust)', () => {
+    const src = `__all__ = [name, "y"]
+
+def unlisted(): pass
+def _priv(): pass
+`;
+    expect(sym(src, 'unlisted')!.exported).toBe(true); // NOT restricted by the untrusted list
+    expect(sym(src, '_priv')!.exported).toBe(false);
+  });
+
+  it('__all__ += is ignored (literal-only, documented)', () => {
+    const src = `__all__ = ["a"]
+__all__ += ["b"]
+
+def a(): pass
+def b(): pass
+`;
+    expect(sym(src, 'a')!.exported).toBe(true);
+    expect(sym(src, 'b')!.exported).toBe(false);
+  });
+
+  it('conditionally-defined module-level defs keep module-level exported semantics', () => {
+    const src = `import sys
+
+if sys.version_info >= (3, 12):
+    def guarded(): pass
+else:
+    def guarded(): pass
+
+try:
+    from fast import loads
+except ImportError:
+    def loads(s): return s
+
+class _K:
+    pass
+`;
+    const { symbols } = extract(src);
+    const guards = symbols.filter((s) => s.name === 'guarded');
+    expect(guards).toHaveLength(2); // both arms extracted, distinguished by line
+    expect(guards.every((s) => s.exported)).toBe(true);
+    expect(sym(src, 'loads')).toMatchObject({ kind: 'function', exported: true });
+  });
+
   it('module-level lambda assignment is a const (arrow-fn mirror); plain constants are not captured', () => {
     const src = `handler = lambda x: x
 FOO = 1
@@ -102,6 +172,12 @@ _quiet = lambda: None
 
   it('PEP 695 type alias → kind type', () => {
     expect(sym('type Vector = list[float]\n', 'Vector')).toMatchObject({ kind: 'type', exported: true });
+  });
+
+  it('a GENERIC type alias is named by its bare identifier, not `Alias[T]` (ADR-47/48 key contract)', () => {
+    const { symbols } = extract('type Alias[T] = list[T]\n');
+    expect(symbols).toHaveLength(1);
+    expect(symbols[0]).toMatchObject({ name: 'Alias', kind: 'type', exported: true });
   });
 
   it('a broken file extracts recoverable symbols and nothing from ERROR regions', () => {

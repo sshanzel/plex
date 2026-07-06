@@ -4,6 +4,17 @@ import { parsePython } from './parser';
 
 const DOTTED = /^[A-Za-z0-9_.]+$/;
 
+/** Compound statements a def can sit under while still being module-level API (see `visit`). */
+const MODULE_LEVEL_COMPOUNDS = new Set([
+  'if_statement',
+  'elif_clause',
+  'else_clause',
+  'try_statement',
+  'except_clause',
+  'finally_clause',
+  'block',
+]);
+
 /** Literal module-level `__all__ = [...]` (list/tuple of plain strings); undefined when absent.
  *  `__all__ +=`/`.extend()` are deliberately ignored (literal-only). */
 function readDunderAll(module: Node): Set<string> | undefined {
@@ -16,7 +27,9 @@ function readDunderAll(module: Node): Set<string> | undefined {
     if (left?.type !== 'identifier' || left.text !== '__all__') continue;
     if (right?.type !== 'list' && right?.type !== 'tuple') continue;
     const names = new Set<string>();
-    for (const el of right.namedChildren) {
+    // Comments are NAMED list children in tree-sitter (same gotcha as except-block bodies) — a
+    // section-header comment inside a literal __all__ must not discard the whole list.
+    for (const el of right.namedChildren.filter((c) => c.type !== 'comment')) {
       if (el.type !== 'string') return undefined; // non-literal entry — can't trust the list
       const content = el.namedChildren.filter((c) => c.type === 'string_content');
       if (content.length !== 1) return undefined;
@@ -151,7 +164,9 @@ export function extractPythonSource(fileName: string, text: string): ExtractedFi
         return;
       }
       if (node.type === 'type_alias_statement') {
-        const name = node.childForFieldName('left')?.text;
+        // The left `type` node's TEXT includes PEP 695 type params (`Alias[T]`); the symbol is the
+        // bare identifier — anything else breaks __all__ matching and the ADR-47/48 file#name keys.
+        const name = node.childForFieldName('left')?.descendantsOfType('identifier')[0]?.text;
         if (name && atModuleLevel) symbols.push({ name, kind: 'type', ...lines(node), exported: isPublic(name) });
         return;
       }
@@ -164,7 +179,12 @@ export function extractPythonSource(fileName: string, text: string): ExtractedFi
         }
       }
       // Recurse for anything else — imports/defs can live inside try/if/with/function bodies.
-      for (const child of node.namedChildren) visit(child, false, undefined);
+      // Module-levelness survives ONLY through the conditional-definition idioms (a version-guard
+      // `if`/`else`, a `try/except ImportError` fallback): a def there is module-level public API,
+      // so its exported flag must follow __all__/underscore like any top-level def. Loops/with and
+      // function bodies still drop it (function bodies are visited via handleDef, never here).
+      const childLevel = atModuleLevel && MODULE_LEVEL_COMPOUNDS.has(node.type);
+      for (const child of node.namedChildren) visit(child, childLevel, undefined);
     };
 
     visitBlock(root, true);
