@@ -59,6 +59,12 @@ try {
   assert(Number(m[1]) === 3 && Number(m[2]) === 4 && Number(m[3]) === 3,
     `wasm-parsed the repo from the bundle: 3 files, 4 symbols, 3 imports (got ${m[1]}/${m[2]}/${m[3]})`);
 
+  // The healthy index stamps the version sidecar — capture the CURRENT value so the gate asserts
+  // below compare against reality, not a hardcoded version that rots on the next GRAPH_VERSION bump.
+  const versionFile = join(repo, '.plex/graph.version');
+  const CURRENT = readFileSync(versionFile, 'utf8').trim();
+  assert(CURRENT !== '' && CURRENT !== '1', `a healthy index stamped graph.version ('${CURRENT}')`);
+
   const blast = JSON.parse(cli(['blast', repo, '--files', 'src/mypkg/db.py'], repo));
   assert(
     blast.neighbors.some((n) => n.node.id === 'src/mypkg/app.py'),
@@ -77,10 +83,17 @@ try {
 
   // Post-upgrade rollout gate (ADR-52): a stale graph.version sidecar at an UNCHANGED head must
   // still trigger the refresh — sha-drift alone must not be the only trigger.
-  writeFileSync(join(repo, '.plex/graph.version'), '1');
+  writeFileSync(versionFile, '1');
   cli(['review', repo, '--json'], repo);
-  const restored = readFileSync(join(repo, '.plex/graph.version'), 'utf8').trim();
-  assert(restored !== '1', `the version gate refreshed a stale graph at behind=0 (sidecar now '${restored}')`);
+  assert(readFileSync(versionFile, 'utf8').trim() === CURRENT,
+    `the version gate healed a STALE sidecar at behind=0 (restored '${CURRENT}')`);
+
+  // The MISSING-sidecar variant — what every legacy install hits on its first post-upgrade review,
+  // and what a DEGRADED build leaves behind (the self-heal retry path).
+  rmSync(versionFile, { force: true });
+  cli(['review', repo, '--json'], repo);
+  assert(existsSync(versionFile) && readFileSync(versionFile, 'utf8').trim() === CURRENT,
+    `the version gate healed a MISSING sidecar at behind=0 (restored '${CURRENT}')`);
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }

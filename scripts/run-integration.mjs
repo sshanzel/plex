@@ -19,6 +19,8 @@ const SCENARIOS = [
   'py-graph',
   'py-incremental',
   'py-mixed',
+  'py-preflight',
+  'py-degraded-build',
   'graph-version',
   'cochange-inc',
   'cochange-weak',

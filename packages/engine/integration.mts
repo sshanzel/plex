@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, appendFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, resolve } from 'node:path';
-import { resolveConfig, symbolKey, type NormalizedDiff } from '@plex/core';
+import { resolveConfig, symbolKey, type LanguagePlugin, type NormalizedDiff } from '@plex/core';
 import {
   buildCodeGraph,
   updateCodeGraph,
@@ -22,6 +22,7 @@ import {
   getImportEdges,
   getRefEdges,
   getMeta,
+  pluginFor,
 } from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
 import { runDeterministic } from '@plex/deterministic';
@@ -627,6 +628,67 @@ test('py-incremental', 'code-graph: a changed .py file is no longer dropped from
       assert.deepEqual((await getSymbolsInFile(db, 'src/mypkg/cache.py')).map((s) => s.name), ['get'], 'added .py extracted');
       const dbSyms = (await getSymbolsInFile(db, 'src/mypkg/db.py')).map((s) => s.name);
       assert.ok(dbSyms.includes('disconnect'), `modified .py re-extracted: ${dbSyms.join(',')}`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+/** A .py plugin whose runtime never loads — the BuildOptions.resolvePlugin degradation seam. */
+const failingPyPlugin: LanguagePlugin = {
+  id: 'py',
+  exts: ['.py'],
+  init: () => Promise.reject(new Error('simulated wasm failure')),
+  extract: () => {
+    throw new Error('unreachable — init always fails');
+  },
+  resolve: () => ({ imports: [], refs: [] }),
+};
+const failingPyDispatch = (f: string): LanguagePlugin | undefined =>
+  f.endsWith('.py') ? failingPyPlugin : pluginFor(f);
+
+test('py-preflight', 'code-graph: a runtime failing mid-update throws BEFORE the destructive phase — no symbol erasure', async () => {
+  const repo = makePyRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-pyprefdb-')), 'g.kuzu');
+  try {
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }); // healthy build
+    appendFileSync(join(repo, 'src/mypkg/db.py'), 'def disconnect():\n    pass\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'mutate');
+
+    await assert.rejects(
+      () => updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE, resolvePlugin: failingPyDispatch }),
+      (e: unknown) => e instanceof FullRebuildRequired,
+      'a failed runtime preflight must demand the full-rebuild fallback',
+    );
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const dbSyms = (await getSymbolsInFile(db, 'src/mypkg/db.py')).map((s) => s.name);
+      assert.ok(dbSyms.includes('connect'), `old symbols survive the failed update (erase window closed): ${dbSyms.join(',')}`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('py-degraded-build', 'code-graph: a degraded full build reports skippedLanguages and withholds the version stamp (self-heal)', async () => {
+  const repo = makePyRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-pydegdb-')), 'g.kuzu');
+  try {
+    const res = await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE, resolvePlugin: failingPyDispatch });
+    assert.deepEqual(res.skippedLanguages, ['py'], 'the degraded language is reported');
+    assert.equal(res.symbols, 0, 'no symbols extracted for the failed language');
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const version = await getMeta(db, 'graphVersion');
+      assert.ok(version == null, `Meta.graphVersion withheld on a degraded build (got ${version}) — the next incremental forces the rebuild retry`);
+      assert.equal(await getMeta(db, 'repo'), basename(repo), 'the rest of Meta still stamps');
     } finally {
       await db.close();
     }

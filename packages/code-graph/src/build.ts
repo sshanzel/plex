@@ -48,6 +48,9 @@ export interface BuildOptions {
   fresh?: boolean;
   /** Add precise (tsconfig-alias-aware) reference edges (default true). */
   precise?: boolean;
+  /** TEST SEAM: plugin-dispatch override so degradation paths (a runtime failing to load) are
+   *  pinnable without breaking a real wasm. Production always uses the default `pluginFor`. */
+  resolvePlugin?: (file: string) => LanguagePlugin | undefined;
 }
 
 export interface BuildResult {
@@ -226,7 +229,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     );
 
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
-    const batch = await extractAndResolve(repoPath, relFiles, absByRel, fileSet, opts.precise !== false);
+    const batch = await extractAndResolve(repoPath, relFiles, absByRel, fileSet, opts.precise !== false, opts.resolvePlugin);
 
     await db.insertMany(
       'CREATE (:Symbol {id:$id, name:$name, kind:$kind, file:$file, startLine:$startLine, endLine:$endLine, exported:$exported})',
@@ -320,9 +323,10 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     // DETACH-DELETEd below, so a runtime that fails to load mid-update would ERASE them while
     // headSha still advances. Failing over to the full rebuild keeps the graph consistent (the full
     // build degrades by skipping the language and withholds the version stamp — see buildCodeGraph).
+    const resolvePlugin = opts.resolvePlugin ?? pluginFor;
     const preflight = new Set<LanguagePlugin>();
     for (const rel of [...delta.added, ...delta.modified]) {
-      const plugin = pluginFor(rel);
+      const plugin = resolvePlugin(rel);
       if (plugin) preflight.add(plugin);
     }
     for (const plugin of preflight) {
@@ -362,7 +366,7 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       upserts.map((rel) => ({ id: rel, path: rel, repo: repoName, lang: path.extname(rel).slice(1) })),
     );
 
-    const batch = await extractAndResolve(repoPath, upserts, absByRel, fileSet, opts.precise !== false);
+    const batch = await extractAndResolve(repoPath, upserts, absByRel, fileSet, opts.precise !== false, opts.resolvePlugin);
     await db.insertMany(
       'CREATE (:Symbol {id:$id, name:$name, kind:$kind, file:$file, startLine:$startLine, endLine:$endLine, exported:$exported})',
       batch.symbolRows,
