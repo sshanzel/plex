@@ -58,3 +58,4 @@ jobs:
       - run: node scripts/sweep-check.mjs # ADR-43 maintenance worker: refresh main + sidecars + idempotent
       - run: node scripts/cochange-check.mjs # incremental + cross-window co-change accumulation
       - run: node scripts/deleted-radius-check.mjs # deletion blast radius
+      - run: node scripts/py-check.mjs # ADR-52 Python: wasm-from-bundle index + blast + review findings

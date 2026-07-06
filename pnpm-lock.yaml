@@ -83,6 +83,9 @@ importers:
       '@plex/core':
         specifier: workspace:*
         version: link:../core
+      '@plex/lang-python':
+        specifier: workspace:*
+        version: link:../lang-python
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
