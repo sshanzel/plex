@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { isGeneratedArtifact, type Finding, type NormalizedDiff, type LineRange } from '@plex/core';
-import { analyzeSource, isSupportedSource, type RawFinding } from './builtin';
+import { type RawFinding } from './builtin';
+import { analyzerFor } from './analyze';
 
 export interface DeterministicOptions {
   repoName?: string;
@@ -31,7 +32,7 @@ async function listSourceFiles(root: string, cap: number): Promise<string[]> {
     for (const e of entries) {
       if (e.isDirectory()) {
         if (!e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) queue.push(path.join(dir, e.name));
-      } else if (isSupportedSource(e.name) && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
+      } else if (analyzerFor(e.name) != null && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
         out.push(path.join(dir, e.name));
         if (out.length >= cap) break;
       }
@@ -66,7 +67,9 @@ async function computeRulePrevalence(
       const text = texts[j];
       if (text == null) continue;
       const seen = new Set<string>();
-      for (const raw of analyzeSource(chunk[j]!, text)) {
+      const analyze = analyzerFor(chunk[j]!);
+      if (!analyze) continue;
+      for (const raw of analyze(chunk[j]!, text)) {
         if (rules.has(raw.rule) && !seen.has(raw.rule)) {
           seen.add(raw.rule);
           hits.set(raw.rule, (hits.get(raw.rule) ?? 0) + 1);
@@ -107,7 +110,8 @@ export async function runDeterministic(
 
   for (const f of diff.files) {
     // Belt-and-suspenders for hand-built diffs (normalization already drops these; a .min.js IS "supported").
-    if (f.status === 'deleted' || !isSupportedSource(f.path) || isGeneratedArtifact(f.path)) continue;
+    const analyze = analyzerFor(f.path);
+    if (f.status === 'deleted' || !analyze || isGeneratedArtifact(f.path)) continue;
     // Containment: a hostile diff can carry a path escaping the repo — lexically (`../../etc/x.ts`) OR via
     // a symlink in-tree. realpath resolves both before we read; never read outside the repo root.
     let text: string;
@@ -119,7 +123,7 @@ export async function runDeterministic(
       continue; // missing file or unresolvable path — skip
     }
     const ranges = f.hunks.flatMap((h) => h.newRanges);
-    for (const raw of analyzeSource(f.path, text)) {
+    for (const raw of analyze(f.path, text)) {
       if (onlyChanged && ranges.length > 0 && !overlaps(raw, ranges)) continue;
       out.push(toFinding(raw, repo, f.path));
     }

@@ -5,6 +5,7 @@ import {
   cosineBackground,
   adaptiveFloor,
   hashId,
+  languageOf,
   type ReviewerConfig,
   type CodeLocation,
   type Finding,
@@ -161,17 +162,7 @@ export function suppressionKeyFor(input: { findingId?: string; pattern?: string 
   return input.pattern || undefined;
 }
 
-// Extension → coarse language tag, so global promotion stays language-AWARE (C2): a TS rule must never
-// apply to a Python repo. Undefined = unknown/agnostic.
-const EXT_LANG: Record<string, string> = {
-  '.ts': 'ts', '.tsx': 'ts', '.mts': 'ts', '.cts': 'ts', '.js': 'ts', '.jsx': 'ts', '.mjs': 'ts', '.cjs': 'ts',
-  '.py': 'py', '.go': 'go', '.rb': 'rb', '.rs': 'rs', '.java': 'java', '.kt': 'kt', '.cs': 'cs',
-  '.php': 'php', '.swift': 'swift', '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.hpp': 'cpp',
-};
-export function languageOf(file?: string): string | undefined {
-  if (!file) return undefined;
-  return EXT_LANG[path.extname(file).toLowerCase()];
-}
+export { languageOf };
 
 /** A learned-suppression decision with the evidence that justifies it — the provenance the audit log
  * records so "why is this rule demoted/suppressed?" is answerable. */

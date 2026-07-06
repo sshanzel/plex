@@ -1,25 +1,10 @@
 import ts from 'typescript';
 import path from 'node:path';
+import type { ExtractedFile, ExtractedSymbol } from '@plex/core';
 
-export interface ExtractedSymbol {
-  name: string;
-  kind: 'function' | 'class' | 'method' | 'interface' | 'type' | 'enum' | 'const';
-  startLine: number;
-  endLine: number;
-  exported: boolean;
-}
+export type { ExtractedFile, ExtractedSymbol } from '@plex/core';
 
-export interface ExtractedFile {
-  /** Raw module specifiers from import / export-from statements. */
-  imports: string[];
-  symbols: ExtractedSymbol[];
-}
-
-const TS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'];
-
-export function isSupportedSource(file: string): boolean {
-  return TS_EXTS.includes(path.extname(file));
-}
+export const TS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'];
 
 function scriptKindFor(file: string): ts.ScriptKind {
   switch (path.extname(file)) {
