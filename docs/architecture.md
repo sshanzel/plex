@@ -61,14 +61,15 @@ It is recomputed every review because it's **cheap (local Kùzu queries — zero
 
 *(Historical note: the retired FalkorDB layer only ever received a **copy** of the computed neighborhood for a Browser picture — it never computed it. Removing FalkorDB, ADR-30, changed nothing about blast radius.)*
 
-**New files in a PR.** A committed new file is picked up by the **auto-refresh** (incremental index before each review): it's parsed, its `Imports`/`Refs` are resolved by the TS compiler, and it enters the graph — so blast radius expands from/into it. Co-change is *inherently* empty for a brand-new file (no git history yet). Limitation: for a **remote PR whose branch isn't checked out locally**, the new files aren't on disk to index, so their blast radius is thin — the agent compensates by reading the diff content directly (have CI/the responder `gh pr checkout` for airtight coverage).
+**New files in a PR.** A committed new file is picked up by the **auto-refresh** (incremental index before each review): it's parsed, its `Imports`/`Refs` are resolved by its language plugin (TS compiler / the Python module resolver, ADR-52), and it enters the graph — so blast radius expands from/into it. Co-change is *inherently* empty for a brand-new file (no git history yet). Limitation: for a **remote PR whose branch isn't checked out locally**, the new files aren't on disk to index, so their blast radius is thin — the agent compensates by reading the diff content directly (have CI/the responder `gh pr checkout` for airtight coverage).
 
 ## Code understanding is layered (ADR-06)
 
 | Layer | Source | Always on? | Notes |
 |---|---|---|---|
 | Agnostic spine | git **co-change** + **imports** | yes | language-free; co-change catches runtime coupling (DI/injected services) that static analysis misses |
-| Precise enrichment | **TS compiler API** ref edges | TS/JS repos | resolves tsconfig **path aliases**, baseUrl, index files; other languages plug in via tree-sitter later (ADR-15) |
+| Precise enrichment | **TS compiler API** ref edges | TS/JS repos | resolves tsconfig **path aliases**, baseUrl, index files; the config-aware layer stays TS-only for now (ADR-06/52) |
+| Language plugins | **TS compiler API** + **Python via tree-sitter WASM** | per file ext | behind the `LanguagePlugin` seam (ADR-15/52): symbols + import edges per language; Python resolves `__init__.py` barrels, relative/dotted imports, src layouts |
 
 Blast radius ≈ **coupling**, not a precise call graph. Edges are unioned and tagged by `provenance` + `weight`. The graph is built once and **refreshed incrementally** (TS *and* co-change — ADR-25/26); a review **auto-indexes** on first use and **auto-refreshes** on drift, both in an isolated child process (ADR-17/30).
 
@@ -99,9 +100,10 @@ The knowledge base is the learned engine — populated by analyzing PR history a
 |---|---|---|
 | `core` | shared types, config, provider interfaces | ✅ |
 | `ingest` | diff adapters (local git, gh PR) → normalized diff; head SHA + inter-round diff helpers | ✅ |
-| `code-graph` | Kùzu per-repo graph: symbols/imports/co-change + precise alias edges; incremental update | ✅ |
+| `code-graph` | Kùzu per-repo graph: symbols/imports/co-change + precise alias edges; incremental update; language dispatch (`languages.ts`) | ✅ |
+| `lang-python` | Python language plugin: web-tree-sitter WASM parser, extractor, module resolver (ADR-52) | ✅ |
 | `neighborhood` | diff→symbols→blast radius via a personalized-PageRank walk over the code graph | ✅ |
-| `deterministic` | built-in TS-AST codified checks (external scanners: unwired extension point) | ✅ |
+| `deterministic` | built-in codified checks — TS-AST + Python tree-sitter rule sets, per-language dispatch (ADR-52) | ✅ |
 | `findings` | merge/dedup/rank/triage; round-delta classifier; semantic waiver matcher | ✅ |
 | `knowledge` | embeddings, JSON store, semantic retrieval, outcome consolidation (ADR-18) | ✅ |
 | `distill` | gh PR-history → denoise → cluster (the connected agent distills via `analyze_scan`); incremental cursor (ADR-11/20/51) | ✅ |

@@ -39,6 +39,11 @@ from none (only `node:` builtins). Decisions: [`docs/adr/README.md`](../../docs/
   and the lineage `finding` event gains `symbol` to carry it. `Waiver` also gains `symbol?` (ADR-48) so
   a file/line waiver scopes to the symbol it was recorded at (the negative twin — location-scoped
   suppression).
+- `src/lang.ts` — the **language-plugin seam** (ADR-15/52): `LanguagePlugin`,
+  `ExtractedSymbol`/`ExtractedFile`, `SourceUnit`/`ResolvedImports`, and the single
+  `EXT_LANG`/`languageOf` registry (`.js → 'ts'`; also the ADR-39 C2 language gate — moved here
+  from the engine). Types + one pure lookup; implementations live in `@plex/code-graph` (TS) and
+  `@plex/lang-python`.
 - `src/index.ts` — barrel.
 
 ## How config is actually resolved

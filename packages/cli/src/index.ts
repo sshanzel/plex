@@ -251,7 +251,7 @@ async function main(): Promise<number> {
       const repoPath = positionals[1] ?? process.cwd();
       const files = typeof flags.files === 'string' ? flags.files.split(',').map((s) => s.trim()) : [];
       if (files.length === 0) {
-        process.stderr.write('blast requires --files <a.ts,b.ts>\n');
+        process.stderr.write('blast requires --files <a.ts,b.py>\n');
         return 1;
       }
       const neighbors = await blastRadius(repoPath, files, config);
