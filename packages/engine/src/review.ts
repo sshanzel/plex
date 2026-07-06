@@ -39,7 +39,7 @@ import { isDebounced } from './sweep-helpers';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
-import { recordableHeadSha, priorRoundHeadSha } from './guards';
+import { recordableHeadSha, priorRoundHeadSha, graphStaleDecision, graphStaleNote, type GraphStaleness } from './guards';
 import { createEmbeddingProvider, buildKnowledgeGraph } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
@@ -313,17 +313,7 @@ export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force 
   }
 }
 
-/** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */
-export interface GraphStaleness {
-  indexedSha?: string;
-  /** Commits HEAD is ahead of the indexed sha (0 = fresh, -1 = unknown). */
-  behind: number;
-  /** True when the review auto-refreshed the graph (incremental) before proceeding. */
-  refreshed?: boolean;
-  /** True when the graph predates the current extractors (sidecar graph.version mismatch, ADR-52) —
-   *  fires even at behind === 0, e.g. the first review after upgrading Plex at an unchanged HEAD. */
-  versionMismatch?: boolean;
-}
+export type { GraphStaleness } from './guards';
 
 /** The grounded bundle handed to a fresh reviewing agent (ADR-02/03). */
 export interface ReviewContext {
@@ -612,17 +602,17 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   {
     const indexedSha = readIndexedSha(graphP.headShaFile);
     const behind = indexedSha ? await commitsBehind(graphP.repoPath, indexedSha) : -1;
-    // The version gate fires even at behind === 0 (ADR-52): after upgrading Plex, a graph indexed by
-    // the OLD extractors is silently missing whole languages, and only a refresh — which lands on
-    // updateCodeGraph's Meta.graphVersion check -> FullRebuildRequired -> full rebuild — heals it.
-    // A missing sidecar (legacy install, or a prior DEGRADED build that withheld the stamp) counts
-    // as a mismatch, which is also what makes a degraded graph self-heal on later reviews.
     const versionMismatch = readIndexedSha(graphP.graphVersionFile) !== GRAPH_VERSION;
-    if (indexedSha && (behind > 0 || versionMismatch) && opts.autoIndex !== false) {
-      const refreshed = indexIsolated(graphP.repoPath, true);
-      graphStale = { indexedSha, behind, refreshed, ...(versionMismatch ? { versionMismatch } : {}) };
-    } else if (!indexedSha || behind !== 0 || versionMismatch) {
-      graphStale = { indexedSha, behind, refreshed: false, ...(versionMismatch ? { versionMismatch } : {}) };
+    // Pure decision (guards.ts, unit-tested): the ADR-52 version gate fires even at behind === 0.
+    const plan = graphStaleDecision({ indexedSha, behind, versionMismatch, autoIndex: opts.autoIndex !== false });
+    graphStale = plan.stale;
+    if (plan.shouldRefresh && graphStale) {
+      graphStale.refreshed = indexIsolated(graphP.repoPath, true);
+      // An exit-0 rebuild can still be DEGRADED (a language runtime failed to load) — the child
+      // then withholds the version sidecar. Re-read it so the note never overstates coverage.
+      if (graphStale.refreshed && readIndexedSha(graphP.graphVersionFile) !== GRAPH_VERSION) {
+        graphStale.degraded = true;
+      }
     }
   }
 
@@ -802,17 +792,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
             `${diff.generatedPaths.length} machine-generated file(s) changed in this diff but are excluded from review (${diff.generatedPaths.join(', ')}). Mention this as a fact; a lockfile change with NO matching manifest edit can be a supply-chain signal worth confirming.`,
           ]
         : []),
-      ...(graphStale?.refreshed
-        ? [
-            graphStale.versionMismatch
-              ? 'The code graph predated the current extractors (Plex upgrade) and was auto-rebuilt before this review — blast radius is current.'
-              : `The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`,
-          ]
-        : graphStale
-          ? [
-              `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Re-index (\`plex index --incremental\`).`,
-            ]
-          : []),
+      ...(graphStaleNote(graphStale) ? [graphStaleNote(graphStale)!] : []),
     ],
   };
 }
