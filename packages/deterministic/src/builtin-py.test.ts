@@ -95,6 +95,11 @@ describe('except priority — exactly one finding per clause', () => {
     expect(rulesOf('try:\n    pass\nexcept:\n    pass\n')).toEqual(['no-silent-except']);
     expect(rulesOf('try:\n    pass\nexcept Exception:\n    ...\n')).toEqual(['no-silent-except']);
   });
+  it('a trailing comment does not defeat pass-only detection', () => {
+    expect(rulesOf('try:\n    pass\nexcept:\n    pass  # noqa\n')).toEqual(['no-silent-except']);
+    expect(rulesOf('try:\n    pass\nexcept ValueError:\n    pass  # intentional\n')).toEqual(['no-silent-except']);
+    expect(rulesOf('try:\n    pass\nexcept ValueError:\n    # explain\n    pass\n')).toEqual(['no-silent-except']);
+  });
   it('bare except with a real body → no-bare-except', () => {
     expect(rulesOf('try:\n    pass\nexcept:\n    raise\n')).toEqual(['no-bare-except']);
   });

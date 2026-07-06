@@ -58,7 +58,9 @@ function enclosingSymbol(node: Node): string | undefined {
 
 function isPassOnly(block: Node | null): boolean {
   if (!block) return false;
-  const stmts = block.namedChildren;
+  // Comments are NAMED block children in tree-sitter — `except: pass  # noqa` must still read as
+  // pass-only, or a trailing comment (the most common real-world silent-swallow shape) defeats the rule.
+  const stmts = block.namedChildren.filter((s) => s.type !== 'comment');
   if (stmts.length === 0) return false;
   return stmts.every(
     (s) =>
