@@ -18,6 +18,7 @@ import {
   buildCodeGraph,
   updateCodeGraph,
   FullRebuildRequired,
+  GRAPH_VERSION,
   getMeta,
   commitsBehind,
   getCoChangeEdges,
@@ -59,11 +60,15 @@ export async function indexRepo(
   ensureDataDir(p.reviewerDir);
   // Record this repo's path for orphan detection in `doctor gc`.
   try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
-  const stamp = async (): Promise<void> => {
-    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25).
+  const stamp = async (skippedLanguages?: string[]): Promise<void> => {
+    // Sidecar sha + graph version so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25).
+    // A DEGRADED build (a language runtime failed to load) withholds the version sidecar — the
+    // review-time version gate then keeps refreshing until the language heals (ADR-52).
     try {
       mkdirSync(path.dirname(p.headShaFile), { recursive: true });
       writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
+      if (skippedLanguages?.length) rmSync(p.graphVersionFile, { force: true });
+      else writeFileSync(p.graphVersionFile, GRAPH_VERSION, 'utf8');
     } catch {
       /* best-effort */
     }
@@ -83,7 +88,7 @@ export async function indexRepo(
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
       persistDeleted(res);
-      await stamp();
+      await stamp(res.skippedLanguages);
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
       if (!(e instanceof FullRebuildRequired)) throw e;
@@ -113,7 +118,7 @@ export async function indexRepo(
         } catch {
           /* best-effort */
         }
-        await stamp();
+        await stamp(res.skippedLanguages);
         return { ...res, graphDir: p.graphDir, seeded: true };
       } catch {
         rmSync(p.graphDir, { recursive: true, force: true }); // partial/corrupt copy → fall through to a full build
@@ -122,7 +127,7 @@ export async function indexRepo(
   }
 
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
-  await stamp();
+  await stamp(res.skippedLanguages);
   return { ...res, graphDir: p.graphDir, incremental: false };
 }
 
@@ -315,6 +320,9 @@ export interface GraphStaleness {
   behind: number;
   /** True when the review auto-refreshed the graph (incremental) before proceeding. */
   refreshed?: boolean;
+  /** True when the graph predates the current extractors (sidecar graph.version mismatch, ADR-52) —
+   *  fires even at behind === 0, e.g. the first review after upgrading Plex at an unchanged HEAD. */
+  versionMismatch?: boolean;
 }
 
 /** The grounded bundle handed to a fresh reviewing agent (ADR-02/03). */
@@ -604,11 +612,17 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   {
     const indexedSha = readIndexedSha(graphP.headShaFile);
     const behind = indexedSha ? await commitsBehind(graphP.repoPath, indexedSha) : -1;
-    if (indexedSha && behind > 0 && opts.autoIndex !== false) {
+    // The version gate fires even at behind === 0 (ADR-52): after upgrading Plex, a graph indexed by
+    // the OLD extractors is silently missing whole languages, and only a refresh — which lands on
+    // updateCodeGraph's Meta.graphVersion check -> FullRebuildRequired -> full rebuild — heals it.
+    // A missing sidecar (legacy install, or a prior DEGRADED build that withheld the stamp) counts
+    // as a mismatch, which is also what makes a degraded graph self-heal on later reviews.
+    const versionMismatch = readIndexedSha(graphP.graphVersionFile) !== GRAPH_VERSION;
+    if (indexedSha && (behind > 0 || versionMismatch) && opts.autoIndex !== false) {
       const refreshed = indexIsolated(graphP.repoPath, true);
-      graphStale = { indexedSha, behind, refreshed };
-    } else if (!indexedSha || behind !== 0) {
-      graphStale = { indexedSha, behind, refreshed: false };
+      graphStale = { indexedSha, behind, refreshed, ...(versionMismatch ? { versionMismatch } : {}) };
+    } else if (!indexedSha || behind !== 0 || versionMismatch) {
+      graphStale = { indexedSha, behind, refreshed: false, ...(versionMismatch ? { versionMismatch } : {}) };
     }
   }
 
@@ -789,7 +803,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
           ]
         : []),
       ...(graphStale?.refreshed
-        ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
+        ? [
+            graphStale.versionMismatch
+              ? 'The code graph predated the current extractors (Plex upgrade) and was auto-rebuilt before this review — blast radius is current.'
+              : `The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`,
+          ]
         : graphStale
           ? [
               `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Re-index (\`plex index --incremental\`).`,

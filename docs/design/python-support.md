@@ -128,6 +128,20 @@ upgraded Plex would never index a repo's *existing* `.py` files (incremental tou
 files) and Python repos would silently stay symbol-less. Bump it whenever extractor output
 changes in a way incremental can't reproduce.
 
+The version is ALSO stamped into a **`graph.version` sidecar** beside `head.sha`, checked by the
+review-time staleness gate (no Kùzu open): a mismatch — or a missing sidecar (legacy install) —
+triggers the refresh **even at `behind === 0`**, so the one-time post-upgrade rebuild fires at an
+unchanged HEAD too (pinned E2E in `scripts/py-check.mjs`).
+
+**Degraded builds self-heal.** If a language runtime fails to load (`plugin.init` throws), the
+build skips that language's files and reports `skippedLanguages` — and neither `Meta.graphVersion`
+nor the sidecar is stamped, so the next review's version gate keeps retrying until the runtime
+loads. An incremental update **preflights** the runtimes of its changed files BEFORE the
+DETACH-DELETE phase and throws `FullRebuildRequired` on failure — a transient wasm error can never
+erase modified files' symbols while `headSha` advances. Per-file guards mirror `uniqueSymbolId`'s
+invariant: one pathological file (unreadable, or an extractor throw) never aborts an index or a
+review — it is skipped, in both the graph build and the deterministic runner/prevalence sample.
+
 Known TS-parity limitation: adding `pkg/name.py` (or adding/deleting an `__init__.py`) does not
 re-resolve UNCHANGED importers' edges until their files change or a full rebuild runs — TS has
 the identical behavior for a new `foo/index.ts`. Barrel transparency mitigates the common case.

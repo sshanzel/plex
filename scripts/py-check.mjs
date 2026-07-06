@@ -6,7 +6,7 @@
 //
 //   pnpm build && node scripts/py-check.mjs
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -74,6 +74,13 @@ try {
   const rules = (review.deterministic ?? []).map((f) => f.tags?.[0]);
   assert(rules.includes('no-print') && rules.includes('mutable-default-arg'),
     `python deterministic findings surfaced in a review (got: ${rules.join(',') || 'none'})`);
+
+  // Post-upgrade rollout gate (ADR-52): a stale graph.version sidecar at an UNCHANGED head must
+  // still trigger the refresh — sha-drift alone must not be the only trigger.
+  writeFileSync(join(repo, '.plex/graph.version'), '1');
+  cli(['review', repo, '--json'], repo);
+  const restored = readFileSync(join(repo, '.plex/graph.version'), 'utf8').trim();
+  assert(restored !== '1', `the version gate refreshed a stale graph at behind=0 (sidecar now '${restored}')`);
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }
