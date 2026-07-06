@@ -12,7 +12,7 @@ Guide for humans and coding agents continuing work on **reviewer**. Read this fi
 packages/
   core/          shared types, config, provider interfaces (no deps)
   ingest/        diff adapters: local git + gh PR → NormalizedDiff
-  code-graph/    Kùzu per-repo graph: TS symbols/imports + git co-change   [M1]
+  code-graph/    Kùzu per-repo graph: TS + Python symbols/imports + git co-change [M1/M15]
   neighborhood/  diff→symbols→blast radius (Kùzu) [M1]
   findings/      merge / dedup / rank / triage                            [M2]
   deterministic/ built-in codified checks: TS-AST + Python tree-sitter    [M2/M15]
