@@ -106,17 +106,25 @@ async function extractAndResolve(
   const declareRows: Record<string, unknown>[] = [];
   const seenSymbolIds = new Set<string>();
   const unitsByPlugin = new Map<LanguagePlugin, SourceUnit[]>();
+  const failedPlugins = new Set<LanguagePlugin>();
 
   for (const rel of rels) {
     const plugin = pluginFor(rel);
-    if (!plugin) continue;
+    if (!plugin || failedPlugins.has(plugin)) continue;
+    try {
+      await plugin.init?.();
+    } catch {
+      // Degrade, never fail: a broken language runtime (e.g. the wasm load) skips THAT language's
+      // files for this run instead of killing the whole index of a mixed repo.
+      failedPlugins.add(plugin);
+      continue;
+    }
     let text: string;
     try {
       text = await fs.readFile(absByRel.get(rel)!, 'utf8');
     } catch {
       continue;
     }
-    await plugin.init?.();
     const { symbols, imports } = plugin.extract(rel, text);
     for (const s of symbols) {
       const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);

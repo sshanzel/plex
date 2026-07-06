@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { isGeneratedArtifact, languageOf, type Finding, type NormalizedDiff, type LineRange } from '@plex/core';
-import { initPython } from '@plex/lang-python';
+import { tryInitPython } from '@plex/lang-python';
 import { type RawFinding } from './builtin';
 import { analyzerFor, ruleLanguage } from './analyze';
 
@@ -57,7 +57,7 @@ async function computeRulePrevalence(
 ): Promise<Map<string, number>> {
   const files = await listSourceFiles(repoPath, cap);
   if (files.length === 0) return new Map();
-  if (files.some((f) => languageOf(f) === 'py')) await initPython();
+  const pyReady = files.some((f) => languageOf(f) === 'py') ? await tryInitPython() : false;
   const filesPerLang = new Map<string, number>();
   for (const f of files) {
     const lang = languageOf(f);
@@ -82,7 +82,7 @@ async function computeRulePrevalence(
       if (text == null) continue;
       const seen = new Set<string>();
       const analyze = analyzerFor(chunk[j]!);
-      if (!analyze) continue;
+      if (!analyze || (languageOf(chunk[j]!) === 'py' && !pyReady)) continue;
       for (const raw of analyze(chunk[j]!, text)) {
         if (rules.has(raw.rule) && !seen.has(raw.rule)) {
           seen.add(raw.rule);
@@ -122,7 +122,10 @@ export async function runDeterministic(
   const onlyChanged = opts.onlyChangedRanges !== false;
   const out: Finding[] = [];
   // The wasm parser is the one async edge — hoisted here so analyzePySource stays sync/pure.
-  if (diff.files.some((f) => f.status !== 'deleted' && languageOf(f.path) === 'py')) await initPython();
+  // A failed load degrades to TS-only (skip .py files) rather than failing the whole review.
+  const pyReady = diff.files.some((f) => f.status !== 'deleted' && languageOf(f.path) === 'py')
+    ? await tryInitPython()
+    : false;
   // Canonicalize the repo root once so symlinks in repoPath itself don't false-positive the containment check.
   const realRoot = await fs.realpath(repoPath).catch(() => path.resolve(repoPath));
 
@@ -130,6 +133,7 @@ export async function runDeterministic(
     // Belt-and-suspenders for hand-built diffs (normalization already drops these; a .min.js IS "supported").
     const analyze = analyzerFor(f.path);
     if (f.status === 'deleted' || !analyze || isGeneratedArtifact(f.path)) continue;
+    if (languageOf(f.path) === 'py' && !pyReady) continue;
     // Containment: a hostile diff can carry a path escaping the repo — lexically (`../../etc/x.ts`) OR via
     // a symlink in-tree. realpath resolves both before we read; never read outside the repo root.
     let text: string;

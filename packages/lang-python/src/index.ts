@@ -3,7 +3,7 @@ import { initPython, parsePython } from './parser';
 import { extractPythonSource } from './extract-py';
 import { buildModuleIndex, resolvePythonImport } from './resolve-py';
 
-export { initPython, parsePython } from './parser';
+export { initPython, tryInitPython, parsePython } from './parser';
 export { extractPythonSource } from './extract-py';
 export { buildModuleIndex, resolvePythonImport, type PyModuleIndex } from './resolve-py';
 // Consumers walk parsed trees without depending on web-tree-sitter themselves.

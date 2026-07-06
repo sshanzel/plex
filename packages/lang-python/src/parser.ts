@@ -18,8 +18,24 @@ export function initPython(): Promise<void> {
     const p = new Parser();
     p.setLanguage(lang);
     parser = p;
-  })();
+  })().catch((e: unknown) => {
+    // Never memoize a rejection: the MCP server is long-lived, so a transient load failure would
+    // otherwise poison Python support until reconnect. Clearing lets the next call retry.
+    initPromise = undefined;
+    throw e;
+  });
   return initPromise;
+}
+
+/** `initPython` that reports instead of throwing — callers degrade to TS-only rather than failing
+ *  a whole index/review on a wasm load error (the embeddings "degrades, never fails" posture). */
+export async function tryInitPython(): Promise<boolean> {
+  try {
+    await initPython();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
