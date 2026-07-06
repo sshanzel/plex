@@ -82,7 +82,8 @@ export function resolvePythonImport(
     }
     for (let k = tail.length; k >= 0; k--) {
       const p = [base, ...tail.slice(0, k)].filter(Boolean).join('/');
-      const candidates = k > 0 ? [`${p}.py`, `${p}/__init__.py`] : [p === '' ? '__init__.py' : `${p}/__init__.py`];
+      // Package before module: Python's finder gives `m/__init__.py` precedence over a sibling `m.py`.
+      const candidates = k > 0 ? [`${p}/__init__.py`, `${p}.py`] : [p === '' ? '__init__.py' : `${p}/__init__.py`];
       for (const c of candidates) {
         if (c !== fromFile && fileSet.has(c)) return c;
       }
@@ -91,13 +92,16 @@ export function resolvePythonImport(
   }
 
   const parts = spec.split('.');
+  const isPackage = (f: string): number => (f.endsWith('/__init__.py') || f === '__init__.py' ? 1 : 0);
   for (let k = parts.length; k >= 1; k--) {
     const files = index.get(parts.slice(0, k).join('.'))?.filter((f) => f !== fromFile);
     if (!files || files.length === 0) continue;
-    // Deterministic pick: same-package/same-root preference, then shortest path, then lexicographic.
+    // Deterministic pick: same-package/same-root preference, then package over a same-named module
+    // (Python's finder order), then shortest path, then lexicographic.
     return [...files].sort(
       (a, b) =>
         commonPrefixLen(b, fromFile) - commonPrefixLen(a, fromFile) ||
+        isPackage(b) - isPackage(a) ||
         a.split('/').length - b.split('/').length ||
         (a < b ? -1 : 1),
     )[0]!;

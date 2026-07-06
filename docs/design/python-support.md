@@ -74,13 +74,14 @@ Each `.py` under a root maps to its dotted path (`__init__` names the package; a
 `__init__.py` names nothing). Resolution is a **deepest-first walk-down**:
 
 - **Relative** (`L` dots, tail `t1..tn`): ascend `L−1` dirs from the importer; for `k = n..0` try
-  `path/t1..tk + '.py'` then `+ '/__init__.py'`. This settles `from .m import name`
-  (submodule-vs-symbol): `m/name.py` first, then `m/__init__.py`, then `m.py`. Ascending above
+  `path/t1..tk + '/__init__.py'` then `+ '.py'` — **package before module**, matching Python's
+  finder order when `m/__init__.py` and a sibling `m.py` coexist. Deepest-first still settles
+  `from .m import name` (submodule-vs-symbol): `m/name.py` before `m/__init__.py`. Ascending above
   the repo root → null. The importing file itself is never a match.
 - **Absolute**: for `k = n..1` look up `index[t1..tk]`; tie-break deterministically by longest
   common directory prefix with the importer (each distributed package sees its own root) →
-  shortest path → lexicographic. No hit → null (stdlib / third-party — exactly like bare
-  specifiers → node_modules in TS).
+  package over a same-named module → shortest path → lexicographic. No hit → null (stdlib /
+  third-party — exactly like bare specifiers → node_modules in TS).
 
 **Imports only; `Refs` stays TS-only.** Refs is the *config-aware enrichment* layer (ADR-06);
 this resolver IS Python's base structural layer. A future pyproject-aware precise pass would emit

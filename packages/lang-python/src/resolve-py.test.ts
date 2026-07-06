@@ -62,6 +62,12 @@ describe('buildModuleIndex + absolute imports', () => {
     expect(resolve('a.py', 'nothing')).toBeNull();
   });
 
+  it('a package takes precedence over a same-named sibling module (Python finder order)', () => {
+    const { resolve } = setup(['pkg/__init__.py', 'pkg/m.py', 'pkg/m/__init__.py', 'main.py']);
+    expect(resolve('main.py', 'pkg.m')).toBe('pkg/m/__init__.py'); // absolute: index tie-break
+    expect(resolve('pkg/__init__.py', '.m')).toBe('pkg/m/__init__.py'); // relative: ladder order
+  });
+
   it('extraRoots opens an escape hatch for unconventional layouts', () => {
     const fileSet = new Set(['lib/deep/ns/mod.py', 'main.py']);
     const index = buildModuleIndex(fileSet, ['lib/deep']);
