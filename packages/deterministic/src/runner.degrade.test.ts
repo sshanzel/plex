@@ -10,10 +10,12 @@ vi.mock('@plex/lang-python', async (importOriginal) => {
   return { ...mod, tryInitPython: vi.fn().mockResolvedValue(false) };
 });
 
+import { tryInitPython } from '@plex/lang-python';
 import { runDeterministic } from './runner';
 
 let repo: string;
 beforeEach(() => {
+  vi.clearAllMocks(); // reset call counts; implementations (mockResolvedValue) survive
   repo = mkdtempSync(join(tmpdir(), 'plex-det-degrade-'));
   mkdirSync(join(repo, 'src'), { recursive: true });
   writeFileSync(join(repo, 'src/a.ts'), "console.log('debug');\n");
@@ -33,5 +35,17 @@ describe('runDeterministic when the wasm parser is unavailable', () => {
     const rules = (await runDeterministic(repo, diff)).map((f) => f.tags?.[0]);
     expect(rules).toContain('no-console');
     expect(rules).not.toContain('no-print');
+  });
+
+  it('a TS-only firing never inits Python — the prevalence sweep skips unmeasured languages', async () => {
+    // The repo has .py files in the sample, but only a TS rule fires: rule ids are 1:1 per
+    // language, so parsing the .py sample could only contribute zero hits.
+    const diff: NormalizedDiff = {
+      baseRef: 'main',
+      files: [{ path: 'src/a.ts', status: 'modified', hunks: [] }],
+    };
+    const rules = (await runDeterministic(repo, diff)).map((f) => f.tags?.[0]);
+    expect(rules).toContain('no-console');
+    expect(vi.mocked(tryInitPython)).not.toHaveBeenCalled();
   });
 });

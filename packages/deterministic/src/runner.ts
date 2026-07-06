@@ -57,7 +57,11 @@ async function computeRulePrevalence(
 ): Promise<Map<string, number>> {
   const files = await listSourceFiles(repoPath, cap);
   if (files.length === 0) return new Map();
-  const pyReady = files.some((f) => languageOf(f) === 'py') ? await tryInitPython() : false;
+  // Only languages that OWN a measured rule are worth parsing: rule ids are 1:1 per language, so a
+  // TS-only firing must not wasm-parse the repo's whole .py sample for guaranteed-zero hits.
+  const measuredLangs = new Set<string>([...rules].map((r) => ruleLanguage(r)));
+  const pyReady =
+    measuredLangs.has('py') && files.some((f) => languageOf(f) === 'py') ? await tryInitPython() : false;
   const filesPerLang = new Map<string, number>();
   for (const f of files) {
     const lang = languageOf(f);
@@ -80,10 +84,18 @@ async function computeRulePrevalence(
     for (let j = 0; j < chunk.length; j++) {
       const text = texts[j];
       if (text == null) continue;
+      const lang = languageOf(chunk[j]!);
+      if (!lang || !measuredLangs.has(lang)) continue;
       const seen = new Set<string>();
       const analyze = analyzerFor(chunk[j]!);
-      if (!analyze || (languageOf(chunk[j]!) === 'py' && !pyReady)) continue;
-      for (const raw of analyze(chunk[j]!, text)) {
+      if (!analyze || (lang === 'py' && !pyReady)) continue;
+      let raws: RawFinding[];
+      try {
+        raws = analyze(chunk[j]!, text);
+      } catch {
+        continue; // one pathological SAMPLED file must not fail the whole review
+      }
+      for (const raw of raws) {
         if (rules.has(raw.rule) && !seen.has(raw.rule)) {
           seen.add(raw.rule);
           hits.set(raw.rule, (hits.get(raw.rule) ?? 0) + 1);
@@ -145,7 +157,13 @@ export async function runDeterministic(
       continue; // missing file or unresolvable path — skip
     }
     const ranges = f.hunks.flatMap((h) => h.newRanges);
-    for (const raw of analyze(f.path, text)) {
+    let raws: RawFinding[];
+    try {
+      raws = analyze(f.path, text);
+    } catch {
+      continue; // per-file guard: a pathological file yields no findings, never a dead review
+    }
+    for (const raw of raws) {
       if (onlyChanged && ranges.length > 0 && !overlaps(raw, ranges)) continue;
       out.push(toFinding(raw, repo, f.path));
     }
