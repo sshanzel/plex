@@ -15,6 +15,9 @@ to ADR-52; read that first for the decision and its rejected alternatives.
 - **Callers must `tree.delete()` in a `finally`** — Emscripten heap memory is not GC'd; leaking
   trees across a whole-repo index balloons the child process. Throughput measured ≈19ms per
   3,900-line file, flat RSS.
+- **Sources above `MAX_PY_SOURCE_BYTES` (10 MB) are refused** — `WebAssembly.Memory` grows but
+  never shrinks, so one pathological parse would permanently balloon the long-lived MCP server's
+  RSS. The throw rides the per-file guards: the oversized file is skipped, never a dead review.
 - **tsup**: `web-tree-sitter` and `tree-sitter-python` are `external` (root-package runtime deps).
   web-tree-sitter's Emscripten glue locates `web-tree-sitter.wasm` relative to its own module
   file; bundling it would re-anchor `import.meta.url` to `dist/` and break the lookup.

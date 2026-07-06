@@ -36,4 +36,13 @@ describe('python parser', () => {
       tree.delete();
     }
   });
+
+  it('refuses sources above the parse cap (wasm memory never shrinks)', async () => {
+    const { MAX_PY_SOURCE_BYTES } = await import('./parser');
+    const oversized = 'x = 1\n'.repeat(Math.ceil((MAX_PY_SOURCE_BYTES + 1) / 6));
+    expect(() => parsePython(oversized)).toThrow(/parse cap/);
+    // …and the refusal flows through the extractor as a throw the per-file guards catch upstream.
+    const { extractPythonSource } = await import('./extract-py');
+    expect(() => extractPythonSource('big.py', oversized)).toThrow(/parse cap/);
+  });
 });
