@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@plex/core": "workspace:*",
+    "@plex/lang-python": "workspace:*",
     "kuzu": "^0.11.3",
     "typescript": "^6.0.3"
   }

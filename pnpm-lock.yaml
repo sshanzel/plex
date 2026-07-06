@@ -66,6 +66,9 @@ importers:
       '@plex/core':
         specifier: workspace:*
         version: link:../core
+      '@plex/lang-python':
+        specifier: workspace:*
+        version: link:../lang-python
       kuzu:
         specifier: ^0.11.3
         version: 0.11.3

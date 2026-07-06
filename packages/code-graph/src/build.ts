@@ -15,7 +15,17 @@ const SKIP_DIRS = new Set([
   'coverage',
   'out',
   '.plex',
+  'venv',
+  '__pycache__',
+  'site-packages',
 ]);
+
+/**
+ * Bumped when the extractor/graph shape changes in a way an incremental update can't reproduce —
+ * e.g. adding a language, whose existing (unchanged) files an incremental pass would never index.
+ * A mismatch throws `FullRebuildRequired`, so the first post-upgrade review full-rebuilds.
+ */
+export const GRAPH_VERSION = '2';
 
 /**
  * Collision-safe `Symbol.id` (`file#name#startLine`): a minified bundle can pack many declarations on
@@ -160,7 +170,7 @@ async function discoverFiles(root: string): Promise<string[]> {
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.') || e.name.endsWith('.egg-info')) continue;
         await walk(full);
       } else if (e.isFile() && indexable(e.name)) {
         out.push(full);
@@ -237,6 +247,7 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     const sha = await headSha(repoPath);
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'headSha', v: sha });
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'repo', v: repoName });
+    await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'graphVersion', v: GRAPH_VERSION });
 
     return {
       files: relFiles.length,
@@ -265,6 +276,14 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
   try {
     const storedSha = await getMeta(db, 'headSha');
     if (!storedSha) throw new FullRebuildRequired('graph has no stored headSha; run a full index first');
+    const storedVersion = await getMeta(db, 'graphVersion');
+    if (storedVersion !== GRAPH_VERSION) {
+      // An older graph predates the current extractors (e.g. no Python symbols at all); incremental
+      // only touches CHANGED files, so it could never backfill — force the one-time full rebuild.
+      throw new FullRebuildRequired(
+        `graph version ${storedVersion ?? '(none)'} != ${GRAPH_VERSION}; extractors changed — full re-index required`,
+      );
+    }
     const delta = await changedSourceFilesSince(repoPath, storedSha);
     if (!delta) throw new FullRebuildRequired('cannot diff stored sha against HEAD (history rewritten?); run a full index');
 

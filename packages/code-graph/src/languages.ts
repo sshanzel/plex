@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { ImportEdge, LanguagePlugin } from '@plex/core';
+import { pythonPlugin } from '@plex/lang-python';
 import { extractFromSource, resolveRelativeImport, TS_EXTS } from './extract-ts';
 import { resolvePreciseImports } from './precise';
 
@@ -32,7 +33,7 @@ export const tsPlugin: LanguagePlugin = {
   },
 };
 
-export const PLUGINS: readonly LanguagePlugin[] = [tsPlugin];
+export const PLUGINS: readonly LanguagePlugin[] = [tsPlugin, pythonPlugin];
 
 const PLUGIN_BY_EXT = new Map(PLUGINS.flatMap((p) => p.exts.map((e) => [e, p] as const)));
 
