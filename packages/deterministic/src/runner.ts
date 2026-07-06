@@ -1,8 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { isGeneratedArtifact, type Finding, type NormalizedDiff, type LineRange } from '@plex/core';
+import { isGeneratedArtifact, languageOf, type Finding, type NormalizedDiff, type LineRange } from '@plex/core';
+import { initPython } from '@plex/lang-python';
 import { type RawFinding } from './builtin';
-import { analyzerFor } from './analyze';
+import { analyzerFor, ruleLanguage } from './analyze';
 
 export interface DeterministicOptions {
   repoName?: string;
@@ -15,7 +16,8 @@ export interface DeterministicOptions {
 }
 
 // Directories that never count toward prevalence (generated/vendored code isn't "the repo's style").
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'vendor']);
+// Dot-dirs (.venv, .tox, …) are skipped wholesale below.
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', 'venv', '__pycache__', 'site-packages']);
 
 /** Breadth-first source-file listing, capped — prevalence is a sample, not a census. */
 async function listSourceFiles(root: string, cap: number): Promise<string[]> {
@@ -31,7 +33,9 @@ async function listSourceFiles(root: string, cap: number): Promise<string[]> {
     }
     for (const e of entries) {
       if (e.isDirectory()) {
-        if (!e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) queue.push(path.join(dir, e.name));
+        if (!e.name.startsWith('.') && !SKIP_DIRS.has(e.name) && !e.name.endsWith('.egg-info')) {
+          queue.push(path.join(dir, e.name));
+        }
       } else if (analyzerFor(e.name) != null && !e.name.endsWith('.d.ts') && !isGeneratedArtifact(e.name)) {
         out.push(path.join(dir, e.name));
         if (out.length >= cap) break;
@@ -41,7 +45,11 @@ async function listSourceFiles(root: string, cap: number): Promise<string[]> {
   return out;
 }
 
-/** Measure each rule's prevalence: the fraction of sampled files with ≥1 hit (a rule firing in 40% of the repo is a convention, not news). */
+/**
+ * Measure each rule's prevalence: the fraction of sampled SAME-LANGUAGE files with ≥1 hit (a rule
+ * firing in 40% of the repo is a convention, not news). Per-language denominators keep a universal
+ * Python habit in a mostly-TS monorepo from reading as "rare" and getting wrongly escalated (ADR-05).
+ */
 async function computeRulePrevalence(
   repoPath: string,
   rules: ReadonlySet<string>,
@@ -49,6 +57,12 @@ async function computeRulePrevalence(
 ): Promise<Map<string, number>> {
   const files = await listSourceFiles(repoPath, cap);
   if (files.length === 0) return new Map();
+  if (files.some((f) => languageOf(f) === 'py')) await initPython();
+  const filesPerLang = new Map<string, number>();
+  for (const f of files) {
+    const lang = languageOf(f);
+    if (lang) filesPerLang.set(lang, (filesPerLang.get(lang) ?? 0) + 1);
+  }
   const hits = new Map<string, number>([...rules].map((r) => [r, 0]));
   // Read in parallel chunks (parse stays sequential — CPU-bound); fully sequential reads were IO-latency-bound.
   const CHUNK = 32;
@@ -77,7 +91,9 @@ async function computeRulePrevalence(
       }
     }
   }
-  return new Map([...hits].map(([rule, n]) => [rule, n / files.length]));
+  return new Map(
+    [...hits].map(([rule, n]) => [rule, n / (filesPerLang.get(ruleLanguage(rule)) || files.length)]),
+  );
 }
 
 function overlaps(raw: RawFinding, ranges: LineRange[]): boolean {
@@ -105,6 +121,8 @@ export async function runDeterministic(
   const repo = opts.repoName ?? path.basename(path.resolve(repoPath));
   const onlyChanged = opts.onlyChangedRanges !== false;
   const out: Finding[] = [];
+  // The wasm parser is the one async edge — hoisted here so analyzePySource stays sync/pure.
+  if (diff.files.some((f) => f.status !== 'deleted' && languageOf(f.path) === 'py')) await initPython();
   // Canonicalize the repo root once so symlinks in repoPath itself don't false-positive the containment check.
   const realRoot = await fs.realpath(repoPath).catch(() => path.resolve(repoPath));
 

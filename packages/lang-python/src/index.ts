@@ -6,6 +6,8 @@ import { buildModuleIndex, resolvePythonImport } from './resolve-py';
 export { initPython, parsePython } from './parser';
 export { extractPythonSource } from './extract-py';
 export { buildModuleIndex, resolvePythonImport, type PyModuleIndex } from './resolve-py';
+// Consumers walk parsed trees without depending on web-tree-sitter themselves.
+export type { Node, Tree } from 'web-tree-sitter';
 
 /**
  * Python behind the seam (ADR-52): tree-sitter extraction + fileSet-derived module resolution →
