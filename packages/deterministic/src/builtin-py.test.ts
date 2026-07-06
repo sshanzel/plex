@@ -158,6 +158,19 @@ describe('enclosingSymbol (ADR-48) — dotted methods, matching the graph extrac
     const detSymbol = find(src, 'mutable-default-arg')[0]!.symbol!;
     expect(graphNames).toContain(detSymbol);
   });
+
+  it('CROSS-PIN holds on the shapes most likely to diverge: nested classes and decorated methods', () => {
+    // The two walkers traverse independently — these are exactly where they could drift apart
+    // (breaking ADR-47/48 code-path-memory keys) while both suites stay green.
+    const nested = 'class Outer:\n    class Inner:\n        def m(self, x=[]):\n            pass\n';
+    expect(extractPythonSource('h.py', nested).symbols.map((s) => s.name)).toContain(
+      find(nested, 'mutable-default-arg')[0]!.symbol!,
+    );
+    const decorated = 'class C:\n    @deco\n    async def handler(self, x=[]):\n        pass\n';
+    expect(extractPythonSource('h.py', decorated).symbols.map((s) => s.name)).toContain(
+      find(decorated, 'mutable-default-arg')[0]!.symbol!,
+    );
+  });
 });
 
 describe('error tolerance', () => {

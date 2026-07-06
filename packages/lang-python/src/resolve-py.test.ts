@@ -68,6 +68,22 @@ describe('buildModuleIndex + absolute imports', () => {
     expect(resolve('pkg/__init__.py', '.m')).toBe('pkg/m/__init__.py'); // relative: ladder order
   });
 
+  it('tie-break rung 3: shortest path wins when prefix and package-ness tie', () => {
+    // Both src roots index module `m`; the importer shares a prefix with neither.
+    const { resolve } = setup(['src/m.py', 'lib/src/m.py', 'main.py']);
+    expect(resolve('main.py', 'm')).toBe('src/m.py');
+  });
+
+  it('tie-break rung 4: lexicographic keeps resolution deterministic across machines', () => {
+    const { resolve } = setup(['b/src/m.py', 'a/src/m.py', 'main.py']);
+    expect(resolve('main.py', 'm')).toBe('a/src/m.py'); // insertion order must not matter
+  });
+
+  it('every src/ segment is a root, however deeply nested (monorepo layout)', () => {
+    const { resolve } = setup(['apps/web/src/app/__init__.py', 'apps/web/src/app/main.py', 'apps/web/src/app/util.py']);
+    expect(resolve('apps/web/src/app/main.py', 'app.util')).toBe('apps/web/src/app/util.py');
+  });
+
   it('extraRoots opens an escape hatch for unconventional layouts', () => {
     const fileSet = new Set(['lib/deep/ns/mod.py', 'main.py']);
     const index = buildModuleIndex(fileSet, ['lib/deep']);

@@ -140,4 +140,16 @@ describe('runDeterministic', () => {
     const finding = out.find((x) => x.tags?.[0] === 'no-print')!;
     expect(finding.prevalence).toBeCloseTo(0.5, 5);
   });
+
+  it('a rule whose language has ZERO sampled files stamps prevalence 0 via the whole-sample fallback', async () => {
+    // The diff file lives under vendor/ (SKIP_DIRS — excluded from the prevalence sample), so
+    // filesPerLang has no 'py' entry. The `|| files.length` fallback doubles as the divide-by-zero
+    // guard: the finding stamps 0 ("unmeasured reads as rare"), never Infinity/NaN.
+    mkdirSync(join(repo, 'vendor'), { recursive: true });
+    writeFileSync(join(repo, 'vendor/tool.py'), 'print("debug")\n');
+    const out = await runDeterministic(repo, diff(file({ path: 'vendor/tool.py', hunks: [] })));
+    const finding = out.find((x) => x.tags?.[0] === 'no-print')!;
+    expect(finding.prevalence).toBe(0);
+    expect(Number.isFinite(finding.prevalence)).toBe(true);
+  });
 });
