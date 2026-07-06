@@ -15,6 +15,7 @@ import { resolveConfig, symbolKey, type NormalizedDiff } from '@plex/core';
 import {
   buildCodeGraph,
   updateCodeGraph,
+  FullRebuildRequired,
   CodeGraphDB,
   getSymbolsInFile,
   getCoChangeEdges,
@@ -23,6 +24,7 @@ import {
   getMeta,
 } from '@plex/code-graph';
 import { computeNeighborhood } from '@plex/neighborhood';
+import { runDeterministic } from '@plex/deterministic';
 import { getChangedFileTexts } from '@plex/ingest';
 import { createEmbeddingProvider } from '@plex/knowledge';
 import {
@@ -531,6 +533,169 @@ test('incremental', 'code-graph: incremental update (ADR-25) — add/modify/dele
     } finally {
       await db.close();
     }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+/** src-layout Python repo: mypkg with an __init__.py barrel + relative imports + co-change history. */
+function makePyRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-py-'));
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 't@t.dev');
+  git(repo, 'config', 'user.name', 'Test');
+  mkdirSync(join(repo, 'src/mypkg'), { recursive: true });
+  mkdirSync(join(repo, 'tests'));
+  writeFileSync(join(repo, 'src/mypkg/__init__.py'), 'from .app import create_app\nfrom .db import connect\n');
+  writeFileSync(join(repo, 'src/mypkg/db.py'), 'def connect(url=None):\n    return url\n');
+  writeFileSync(
+    join(repo, 'src/mypkg/app.py'),
+    'from .db import connect\n\nclass App:\n    def __init__(self):\n        self.conn = connect()\n\n    def run(self):\n        pass\n\ndef create_app():\n    return App()\n',
+  );
+  writeFileSync(join(repo, 'tests/test_app.py'), 'from mypkg import create_app\n\ndef test_create():\n    assert create_app()\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'init');
+  for (let i = 0; i < 3; i++) {
+    appendFileSync(join(repo, 'src/mypkg/db.py'), `# rev ${i}\n`);
+    appendFileSync(join(repo, 'src/mypkg/app.py'), `# rev ${i}\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', `couple ${i}`);
+  }
+  return repo;
+}
+
+test('py-graph', 'code-graph: Python src-layout — dotted symbols, __init__ barrel, relative imports, blast radius (ADR-52)', async () => {
+  const repo = makePyRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-pydb-')), 'g.kuzu');
+  try {
+    const res = await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    assert.equal(res.files, 4);
+    assert.equal(res.symbols, 6, `connect, App, App.__init__, App.run, create_app, test_create (got ${res.symbols})`);
+    assert.equal(res.imports, 4, `__init__→{app,db}, app→db, test→__init__ (got ${res.imports})`);
+    assert.equal(res.coChangePairs, 1, 'db<->app couple survives minPairCount=2');
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const appSyms = (await getSymbolsInFile(db, 'src/mypkg/app.py')).map((s) => s.name);
+      assert.ok(appSyms.includes('App.__init__') && appSyms.includes('App.run'), `dotted methods: ${appSyms.join(',')}`);
+      // Absolute import through the src/ root: tests/test_app.py → the package __init__.
+      const testImports = await getImportEdges(db, ['tests/test_app.py']);
+      assert.ok(testImports.some((e) => e.dst === 'src/mypkg/__init__.py'), 'src-layout absolute import resolved');
+
+      // Blast radius of a db.py change: app.py couples via BOTH import and co-change, and the
+      // pure re-export __init__.py behaves as a transparent barrel (0 own symbols, degree ≥ 3).
+      const diff: NormalizedDiff = {
+        baseRef: 'HEAD',
+        files: [{ path: 'src/mypkg/db.py', status: 'modified', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, newRanges: [{ start: 1, end: 2 }] }] }],
+      };
+      const nb = await computeNeighborhood(db, 'r', diff, { maxHops: 2, maxNeighbors: 40, minScore: 0.01 });
+      assert.ok(nb.changed.map((c) => c.symbol).includes('connect'), 'changed lines map to the connect symbol');
+      const appN = nb.neighbors.find((n) => String(n.node.props.path) === 'src/mypkg/app.py');
+      assert.ok(appN, 'app.py in the radius');
+      assert.deepEqual(appN!.via.sort(), ['co-change', 'import']);
+      assert.ok(
+        nb.neighbors.some((n) => String(n.node.props.path) === 'tests/test_app.py'),
+        'the test file surfaces THROUGH the transparent __init__ barrel',
+      );
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('py-incremental', 'code-graph: a changed .py file is no longer dropped from the incremental delta (ADR-52)', async () => {
+  const repo = makePyRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-pyincdb-')), 'g.kuzu');
+  try {
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+
+    writeFileSync(join(repo, 'src/mypkg/cache.py'), 'def get(key):\n    return None\n');
+    appendFileSync(join(repo, 'src/mypkg/db.py'), 'def disconnect():\n    pass\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'mutate');
+
+    const res = await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    assert.equal(res.incremental, true);
+    assert.ok(res.added >= 1 && res.modified >= 1, `py delta present: a=${res.added} m=${res.modified}`);
+
+    const db = new CodeGraphDB(dbDir);
+    try {
+      assert.deepEqual((await getSymbolsInFile(db, 'src/mypkg/cache.py')).map((s) => s.name), ['get'], 'added .py extracted');
+      const dbSyms = (await getSymbolsInFile(db, 'src/mypkg/db.py')).map((s) => s.name);
+      assert.ok(dbSyms.includes('disconnect'), `modified .py re-extracted: ${dbSyms.join(',')}`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('graph-version', 'code-graph: an old graphVersion forces FullRebuildRequired (existing .py files are otherwise invisible)', async () => {
+  const repo = makeRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-gvdb-')), 'g.kuzu');
+  try {
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    const db = new CodeGraphDB(dbDir);
+    try {
+      await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'graphVersion', v: '1' }); // simulate a pre-upgrade graph
+    } finally {
+      await db.close();
+    }
+    await assert.rejects(
+      () => updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }),
+      (e: unknown) => e instanceof FullRebuildRequired,
+      'version mismatch must demand a full rebuild',
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('py-mixed', 'mixed TS+Python repo: one graph, one deterministic stream (ADR-52)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-mix-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-mixdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'src/util.ts'), 'export const u = 1;\n');
+    writeFileSync(join(repo, 'src/api.ts'), "import { u } from './util';\nexport function api() {\n  console.log(u);\n}\n");
+    writeFileSync(join(repo, 'src/pylib.py'), 'def helper():\n    return 1\n');
+    writeFileSync(join(repo, 'src/serve.py'), 'from pylib import helper\n\nclass Server:\n    def run(self):\n        print(helper())\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+
+    const res = await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    assert.equal(res.files, 4);
+    const db = new CodeGraphDB(dbDir);
+    try {
+      assert.ok((await getImportEdges(db, ['src/api.ts'])).some((e) => e.dst === 'src/util.ts'), 'TS import edge');
+      assert.ok((await getImportEdges(db, ['src/serve.py'])).some((e) => e.dst === 'src/pylib.py'), 'py import edge');
+      const serveSyms = (await getSymbolsInFile(db, 'src/serve.py')).map((s) => s.name);
+      assert.ok(serveSyms.includes('Server.run'), `dotted py method beside TS symbols: ${serveSyms.join(',')}`);
+    } finally {
+      await db.close();
+    }
+
+    // One deterministic stream over a mixed diff: both languages' rules fire together (no Kùzu).
+    const diff: NormalizedDiff = {
+      baseRef: 'HEAD',
+      files: [
+        { path: 'src/api.ts', status: 'modified', hunks: [] },
+        { path: 'src/serve.py', status: 'modified', hunks: [] },
+      ],
+    };
+    const rules = (await runDeterministic(repo, diff)).map((f) => f.tags?.[0]);
+    assert.ok(rules.includes('no-console'), `ts rule fired: ${rules.join(',')}`);
+    assert.ok(rules.includes('no-print'), `py rule fired: ${rules.join(',')}`);
   } finally {
     rmSync(repo, { recursive: true, force: true });
     rmSync(dbDir, { recursive: true, force: true });

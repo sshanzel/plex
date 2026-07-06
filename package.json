@@ -56,8 +56,9 @@
     "test:sweep": "pnpm build && node scripts/sweep-check.mjs",
     "test:cochange": "pnpm build && node scripts/cochange-check.mjs",
     "test:deletion": "pnpm build && node scripts/deleted-radius-check.mjs",
+    "test:py": "pnpm build && node scripts/py-check.mjs",
     "test:agent-tools": "node scripts/check-agent-tools.mjs",
-    "test:e2e": "pnpm test:brain && node scripts/worktree-seed-check.mjs && node scripts/sweep-check.mjs && node scripts/cochange-check.mjs && node scripts/deleted-radius-check.mjs",
+    "test:e2e": "pnpm test:brain && node scripts/worktree-seed-check.mjs && node scripts/sweep-check.mjs && node scripts/cochange-check.mjs && node scripts/deleted-radius-check.mjs && node scripts/py-check.mjs",
     "mcp": "tsx packages/mcp-server/src/index.ts",
     "plex": "tsx packages/cli/src/index.ts",
     "release": "node scripts/release.mjs"
