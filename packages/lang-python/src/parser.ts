@@ -1,0 +1,63 @@
+import { createRequire } from 'node:module';
+import { Parser, Language, type Tree } from 'web-tree-sitter';
+
+const require = createRequire(import.meta.url);
+
+let initPromise: Promise<void> | undefined;
+let parser: Parser | undefined;
+
+/**
+ * One-time wasm setup (web-tree-sitter runtime + the tree-sitter-python grammar, ADR-52) — idempotent
+ * and lazy, so TS-only repos never pay the load. The grammar wasm ships inside the tree-sitter-python
+ * npm package (no native build; its blocked node-gyp-build install script is irrelevant to the wasm).
+ */
+export function initPython(): Promise<void> {
+  initPromise ??= (async () => {
+    await Parser.init();
+    const lang = await Language.load(require.resolve('tree-sitter-python/tree-sitter-python.wasm'));
+    const p = new Parser();
+    p.setLanguage(lang);
+    parser = p;
+  })().catch((e: unknown) => {
+    // Never memoize a rejection: the MCP server is long-lived, so a transient load failure would
+    // otherwise poison Python support until reconnect. Clearing lets the next call retry.
+    initPromise = undefined;
+    throw e;
+  });
+  return initPromise;
+}
+
+/** `initPython` that reports instead of throwing — callers degrade to TS-only rather than failing
+ *  a whole index/review on a wasm load error (the embeddings "degrades, never fails" posture). */
+export async function tryInitPython(): Promise<boolean> {
+  try {
+    await initPython();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sources above this size are refused (throw → the callers' per-file guards skip the file). Real
+ * authored Python is orders of magnitude smaller; oversized `.py` is machine output that dodged the
+ * generated-artifact patterns. The cap matters because `WebAssembly.Memory` grows but never
+ * shrinks — one pathological parse would permanently balloon the long-lived MCP server's RSS
+ * (`tree.delete()` frees within the heap, not the reservation).
+ */
+export const MAX_PY_SOURCE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Parse one Python source — sync after `initPython()`. The caller MUST `tree.delete()` (in a
+ * `finally`): Emscripten heap memory is not GC'd, and leaking trees across a whole-repo index
+ * balloons the process.
+ */
+export function parsePython(text: string): Tree {
+  if (!parser) throw new Error('Python parser not initialized — await initPython() first');
+  if (text.length > MAX_PY_SOURCE_BYTES) {
+    throw new Error(`Python source exceeds the ${MAX_PY_SOURCE_BYTES}-byte parse cap — skipping`);
+  }
+  const tree = parser.parse(text);
+  if (!tree) throw new Error('Python parse returned no tree');
+  return tree;
+}

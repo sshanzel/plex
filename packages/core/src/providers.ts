@@ -32,7 +32,7 @@ const GENERATED_BASENAMES = new Set([
   'gemfile.lock', 'poetry.lock', 'uv.lock', 'pipfile.lock', 'go.sum',
   'flake.lock', 'packages.lock.json', 'podfile.lock', 'pubspec.lock', 'mix.lock',
 ]);
-const GENERATED_PATTERNS = [/\.min\.(js|mjs|cjs|css)$/, /\.(js|mjs|cjs|css)\.map$/, /\.snap$/];
+const GENERATED_PATTERNS = [/\.min\.(js|mjs|cjs|css)$/, /\.(js|mjs|cjs|css)\.map$/, /\.snap$/, /\.pyc$/, /_pb2(_grpc)?\.py$/];
 
 /** Is this path a machine-generated artifact Plex should never read? Applied at every ingestion edge. Pure; repo-relative POSIX. */
 export function isGeneratedArtifact(filePath: string): boolean {

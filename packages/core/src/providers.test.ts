@@ -117,6 +117,15 @@ describe('isGeneratedArtifact', () => {
       expect(isGeneratedArtifact(f)).toBe(false);
     }
   });
+
+  it('matches Python bytecode and protobuf codegen, never authored .py', () => {
+    for (const f of ['pkg/mod.pyc', 'proto/api_pb2.py', 'proto/api_pb2_grpc.py', 'poetry.lock', 'uv.lock']) {
+      expect(isGeneratedArtifact(f)).toBe(true);
+    }
+    for (const f of ['pkg/mod.py', 'pkg/pb2_helpers.py', 'notebooks/analysis.ipynb']) {
+      expect(isGeneratedArtifact(f)).toBe(false);
+    }
+  });
 });
 
 describe('slugify', () => {

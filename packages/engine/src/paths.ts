@@ -17,6 +17,7 @@ export interface RepoPaths {
   logFile: string;
   /** Indexed HEAD sha sidecar — staleness check without opening Kùzu (ADR-16/25). */
   headShaFile: string;
+  graphVersionFile: string;
   /** Plain-text file recording the absolute repoPath — lets `doctor` detect orphaned data dirs. */
   repoPathFile: string;
   /** Content-addressed embedding cache (stable, recurring texts e.g. finding titles). */
@@ -114,6 +115,7 @@ export function repoPaths(repoPath: string, dataDir?: string): RepoPaths {
     analyzeStateFile: path.join(reviewerDir, 'analyze-state.json'),
     logFile: path.join(reviewerDir, 'log', 'events.jsonl'),
     headShaFile: path.join(reviewerDir, 'head.sha'),
+    graphVersionFile: path.join(reviewerDir, 'graph.version'),
     repoPathFile: path.join(reviewerDir, 'repo-path'),
     embedCacheFile: path.join(reviewerDir, 'embed-cache.json'),
     sweepStateFile: path.join(reviewerDir, 'sweep-state.json'),

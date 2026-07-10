@@ -1,11 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { isGeneratedArtifact, type CoChangeConfig } from '@plex/core';
+import { isGeneratedArtifact, type CoChangeConfig, type LanguagePlugin, type SourceUnit } from '@plex/core';
 import { CodeGraphDB } from './db';
 import { initSchema } from './schema';
-import { extractFromSource, isSupportedSource, resolveRelativeImport } from './extract-ts';
+import { pluginFor, isSupportedSource } from './languages';
 import { aggregateCoChange, readCommits, headSha, changedSourceFilesSince, listWorktreeFiles } from './co-change';
-import { resolvePreciseImports, type PreciseImportInput } from './precise';
 import { getMeta, getCoChangeEdges, getImportEdges, getRefEdges, getCoChangeDegrees } from './query';
 
 // Fallback skip-list for a NON-git directory (a git repo respects .gitignore instead — see discoverFiles).
@@ -16,7 +15,17 @@ const SKIP_DIRS = new Set([
   'coverage',
   'out',
   '.plex',
+  'venv',
+  '__pycache__',
+  'site-packages',
 ]);
+
+/**
+ * Bumped when the extractor/graph shape changes in a way an incremental update can't reproduce —
+ * e.g. adding a language, whose existing (unchanged) files an incremental pass would never index.
+ * A mismatch throws `FullRebuildRequired`, so the first post-upgrade review full-rebuilds.
+ */
+export const GRAPH_VERSION = '2';
 
 /**
  * Collision-safe `Symbol.id` (`file#name#startLine`): a minified bundle can pack many declarations on
@@ -39,6 +48,9 @@ export interface BuildOptions {
   fresh?: boolean;
   /** Add precise (tsconfig-alias-aware) reference edges (default true). */
   precise?: boolean;
+  /** TEST SEAM: plugin-dispatch override so degradation paths (a runtime failing to load) are
+   *  pinnable without breaking a real wasm. Production always uses the default `pluginFor`. */
+  resolvePlugin?: (file: string) => LanguagePlugin | undefined;
 }
 
 export interface BuildResult {
@@ -48,6 +60,8 @@ export interface BuildResult {
   refs: number;
   coChangePairs: number;
   commits: number;
+  /** Present when a language runtime failed to load and its files were skipped (degraded build). */
+  skippedLanguages?: string[];
 }
 
 /** Raw graph edges of files an update DELETED, captured before their nodes were removed. Raw on
@@ -73,6 +87,92 @@ export interface UpdateResult extends BuildResult {
 /** Reason an incremental update couldn't run and a full rebuild is required. */
 export class FullRebuildRequired extends Error {}
 
+export interface ExtractBatch {
+  symbolRows: Record<string, unknown>[];
+  declareRows: Record<string, unknown>[];
+  importRows: { from: string; to: string }[];
+  refRows: { from: string; to: string }[];
+  /** Plugin ids whose runtime failed to load — their files were skipped, and the build must NOT be
+   *  stamped as version-current (the sidecar/version gate then retries until the language heals). */
+  skippedLanguages: string[];
+}
+
+/**
+ * Extraction + import resolution shared by the full build and the incremental update: per-file
+ * plugin dispatch in the given order (deterministic order keeps `uniqueSymbolId` suffixes stable
+ * across re-indexes), then ONE batch `resolve` per plugin (Python needs a whole-fileSet module
+ * index before any single import can resolve). Exported for unit tests (`resolvePlugin` injectable);
+ * production callers are the two build paths below.
+ */
+export async function extractAndResolve(
+  repoPath: string,
+  rels: readonly string[],
+  absByRel: ReadonlyMap<string, string>,
+  fileSet: ReadonlySet<string>,
+  precise: boolean,
+  resolvePlugin: (file: string) => LanguagePlugin | undefined = pluginFor,
+): Promise<ExtractBatch> {
+  const symbolRows: Record<string, unknown>[] = [];
+  const declareRows: Record<string, unknown>[] = [];
+  const seenSymbolIds = new Set<string>();
+  const unitsByPlugin = new Map<LanguagePlugin, SourceUnit[]>();
+  const failedPlugins = new Set<LanguagePlugin>();
+
+  for (const rel of rels) {
+    const plugin = resolvePlugin(rel);
+    if (!plugin || failedPlugins.has(plugin)) continue;
+    try {
+      await plugin.init?.();
+    } catch {
+      // Degrade, never fail: a broken language runtime (e.g. the wasm load) skips THAT language's
+      // files for this run instead of killing the whole index of a mixed repo.
+      failedPlugins.add(plugin);
+      continue;
+    }
+    let extracted;
+    try {
+      const text = await fs.readFile(absByRel.get(rel)!, 'utf8');
+      extracted = plugin.extract(rel, text);
+    } catch {
+      // Per-file guard, same spirit as uniqueSymbolId: ONE pathological file (unreadable, or an
+      // extractor throw on wasm memory exhaustion etc.) must never abort the whole index.
+      continue;
+    }
+    const { symbols, imports } = extracted;
+    for (const s of symbols) {
+      const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
+      symbolRows.push({
+        id,
+        name: s.name,
+        kind: s.kind,
+        file: rel,
+        startLine: s.startLine,
+        endLine: s.endLine,
+        exported: s.exported,
+      });
+      declareRows.push({ f: rel, s: id });
+    }
+    let units = unitsByPlugin.get(plugin);
+    if (!units) unitsByPlugin.set(plugin, (units = []));
+    units.push({ rel, abs: absByRel.get(rel)!, imports });
+  }
+
+  const importSeen = new Set<string>();
+  const importRows: { from: string; to: string }[] = [];
+  const refRows: { from: string; to: string }[] = [];
+  for (const [plugin, units] of unitsByPlugin) {
+    const resolved = plugin.resolve(repoPath, units, fileSet, { refs: precise });
+    for (const e of resolved.imports) {
+      const key = `${e.from}\t${e.to}`;
+      if (importSeen.has(key)) continue;
+      importSeen.add(key);
+      importRows.push(e);
+    }
+    refRows.push(...resolved.refs);
+  }
+  return { symbolRows, declareRows, importRows, refRows, skippedLanguages: [...failedPlugins].map((p) => p.id) };
+}
+
 const indexable = (relOrName: string): boolean =>
   isSupportedSource(relOrName) && !relOrName.endsWith('.d.ts') && !isGeneratedArtifact(relOrName);
 
@@ -91,7 +191,7 @@ async function discoverFiles(root: string): Promise<string[]> {
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.') || e.name.endsWith('.egg-info')) continue;
         await walk(full);
       } else if (e.isFile() && indexable(e.name)) {
         out.push(full);
@@ -128,71 +228,25 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
       })),
     );
 
-    let symbolCount = 0;
-    const symbolRows: Record<string, unknown>[] = [];
-    const declareRows: Record<string, unknown>[] = [];
-    const seenSymbolIds = new Set<string>();
-    const importEdges = new Set<string>();
-    const fileSpecifiers: PreciseImportInput[] = [];
-
-    for (let i = 0; i < absFiles.length; i++) {
-      const rel = relFiles[i]!;
-      let text: string;
-      try {
-        text = await fs.readFile(absFiles[i]!, 'utf8');
-      } catch {
-        continue;
-      }
-      const { symbols, imports } = extractFromSource(rel, text);
-      for (const s of symbols) {
-        const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
-        symbolRows.push({
-          id,
-          name: s.name,
-          kind: s.kind,
-          file: rel,
-          startLine: s.startLine,
-          endLine: s.endLine,
-          exported: s.exported,
-        });
-        declareRows.push({ f: rel, s: id });
-        symbolCount++;
-      }
-      for (const spec of imports) {
-        const target = resolveRelativeImport(rel, spec, fileSet);
-        if (target && target !== rel) importEdges.add(`${rel}\t${target}`);
-      }
-      fileSpecifiers.push({ rel, abs: absFiles[i]!, specifiers: imports });
-    }
+    const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
+    const batch = await extractAndResolve(repoPath, relFiles, absByRel, fileSet, opts.precise !== false, opts.resolvePlugin);
 
     await db.insertMany(
       'CREATE (:Symbol {id:$id, name:$name, kind:$kind, file:$file, startLine:$startLine, endLine:$endLine, exported:$exported})',
-      symbolRows,
+      batch.symbolRows,
     );
     await db.insertMany(
       'MATCH (f:File {id:$f}), (s:Symbol {id:$s}) CREATE (f)-[:Declares]->(s)',
-      declareRows,
+      batch.declareRows,
     );
-    const importRows = [...importEdges].map((e) => {
-      const [from, to] = e.split('\t');
-      return { from, to };
-    });
     await db.insertMany(
       'MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Imports]->(b)',
-      importRows,
+      batch.importRows,
     );
-
-    let refCount = 0;
-    if (opts.precise !== false) {
-      const precise = resolvePreciseImports(repoPath, fileSpecifiers, fileSet).filter(
-        (e) => !importEdges.has(`${e.from}\t${e.to}`),
-      );
-      await db.insertMany(
-        'MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)',
-        precise.map((e) => ({ from: e.from, to: e.to })),
-      );
-      refCount = precise.length;
-    }
+    await db.insertMany(
+      'MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)',
+      batch.refRows,
+    );
 
     let coChangePairs = 0;
     let commits = 0;
@@ -214,14 +268,21 @@ export async function buildCodeGraph(opts: BuildOptions): Promise<BuildResult> {
     const sha = await headSha(repoPath);
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'headSha', v: sha });
     await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'repo', v: repoName });
+    // A DEGRADED build (a language runtime failed to load, its files skipped) is never stamped
+    // version-current: the absent stamp makes the next incremental throw FullRebuildRequired, so
+    // the graph self-heals the moment the runtime loads again instead of staying silently partial.
+    if (batch.skippedLanguages.length === 0) {
+      await db.run('MERGE (m:Meta {key:$k}) SET m.val = $v', { k: 'graphVersion', v: GRAPH_VERSION });
+    }
 
     return {
       files: relFiles.length,
-      symbols: symbolCount,
-      imports: importRows.length,
-      refs: refCount,
+      symbols: batch.symbolRows.length,
+      imports: batch.importRows.length,
+      refs: batch.refRows.length,
       coChangePairs,
       commits,
+      ...(batch.skippedLanguages.length > 0 ? { skippedLanguages: batch.skippedLanguages } : {}),
     };
   } finally {
     await db.close();
@@ -242,6 +303,14 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
   try {
     const storedSha = await getMeta(db, 'headSha');
     if (!storedSha) throw new FullRebuildRequired('graph has no stored headSha; run a full index first');
+    const storedVersion = await getMeta(db, 'graphVersion');
+    if (storedVersion !== GRAPH_VERSION) {
+      // An older graph predates the current extractors (e.g. no Python symbols at all); incremental
+      // only touches CHANGED files, so it could never backfill — force the one-time full rebuild.
+      throw new FullRebuildRequired(
+        `graph version ${storedVersion ?? '(none)'} != ${GRAPH_VERSION}; extractors changed — full re-index required`,
+      );
+    }
     const delta = await changedSourceFilesSince(repoPath, storedSha);
     if (!delta) throw new FullRebuildRequired('cannot diff stored sha against HEAD (history rewritten?); run a full index');
 
@@ -249,6 +318,24 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     const relFiles = absFiles.map((f) => path.relative(repoPath, f).split(path.sep).join('/'));
     const fileSet = new Set(relFiles);
     const absByRel = new Map(relFiles.map((rel, i) => [rel, absFiles[i]!]));
+
+    // Preflight the language runtimes BEFORE any destructive step: the modified files' symbols are
+    // DETACH-DELETEd below, so a runtime that fails to load mid-update would ERASE them while
+    // headSha still advances. Failing over to the full rebuild keeps the graph consistent (the full
+    // build degrades by skipping the language and withholds the version stamp — see buildCodeGraph).
+    const resolvePlugin = opts.resolvePlugin ?? pluginFor;
+    const preflight = new Set<LanguagePlugin>();
+    for (const rel of [...delta.added, ...delta.modified]) {
+      const plugin = resolvePlugin(rel);
+      if (plugin) preflight.add(plugin);
+    }
+    for (const plugin of preflight) {
+      try {
+        await plugin.init?.();
+      } catch {
+        throw new FullRebuildRequired(`the '${plugin.id}' language runtime failed to load; falling back to a full rebuild`);
+      }
+    }
 
     // 1. Deleted (and rename-from): capture each file's edges FIRST within THIS open (re-opening the
     //    same Kùzu dir later in one process SIGSEGVs — ADR-17), THEN remove the File node + its Symbols.
@@ -279,49 +366,14 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       upserts.map((rel) => ({ id: rel, path: rel, repo: repoName, lang: path.extname(rel).slice(1) })),
     );
 
-    let symbolCount = 0;
-    const symbolRows: Record<string, unknown>[] = [];
-    const declareRows: Record<string, unknown>[] = [];
-    const seenSymbolIds = new Set<string>();
-    const importEdges = new Set<string>();
-    const fileSpecifiers: PreciseImportInput[] = [];
-    for (const rel of upserts) {
-      let text: string;
-      try {
-        text = await fs.readFile(absByRel.get(rel)!, 'utf8');
-      } catch {
-        continue;
-      }
-      const { symbols, imports } = extractFromSource(rel, text);
-      for (const s of symbols) {
-        const id = uniqueSymbolId(`${rel}#${s.name}#${s.startLine}`, seenSymbolIds);
-        symbolRows.push({ id, name: s.name, kind: s.kind, file: rel, startLine: s.startLine, endLine: s.endLine, exported: s.exported });
-        declareRows.push({ f: rel, s: id });
-        symbolCount++;
-      }
-      for (const spec of imports) {
-        const target = resolveRelativeImport(rel, spec, fileSet);
-        if (target && target !== rel) importEdges.add(`${rel}\t${target}`);
-      }
-      fileSpecifiers.push({ rel, abs: absByRel.get(rel)!, specifiers: imports });
-    }
+    const batch = await extractAndResolve(repoPath, upserts, absByRel, fileSet, opts.precise !== false, opts.resolvePlugin);
     await db.insertMany(
       'CREATE (:Symbol {id:$id, name:$name, kind:$kind, file:$file, startLine:$startLine, endLine:$endLine, exported:$exported})',
-      symbolRows,
+      batch.symbolRows,
     );
-    await db.insertMany('MATCH (f:File {id:$f}), (s:Symbol {id:$s}) CREATE (f)-[:Declares]->(s)', declareRows);
-    const importRows = [...importEdges].map((e) => {
-      const [from, to] = e.split('\t');
-      return { from, to };
-    });
-    await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Imports]->(b)', importRows);
-
-    let refCount = 0;
-    if (opts.precise !== false) {
-      const precise = resolvePreciseImports(repoPath, fileSpecifiers, fileSet).filter((e) => !importEdges.has(`${e.from}\t${e.to}`));
-      await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)', precise.map((e) => ({ from: e.from, to: e.to })));
-      refCount = precise.length;
-    }
+    await db.insertMany('MATCH (f:File {id:$f}), (s:Symbol {id:$s}) CREATE (f)-[:Declares]->(s)', batch.declareRows);
+    await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Imports]->(b)', batch.importRows);
+    await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)', batch.refRows);
 
     // 5. Co-change: merge ONLY the commits since the last index (ADR-26) — accumulate onto stored
     //    pairs; new commits land at full recency (no epoch bookkeeping; decay re-baselines on a full build).
@@ -394,12 +446,13 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
       added: delta.added.length,
       modified: delta.modified.length,
       deleted: delta.deleted.length,
-      symbols: symbolCount,
-      imports: importRows.length,
-      refs: refCount,
+      symbols: batch.symbolRows.length,
+      imports: batch.importRows.length,
+      refs: batch.refRows.length,
       coChangePairs,
       commits,
       deletedEdges,
+      ...(batch.skippedLanguages.length > 0 ? { skippedLanguages: batch.skippedLanguages } : {}),
     };
   } finally {
     await db.close();

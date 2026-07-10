@@ -223,6 +223,11 @@ async function main(): Promise<number> {
             `Graph: ${res.graphDir}\n`,
         );
       }
+      if (res.skippedLanguages?.length) {
+        process.stderr.write(
+          `⚠ ${res.skippedLanguages.join(', ')} extraction unavailable (runtime failed to load) — those files were skipped; the next review retries automatically.\n`,
+        );
+      }
       return 0;
     }
     // INTERNAL (omitted from USAGE): `review --json` and `blast` exist to drive the engine through the
@@ -251,7 +256,7 @@ async function main(): Promise<number> {
       const repoPath = positionals[1] ?? process.cwd();
       const files = typeof flags.files === 'string' ? flags.files.split(',').map((s) => s.trim()) : [];
       if (files.length === 0) {
-        process.stderr.write('blast requires --files <a.ts,b.ts>\n');
+        process.stderr.write('blast requires --files <a.ts,b.py>\n');
         return 1;
       }
       const neighbors = await blastRadius(repoPath, files, config);

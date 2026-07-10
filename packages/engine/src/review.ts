@@ -18,6 +18,7 @@ import {
   buildCodeGraph,
   updateCodeGraph,
   FullRebuildRequired,
+  GRAPH_VERSION,
   getMeta,
   commitsBehind,
   getCoChangeEdges,
@@ -38,7 +39,7 @@ import { isDebounced } from './sweep-helpers';
 import { resolveDiff, type DiffSource } from './diff';
 import { resolveChangeContext } from './change-context';
 import { reviewTargetFor } from './target';
-import { recordableHeadSha, priorRoundHeadSha } from './guards';
+import { recordableHeadSha, priorRoundHeadSha, graphStaleDecision, graphStaleNote, type GraphStaleness } from './guards';
 import { createEmbeddingProvider, buildKnowledgeGraph } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
@@ -59,11 +60,15 @@ export async function indexRepo(
   ensureDataDir(p.reviewerDir);
   // Record this repo's path for orphan detection in `doctor gc`.
   try { writeFileSync(p.repoPathFile, p.repoPath, 'utf8'); } catch { /* best-effort */ }
-  const stamp = async (): Promise<void> => {
-    // Sidecar sha so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25).
+  const stamp = async (skippedLanguages?: string[]): Promise<void> => {
+    // Sidecar sha + graph version so reviews can check staleness WITHOUT opening Kùzu (ADR-16/25).
+    // A DEGRADED build (a language runtime failed to load) withholds the version sidecar — the
+    // review-time version gate then keeps refreshing until the language heals (ADR-52).
     try {
       mkdirSync(path.dirname(p.headShaFile), { recursive: true });
       writeFileSync(p.headShaFile, await getHeadSha(p.repoPath), 'utf8');
+      if (skippedLanguages?.length) rmSync(p.graphVersionFile, { force: true });
+      else writeFileSync(p.graphVersionFile, GRAPH_VERSION, 'utf8');
     } catch {
       /* best-effort */
     }
@@ -83,7 +88,7 @@ export async function indexRepo(
     try {
       const res = await updateCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
       persistDeleted(res);
-      await stamp();
+      await stamp(res.skippedLanguages);
       return { ...res, graphDir: p.graphDir };
     } catch (e) {
       if (!(e instanceof FullRebuildRequired)) throw e;
@@ -113,7 +118,7 @@ export async function indexRepo(
         } catch {
           /* best-effort */
         }
-        await stamp();
+        await stamp(res.skippedLanguages);
         return { ...res, graphDir: p.graphDir, seeded: true };
       } catch {
         rmSync(p.graphDir, { recursive: true, force: true }); // partial/corrupt copy → fall through to a full build
@@ -122,7 +127,7 @@ export async function indexRepo(
   }
 
   const res = await buildCodeGraph({ repoPath: p.repoPath, dbDir: p.graphDir, coChange: config.coChange });
-  await stamp();
+  await stamp(res.skippedLanguages);
   return { ...res, graphDir: p.graphDir, incremental: false };
 }
 
@@ -308,14 +313,7 @@ export function maybeSpawnSweep(repoPath: string, config: ReviewerConfig, force 
   }
 }
 
-/** Is the code graph behind the working HEAD? (ADR-25 staleness signal.) */
-export interface GraphStaleness {
-  indexedSha?: string;
-  /** Commits HEAD is ahead of the indexed sha (0 = fresh, -1 = unknown). */
-  behind: number;
-  /** True when the review auto-refreshed the graph (incremental) before proceeding. */
-  refreshed?: boolean;
-}
+export type { GraphStaleness } from './guards';
 
 /** The grounded bundle handed to a fresh reviewing agent (ADR-02/03). */
 export interface ReviewContext {
@@ -604,11 +602,17 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
   {
     const indexedSha = readIndexedSha(graphP.headShaFile);
     const behind = indexedSha ? await commitsBehind(graphP.repoPath, indexedSha) : -1;
-    if (indexedSha && behind > 0 && opts.autoIndex !== false) {
-      const refreshed = indexIsolated(graphP.repoPath, true);
-      graphStale = { indexedSha, behind, refreshed };
-    } else if (!indexedSha || behind !== 0) {
-      graphStale = { indexedSha, behind, refreshed: false };
+    const versionMismatch = readIndexedSha(graphP.graphVersionFile) !== GRAPH_VERSION;
+    // Pure decision (guards.ts, unit-tested): the ADR-52 version gate fires even at behind === 0.
+    const plan = graphStaleDecision({ indexedSha, behind, versionMismatch, autoIndex: opts.autoIndex !== false });
+    graphStale = plan.stale;
+    if (plan.shouldRefresh && graphStale) {
+      graphStale.refreshed = indexIsolated(graphP.repoPath, true);
+      // An exit-0 rebuild can still be DEGRADED (a language runtime failed to load) — the child
+      // then withholds the version sidecar. Re-read it so the note never overstates coverage.
+      if (graphStale.refreshed && readIndexedSha(graphP.graphVersionFile) !== GRAPH_VERSION) {
+        graphStale.degraded = true;
+      }
     }
   }
 
@@ -788,13 +792,7 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
             `${diff.generatedPaths.length} machine-generated file(s) changed in this diff but are excluded from review (${diff.generatedPaths.join(', ')}). Mention this as a fact; a lockfile change with NO matching manifest edit can be a supply-chain signal worth confirming.`,
           ]
         : []),
-      ...(graphStale?.refreshed
-        ? [`The code graph was ${graphStale.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`]
-        : graphStale
-          ? [
-              `The code graph is ${graphStale.behind > 0 ? `${graphStale.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Re-index (\`plex index --incremental\`).`,
-            ]
-          : []),
+      ...(graphStaleNote(graphStale) ? [graphStaleNote(graphStale)!] : []),
     ],
   };
 }

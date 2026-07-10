@@ -1,7 +1,8 @@
 # @plex/code-graph
 
-The per-repo **Kùzu code graph**: TS/JS symbols + imports (TS compiler API, ADR-15) and
-git **co-change** coupling (ADR-06), built once and refreshed incrementally (ADR-25/26).
+The per-repo **Kùzu code graph**: symbols + imports per language — TS/JS via the TS compiler API
+(ADR-15), Python via `@plex/lang-python` (tree-sitter WASM, ADR-52) — and git **co-change**
+coupling (ADR-06), built once and refreshed incrementally (ADR-25/26).
 In the review flow it is the durable substrate that `@plex/neighborhood` walks to compute
 a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/graph.kuzu`
 (see the root `AGENTS.md`; the data dir is owned by the engine, not this package).
@@ -12,6 +13,9 @@ a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/gr
   `$params`, bulk `insertMany`, lock-error → `RepoBusyError`, ordered close.
 - `src/schema.ts` — DDL: `File` / `Symbol` / `Meta` nodes; `Declares` / `Imports` /
   `Refs` / `CoChange` rel tables.
+- `src/languages.ts` — the `LanguagePlugin` dispatch (ADR-52): `tsPlugin` (adapter over the
+  three TS functions), `pluginFor(file)`, and the union `isSupportedSource` — THE file allowlist
+  every gate shares (`build.ts` `indexable`, `co-change.ts` `isIndexable`).
 - `src/extract-ts.ts` — single-SourceFile structural extraction (symbols + raw import
   specifiers) and the relative-import resolver. No type checker.
 - `src/precise.ts` — tsconfig-aware (`paths`/`baseUrl`) module resolution via
@@ -19,7 +23,11 @@ a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/gr
 - `src/co-change.ts` — pure `aggregateCoChange` (the weighting math) + the impure git
   readers (`readCommits`, `changedSourceFilesSince`, `headSha`, `commitsBehind`).
 - `src/build.ts` — `buildCodeGraph` (full) and `updateCodeGraph` (incremental, ADR-25/26);
-  throws `FullRebuildRequired` when incremental can't run.
+  both share `extractAndResolve` (per-file plugin dispatch in discovery order + ONE batch
+  `resolve` per plugin); throws `FullRebuildRequired` when incremental can't run — including on a
+  **`Meta.graphVersion` mismatch** (bump `GRAPH_VERSION` when extractor output changes in a way
+  incremental can't reproduce, e.g. adding a language: existing unchanged files would never
+  backfill).
 - `src/query.ts` — read surface: symbols per file, undirected edge/degree queries used by
   the neighborhood walk, `getBarrelFiles` (re-export plumbing — 0 own symbols + import
   degree ≥ 3 — which the walk treats as transparent), `getMeta`.

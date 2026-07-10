@@ -107,4 +107,49 @@ describe('runDeterministic', () => {
     const out = await runDeterministic(repo, diff(file()), { rulePrevalence: false });
     expect(out[0]!.prevalence).toBeUndefined();
   });
+
+  it('analyzes a .py diff file (Python is a supported language, ADR-52)', async () => {
+    writeFileSync(join(repo, 'src/tool.py'), 'x = 1\nprint("debug")\n');
+    const out = await runDeterministic(
+      repo,
+      diff(file({ path: 'src/tool.py', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, newRanges: [{ start: 2, end: 2 }] }] })),
+    );
+    expect(out.map((x) => x.tags?.[0])).toContain('no-print');
+    expect(out[0]!.id).toContain('det:no-print:src/tool.py');
+  });
+
+  it('a mixed TS+py diff yields one stream with both languages', async () => {
+    writeFileSync(join(repo, 'src/tool.py'), 'print("debug")\n');
+    const both: NormalizedDiff = {
+      baseRef: 'main',
+      files: [file(), file({ path: 'src/tool.py', hunks: [] })],
+    };
+    const out = await runDeterministic(repo, both);
+    const rules = out.map((x) => x.tags?.[0]);
+    expect(rules).toContain('no-console');
+    expect(rules).toContain('no-print');
+  });
+
+  it('prevalence denominators are PER LANGUAGE (a py rule over py files only)', async () => {
+    // 2 py files (1 printing) + the 3 extra ts files → no-print prevalence must be 1/2, not 1/5.
+    writeFileSync(join(repo, 'src/tool.py'), 'print("debug")\n');
+    writeFileSync(join(repo, 'src/clean.py'), 'x = 1\n');
+    writeFileSync(join(repo, 'src/c.ts'), 'export const clean = 1;\n');
+    writeFileSync(join(repo, 'src/d.ts'), 'export const alsoClean = 2;\n');
+    const out = await runDeterministic(repo, diff(file({ path: 'src/tool.py', hunks: [] })));
+    const finding = out.find((x) => x.tags?.[0] === 'no-print')!;
+    expect(finding.prevalence).toBeCloseTo(0.5, 5);
+  });
+
+  it('a rule whose language has ZERO sampled files stamps prevalence 0 via the whole-sample fallback', async () => {
+    // The diff file lives under vendor/ (SKIP_DIRS — excluded from the prevalence sample), so
+    // filesPerLang has no 'py' entry. The `|| files.length` fallback doubles as the divide-by-zero
+    // guard: the finding stamps 0 ("unmeasured reads as rare"), never Infinity/NaN.
+    mkdirSync(join(repo, 'vendor'), { recursive: true });
+    writeFileSync(join(repo, 'vendor/tool.py'), 'print("debug")\n');
+    const out = await runDeterministic(repo, diff(file({ path: 'vendor/tool.py', hunks: [] })));
+    const finding = out.find((x) => x.tags?.[0] === 'no-print')!;
+    expect(finding.prevalence).toBe(0);
+    expect(Number.isFinite(finding.prevalence)).toBe(true);
+  });
 });

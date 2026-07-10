@@ -14,6 +14,7 @@ export default defineConfig({
       '@plex/neighborhood': pkg('neighborhood'),
       '@plex/engine': pkg('engine'),
       '@plex/knowledge': pkg('knowledge'),
+      '@plex/lang-python': pkg('lang-python'),
       '@plex/distill': pkg('distill'),
       '@plex/deterministic': pkg('deterministic'),
       '@plex/findings': pkg('findings'),

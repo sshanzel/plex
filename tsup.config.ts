@@ -17,7 +17,9 @@ export default defineConfig({
   // Bundle only our own workspace source; every third-party dep (esp. the native Kùzu
   // CJS addon, which cannot be ESM-bundled) stays external and resolves from node_modules.
   noExternal: [/^@plex\//],
-  external: ['kuzu', 'typescript', '@modelcontextprotocol/sdk', 'zod', 'parse-diff'],
+  // web-tree-sitter must also stay unbundled: its Emscripten glue locates web-tree-sitter.wasm
+  // relative to its own module file — bundling re-anchors import.meta.url to dist/ and breaks it.
+  external: ['kuzu', 'typescript', '@modelcontextprotocol/sdk', 'zod', 'parse-diff', 'web-tree-sitter', 'tree-sitter-python'],
   outDir: 'dist',
   clean: true,
 });

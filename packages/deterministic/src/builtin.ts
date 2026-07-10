@@ -17,11 +17,6 @@ export interface RawFinding {
   symbol?: string;
 }
 
-const TS_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
-export function isSupportedSource(file: string): boolean {
-  return TS_EXTS.has(path.extname(file));
-}
-
 function scriptKind(file: string): ts.ScriptKind {
   const ext = path.extname(file);
   if (ext === '.tsx') return ts.ScriptKind.TSX;

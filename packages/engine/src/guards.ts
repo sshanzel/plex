@@ -29,6 +29,64 @@ export function priorRoundHeadSha(rounds: ReadonlyArray<{ n: number; headSha?: s
   return best?.headSha;
 }
 
+/** Is the code graph behind the working HEAD? (ADR-25 staleness signal; ADR-52 version gate.) */
+export interface GraphStaleness {
+  indexedSha?: string;
+  /** Commits HEAD is ahead of the indexed sha (0 = fresh, -1 = unknown). */
+  behind: number;
+  /** True when the review auto-refreshed the graph (incremental) before proceeding. */
+  refreshed?: boolean;
+  /** True when the graph predates the current extractors (sidecar graph.version mismatch, ADR-52) —
+   *  fires even at behind === 0, e.g. the first review after upgrading Plex at an unchanged HEAD. */
+  versionMismatch?: boolean;
+  /** True when a refresh RAN but left the version sidecar non-current — the rebuild degraded (a
+   *  language runtime failed to load), so that language's files are missing from the graph. */
+  degraded?: boolean;
+}
+
+/**
+ * The staleness gate's decision (pure): whether to auto-refresh, and what to report. The version
+ * gate fires even at `behind === 0` (ADR-52) — after a Plex upgrade, a graph indexed by the OLD
+ * extractors is silently missing whole languages, and only a refresh (which lands on
+ * `updateCodeGraph`'s Meta.graphVersion check → FullRebuildRequired → full rebuild) heals it. A
+ * missing sidecar (legacy install, or a prior DEGRADED build that withheld the stamp) counts as a
+ * mismatch — which is also what makes a degraded graph self-heal on later reviews. With
+ * `autoIndex: false` a mismatch is REPORTED, never rebuilt. `stale.refreshed`/`degraded` are the
+ * caller's to fill after it actually runs the refresh.
+ */
+export function graphStaleDecision(input: {
+  indexedSha: string | undefined;
+  behind: number;
+  versionMismatch: boolean;
+  autoIndex: boolean;
+}): { shouldRefresh: boolean; stale?: GraphStaleness } {
+  const { indexedSha, behind, versionMismatch, autoIndex } = input;
+  const flag = versionMismatch ? { versionMismatch } : {};
+  if (indexedSha && (behind > 0 || versionMismatch) && autoIndex) {
+    return { shouldRefresh: true, stale: { indexedSha, behind, refreshed: false, ...flag } };
+  }
+  if (!indexedSha || behind !== 0 || versionMismatch) {
+    return { shouldRefresh: false, stale: { indexedSha, behind, refreshed: false, ...flag } };
+  }
+  return { shouldRefresh: false };
+}
+
+/** The agent-facing staleness note (pure) — must never overstate the graph's coverage: a refresh
+ *  that ran DEGRADED says so instead of claiming a current blast radius. */
+export function graphStaleNote(gs: GraphStaleness | undefined): string | undefined {
+  if (!gs) return undefined;
+  if (gs.refreshed) {
+    if (gs.degraded) {
+      return 'The code graph was auto-rebuilt before this review but the rebuild ran DEGRADED — a language runtime failed to load, so that language\'s files are missing from the graph and blast radius under-reports their couplings. It self-heals on a later review once the runtime loads.';
+    }
+    if (gs.versionMismatch) {
+      return 'The code graph predated the current extractors (Plex upgrade) and was auto-rebuilt before this review — blast radius is current.';
+    }
+    return `The code graph was ${gs.behind} commit(s) behind HEAD and was auto-refreshed (incremental) before this review — blast radius is current.`;
+  }
+  return `The code graph is ${gs.behind > 0 ? `${gs.behind} commit(s) behind` : 'out of sync with'} HEAD — blast radius may miss recently-changed or brand-new files. Re-index (\`plex index --incremental\`).`;
+}
+
 /** Maps an explicit verdict kind to the brain `Finding.outcome` it projects. Unknown kinds → no projection. */
 export const OUTCOME_BY_KIND: Record<string, string> = {
   accept: 'accepted',

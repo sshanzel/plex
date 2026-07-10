@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isGeneratedArtifact, retryTransientSpawn } from '@plex/core';
-import { isSupportedSource } from './extract-ts';
+import { isSupportedSource } from './languages';
 
 const pexec = promisify(execFile);
 const GIT_MAX_BUFFER = 256 * 1024 * 1024;

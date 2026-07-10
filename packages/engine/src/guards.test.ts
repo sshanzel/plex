@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { recordableHeadSha, priorRoundHeadSha, OUTCOME_BY_KIND, projectableOutcome } from './guards';
+import { recordableHeadSha, priorRoundHeadSha, OUTCOME_BY_KIND, projectableOutcome, graphStaleDecision, graphStaleNote } from './guards';
 
 // #2 + PR #10 review: never persist a round with an empty headSha (poisons the next anchor), but
 // carry the last anchor forward rather than skipping outright (a skipped round drops comments + fakes
@@ -60,5 +60,56 @@ describe('projectableOutcome', () => {
   });
   it('returns null for an unknown kind even with a valid findingId', () => {
     expect(projectableOutcome('bogus', 'f1')).toBeNull();
+  });
+});
+
+describe('graphStaleDecision (ADR-25 drift + ADR-52 version gate)', () => {
+  const base = { indexedSha: 'abc', behind: 0, versionMismatch: false, autoIndex: true };
+
+  it('fresh graph, current version → nothing to report', () => {
+    expect(graphStaleDecision(base)).toEqual({ shouldRefresh: false });
+  });
+  it('drift (behind > 0) → refresh', () => {
+    const d = graphStaleDecision({ ...base, behind: 3 });
+    expect(d.shouldRefresh).toBe(true);
+    expect(d.stale).toMatchObject({ behind: 3 });
+  });
+  it('version mismatch at behind === 0 → refresh (the post-upgrade case)', () => {
+    const d = graphStaleDecision({ ...base, versionMismatch: true });
+    expect(d.shouldRefresh).toBe(true);
+    expect(d.stale).toMatchObject({ versionMismatch: true, behind: 0 });
+  });
+  it('autoIndex: false + version mismatch → REPORTED, never rebuilt', () => {
+    const d = graphStaleDecision({ ...base, versionMismatch: true, autoIndex: false });
+    expect(d.shouldRefresh).toBe(false);
+    expect(d.stale).toMatchObject({ versionMismatch: true, refreshed: false });
+  });
+  it('unknown index (no sidecar sha) → reported, not refreshed (ADR-25: no surprise full rebuild)', () => {
+    const d = graphStaleDecision({ ...base, indexedSha: undefined, behind: -1 });
+    expect(d.shouldRefresh).toBe(false);
+    expect(d.stale).toMatchObject({ behind: -1, refreshed: false });
+  });
+});
+
+describe('graphStaleNote — never overstates graph coverage', () => {
+  it('no staleness → no note', () => {
+    expect(graphStaleNote(undefined)).toBeUndefined();
+  });
+  it('drift refresh → "blast radius is current"', () => {
+    expect(graphStaleNote({ behind: 2, refreshed: true })).toContain('blast radius is current');
+  });
+  it('version-mismatch refresh → the upgrade wording, not "0 commits behind"', () => {
+    const note = graphStaleNote({ behind: 0, refreshed: true, versionMismatch: true })!;
+    expect(note).toContain('predated the current extractors');
+    expect(note).not.toContain('0 commit');
+  });
+  it('a DEGRADED refresh says so instead of claiming currency', () => {
+    const note = graphStaleNote({ behind: 0, refreshed: true, versionMismatch: true, degraded: true })!;
+    expect(note).toContain('DEGRADED');
+    expect(note).not.toContain('blast radius is current');
+  });
+  it('unrefreshed staleness → the re-index nudge', () => {
+    expect(graphStaleNote({ behind: 4, refreshed: false })).toContain('4 commit(s) behind');
+    expect(graphStaleNote({ behind: 0, refreshed: false, versionMismatch: true })).toContain('out of sync');
   });
 });

@@ -1,8 +1,8 @@
 # @plex/deterministic
 
 The **codified-checks source**: deterministic findings over a diff's changed files, restricted to
-changed lines, via a set of built-in TS-AST rules (the TypeScript compiler API — ADR-15, no
-tree-sitter). This is the **always-on structural layer** — the complement to the agent's judgment
+changed lines, via built-in per-language rule sets — TS/JS on the TypeScript compiler API
+(ADR-15) and Python on tree-sitter WASM via `@plex/lang-python` (ADR-52). This is the **always-on structural layer** — the complement to the agent's judgment
 (ADR-03's third leg): 100% recall on each rule's pattern, ~free, reproducible, and what feeds
 measured prevalence. Output is plain `Finding[]` with `source: 'deterministic'` — these merge into
 the **same ranked stream** as the agent's findings. Decision log:
@@ -20,8 +20,10 @@ confidence in `@plex/findings`), and a rule the agent missed still reaches the u
 
 | File | Responsibility |
 |---|---|
-| `src/builtin.ts` | `analyzeSource` — the built-in TS-AST rules over one source file (pure); `isSupportedSource` |
-| `src/runner.ts` | `runDeterministic` — walk the diff's files, read from disk, scope to changed lines, `RawFinding` → `Finding` |
+| `src/builtin.ts` | `analyzeSource` — the built-in TS-AST rules over one source file (pure) |
+| `src/builtin-py.ts` | `analyzePySource` — the Python rules over a tree-sitter parse (pure, sync after `initPython()`); `PY_RULES` |
+| `src/analyze.ts` | the ONLY dispatch point: `analyzerFor(file)` capability map, `ruleLanguage(rule)`, back-compat `isSupportedSource` |
+| `src/runner.ts` | `runDeterministic` — walk the diff's files, read from disk, scope to changed lines, `RawFinding` → `Finding`; hoists the async wasm init; per-language prevalence |
 | `src/index.ts` | Barrel |
 
 ## The rules (`src/builtin.ts`)
@@ -37,6 +39,22 @@ real `improvement` we're 0.85 sure about, not a "nit".
 | `no-console` | `console.<method>(...)` call | nit | 0.6 |
 | `no-empty-catch` | `catch` with an empty block | improvement | 0.85 |
 
+Python rules (`src/builtin-py.ts`, ADR-52 — rule ids are 1:1 per language, so `pattern-repo`
+waivers and prevalence never cross languages):
+
+| Rule | Trigger | Severity | Confidence |
+|---|---|---|---|
+| `no-breakpoint` | `breakpoint()`, `pdb`/`ipdb` `.set_trace()`, `pdb`/`ipdb` imports | bug | 0.95 |
+| `mutable-default-arg` | list/dict/set literal, comprehension, or bare `list`/`dict`/`set` call as a parameter default | bug | 0.9 |
+| `no-return-in-finally` | `return` whose nearest {`finally`, def, lambda} ancestor is the `finally` | bug | 0.85 |
+| `no-bare-except` | `except:` with no type and a real body | improvement | 0.9 |
+| `no-silent-except` | except body solely `pass`/`...` — priority over bare (ONE finding per clause) | improvement | 0.85 |
+| `use-is-none` | `==`/`!=` **adjacent** to a `None` operand (`a == b is None` exempt) | nit | 0.9 |
+| `no-print` | bare `print(...)` — 0.5 (below `no-console`): CLIs print; measured prevalence demotes per repo | nit | 0.5 |
+
+Python rule walks **skip `ERROR` subtrees** (tree-sitter parses broken files tolerantly; no
+phantom findings mid-edit). Rejected rules + reasons: `docs/design/python-support.md`.
+
 > **Removed:** `no-await-in-loop` (`await` lexically inside a loop, improvement @ 0.55) — a
 > low-confidence perf heuristic that's frequently intentional (sequential ordering). It fired
 > unconditionally on every diff, and because deterministic rules have **no confidence-feedback
@@ -46,17 +64,21 @@ real `improvement` we're 0.85 sure about, not a "nit".
 `analyzeSource` is a single recursive `visit(node)` over a `ts.createSourceFile` AST (no
 type checker — syntax only).
 Lines are 1-based via `getLineAndCharacterOfPosition`. `scriptKind` maps the extension so `.tsx`
-/`.jsx`/plain JS parse correctly; `isSupportedSource` accepts
-`.ts .tsx .js .jsx .mts .cts .mjs .cjs` (`TS_EXTS`) — anything else is skipped.
+/`.jsx`/plain JS parse correctly. Which files are analyzed at all is decided by `analyzerFor`
+(`src/analyze.ts`, keyed on `@plex/core` `languageOf`) — a file whose language has no analyzer is
+skipped.
 
 **Enclosing symbol (ADR-48).** Each `RawFinding` carries `symbol?` = the nearest enclosing named
 declaration (`enclosingSymbol` walks the parent chain: function/method/accessor/class, or a
 `const f = () => …` / `const f = function …` binding; undefined at top level) → `Finding.location.symbol`.
 This is what lets **location-scoped suppression** (ADR-48) scope a deterministic dismissal to its
 symbol — without it a `no-console` dismissal could only ever go repo-wide. The name is **stable across
-rounds** (re-derived from the same AST), which is all the symbol-scoping match needs; it intentionally
-does **not** mirror the code graph's `Class.method` qualification (a same-named method in two classes
-in one file could collide — rare, accepted).
+rounds** (re-derived from the same AST), which is all the symbol-scoping match needs. The TS walker
+intentionally does **not** mirror the code graph's `Class.method` qualification (a same-named method in
+two classes in one file could collide — rare, accepted). **The Python walker DOES qualify
+(`Class.method`, innermost class)** — a deliberate divergence: dunders (`__init__` in every class)
+collide constantly, which would over-broaden suppression; dotting also makes deterministic symbols
+equal the graph extractor's names (cross-pinned by a test in `builtin-py.test.ts`).
 
 ## The runner (`src/runner.ts`)
 
@@ -68,7 +90,8 @@ belt-and-suspenders for hand-built diffs; normalization already drops them):
    failure (file missing on disk) skips the file silently.
 2. Collect changed ranges: `ranges = f.hunks.flatMap((h) => h.newRanges)` (new-side line ranges
    from `@plex/ingest`'s `NormalizedDiff`).
-3. Run `analyzeSource`, keep a raw finding only if it **overlaps a changed range**
+3. Run the file's language analyzer (`analyzerFor` — `.py` inits the wasm parser once, hoisted
+   before the loop), keep a raw finding only if it **overlaps a changed range**
    (`raw.startLine <= r.end && r.start <= raw.endLine`) — review new code, not old.
    `onlyChangedRanges: false` disables the filter (whole-file scan).
 4. Convert to `Finding`: id `det:<rule>:<file>:<startLine>`, `source: 'deterministic'`,

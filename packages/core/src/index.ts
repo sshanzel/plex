@@ -1,5 +1,6 @@
 export * from './types';
 export * from './providers';
+export * from './lang';
 export * from './config';
 export * from './errors';
 export * from './spawn-retry';
