@@ -160,6 +160,15 @@ class _K:
     expect(sym(src, 'loads')).toMatchObject({ kind: 'function', exported: true });
   });
 
+  it('a def under a module-level except* arm keeps module-level semantics (PEP 654 grammar pin)', () => {
+    const src = `try:
+    from fast import loads
+except* ImportError:
+    def loads(s): return s
+`;
+    expect(sym(src, 'loads')).toMatchObject({ kind: 'function', exported: true });
+  });
+
   it('module-level lambda assignment is a const (arrow-fn mirror); plain constants are not captured', () => {
     const src = `handler = lambda x: x
 FOO = 1

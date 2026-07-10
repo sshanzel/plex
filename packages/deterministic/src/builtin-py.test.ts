@@ -106,6 +106,13 @@ describe('except priority — exactly one finding per clause', () => {
   it('typed except with a real body → clean', () => {
     expect(rulesOf('try:\n    pass\nexcept ValueError as e:\n    raise\n')).toEqual([]);
   });
+
+  it('except* (PEP 654 exception groups) is covered — the grammar parses it as except_clause', () => {
+    // Pins a grammar contract: if a tree-sitter-python upgrade ever renames the node
+    // (e.g. to except_group_clause), this fails instead of the rule going silently blind.
+    expect(rulesOf('try:\n    pass\nexcept* ValueError:\n    pass\n')).toEqual(['no-silent-except']);
+    expect(rulesOf('try:\n    pass\nexcept* ValueError:\n    raise\n')).toEqual([]);
+  });
 });
 
 describe('use-is-none', () => {
