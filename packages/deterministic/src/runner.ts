@@ -135,9 +135,23 @@ export async function runDeterministic(
   const out: Finding[] = [];
   // The wasm parser is the one async edge — hoisted here so analyzePySource stays sync/pure.
   // A failed load degrades to TS-only (skip .py files) rather than failing the whole review.
-  const pyReady = diff.files.some((f) => f.status !== 'deleted' && languageOf(f.path) === 'py')
-    ? await tryInitPython()
-    : false;
+  const pyFiles = diff.files.filter((f) => f.status !== 'deleted' && languageOf(f.path) === 'py');
+  const pyReady = pyFiles.length > 0 ? await tryInitPython() : false;
+  if (pyFiles.length > 0 && !pyReady) {
+    // Degradation must be IN-BAND (the graph side's honesty rule): an empty Python stream caused
+    // by a dead runtime is not "clean". A note-severity finding (ADR-31 "worth confirming") rides
+    // the normal pipeline — context, ranking, MCP — and is waivable like any other finding.
+    out.push({
+      id: `det:py-checks-skipped:${pyFiles[0]!.path}:1`,
+      title: 'Python deterministic checks were SKIPPED — parser runtime unavailable',
+      body: `The Python parser (wasm) failed to load, so ${pyFiles.length} Python file(s) in this diff were not analyzed. The empty Python stream is NOT "clean". This self-heals once the runtime loads (reconnect the MCP server if it persists).`,
+      severity: 'note',
+      confidence: 1,
+      source: 'deterministic',
+      location: { repo, file: pyFiles[0]!.path, startLine: 1, endLine: 1 },
+      tags: ['py-checks-skipped'],
+    });
+  }
   // Canonicalize the repo root once so symlinks in repoPath itself don't false-positive the containment check.
   const realRoot = await fs.realpath(repoPath).catch(() => path.resolve(repoPath));
 
@@ -169,9 +183,12 @@ export async function runDeterministic(
     }
   }
 
-  // Stamp measured prevalence (only when something fired — the scan isn't free).
-  if (opts.rulePrevalence !== false && out.length > 0) {
-    const rules = new Set(out.map((f) => f.tags?.[0]).filter((t): t is string => t != null));
+  // Stamp measured prevalence (only when something fired — the scan isn't free). The degradation
+  // marker is a status fact, not a rule: it never drives (or receives) a prevalence measurement.
+  const rules = new Set(
+    out.map((f) => f.tags?.[0]).filter((t): t is string => t != null && t !== 'py-checks-skipped'),
+  );
+  if (opts.rulePrevalence !== false && rules.size > 0) {
     const prevalence = await computeRulePrevalence(repoPath, rules, opts.prevalenceFileCap ?? 400);
     for (const f of out) {
       const p = prevalence.get(f.tags?.[0] ?? '');

@@ -37,6 +37,30 @@ describe('runDeterministic when the wasm parser is unavailable', () => {
     expect(rules).not.toContain('no-print');
   });
 
+  it('the degradation is IN-BAND: a note finding says the empty py stream is not clean', async () => {
+    const diff: NormalizedDiff = {
+      baseRef: 'main',
+      files: [
+        { path: 'src/a.ts', status: 'modified', hunks: [] },
+        { path: 'src/tool.py', status: 'modified', hunks: [] },
+      ],
+    };
+    const out = await runDeterministic(repo, diff);
+    const marker = out.find((f) => f.tags?.[0] === 'py-checks-skipped');
+    expect(marker).toBeDefined();
+    expect(marker).toMatchObject({ severity: 'note', source: 'deterministic', location: { file: 'src/tool.py' } });
+    expect(marker!.body).toContain('NOT "clean"');
+  });
+
+  it('no marker when the diff has no python files', async () => {
+    const diff: NormalizedDiff = {
+      baseRef: 'main',
+      files: [{ path: 'src/a.ts', status: 'modified', hunks: [] }],
+    };
+    const out = await runDeterministic(repo, diff);
+    expect(out.some((f) => f.tags?.[0] === 'py-checks-skipped')).toBe(false);
+  });
+
   it('a TS-only firing never inits Python — the prevalence sweep skips unmeasured languages', async () => {
     // The repo has .py files in the sample, but only a TS rule fires: rule ids are 1:1 per
     // language, so parsing the .py sample could only contribute zero hits.
