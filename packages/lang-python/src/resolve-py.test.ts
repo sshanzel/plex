@@ -62,6 +62,24 @@ describe('buildModuleIndex + absolute imports', () => {
     expect(resolve('a.py', 'nothing')).toBeNull();
   });
 
+  it('a dotted FILENAME never indexes as a module — the real module always wins ("never a wrong edge")', () => {
+    // settings.local.py is unimportable in Python, yet naively indexes as `settings.local` and
+    // shortest-path tie-breaking would prefer it over the real settings/local.py.
+    const { resolve } = setup(['settings.local.py', 'settings/__init__.py', 'settings/local.py', 'main.py']);
+    expect(resolve('main.py', 'settings.local')).toBe('settings/local.py');
+  });
+
+  it('unimportable paths (dotted filenames, hyphenated dirs) resolve to nothing rather than wrongly', () => {
+    const { resolve } = setup(['settings.local.py', 'my-app/mod.py', 'main.py']);
+    expect(resolve('main.py', 'settings.local')).toBeNull();
+    expect(resolve('main.py', 'mod')).toBeNull();
+  });
+
+  it('relative imports still work under non-identifier ancestor dirs (real in-package coupling)', () => {
+    const { resolve } = setup(['my-app/pkg/__init__.py', 'my-app/pkg/a.py', 'my-app/pkg/b.py']);
+    expect(resolve('my-app/pkg/a.py', '.b')).toBe('my-app/pkg/b.py');
+  });
+
   it('a package takes precedence over a same-named sibling module (Python finder order)', () => {
     const { resolve } = setup(['pkg/__init__.py', 'pkg/m.py', 'pkg/m/__init__.py', 'main.py']);
     expect(resolve('main.py', 'pkg.m')).toBe('pkg/m/__init__.py'); // absolute: index tie-break

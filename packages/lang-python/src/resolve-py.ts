@@ -3,6 +3,12 @@ import path from 'node:path';
 /** Dotted module path → candidate repo-relative files (deduped, insertion-ordered). */
 export type PyModuleIndex = Map<string, string[]>;
 
+// A module path segment must be a Python identifier: `settings.local.py` (a dotted FILENAME) is
+// not importable, yet naively indexes as module `settings.local` — a WRONG edge that shortest-path
+// tie-breaking can prefer over a real `settings/local.py`. Extraction emits identifier-only
+// specifiers, so rejecting non-identifier segments loses nothing valid ("never a wrong edge").
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 const dirOf = (p: string): string => {
   const d = path.posix.dirname(p);
   return d === '.' ? '' : d;
@@ -40,9 +46,13 @@ export function buildModuleIndex(
     const prefix = root === '' ? '' : root + '/';
     for (const f of pyFiles) {
       if (prefix && !f.startsWith(prefix)) continue;
-      let mod = f.slice(prefix.length, -'.py'.length).split('/').join('.');
-      if (mod.endsWith('.__init__')) mod = mod.slice(0, -'.__init__'.length);
-      else if (mod === '__init__') continue; // a root-level __init__.py names no module
+      // Validate PATH segments BEFORE joining with '.' — after joining, the dot in a filename like
+      // `settings.local.py` is indistinguishable from a package separator and would slip through.
+      const parts = f.slice(prefix.length, -'.py'.length).split('/');
+      if (parts[parts.length - 1] === '__init__') parts.pop();
+      if (parts.length === 0) continue; // a root-level __init__.py names no module
+      if (!parts.every((seg) => IDENT.test(seg))) continue; // unimportable path — never index it
+      const mod = parts.join('.');
       const existing = index.get(mod);
       if (!existing) index.set(mod, [f]);
       else if (!existing.includes(f)) existing.push(f);
