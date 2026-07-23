@@ -2,7 +2,8 @@
   "mcpServers": {
     "plex": {
       "command": "npx",
-      "args": ["-y", "-p", "@sshanzel/plex@0.9.5", "plex-mcp"]
+      "args": ["-y", "-p", "@sshanzel/plex@0.9.5", "plex-mcp"],
+      "env": { "npm_config_registry": "https://registry.npmjs.org/" }
     }
   }
 }
