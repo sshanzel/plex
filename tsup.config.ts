@@ -12,7 +12,7 @@ export default defineConfig({
   },
   format: ['esm'],
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   bundle: true,
   // Bundle only our own workspace source; every third-party dep (esp. the native Kùzu
   // CJS addon, which cannot be ESM-bundled) stays external and resolves from node_modules.
