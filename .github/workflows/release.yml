@@ -42,7 +42,7 @@ jobs:
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version-file: .nvmrc # single source of truth w/ ci.yml — Node 22.22+ (Kùzu native SIGSEGVs on Node 20 Linux; the `pnpm test` gate below opens Kùzu)
+          node-version-file: .nvmrc # single source of truth w/ ci.yml — Node 24+ (Kùzu native SIGSEGVs on Node 20 Linux; the `pnpm test` gate below opens Kùzu)
           registry-url: https://registry.npmjs.org
           cache: pnpm
       # Pinned (not @latest): this runs in the privileged publish job (id-token: write), so the one

@@ -1,6 +1,21 @@
 packages:
   - 'packages/*'
 
+onlyBuiltDependencies:
+  - esbuild
+  - kuzu
+
+overrides:
+  'tar@<7.5.21': '^7.5.21'
+  'esbuild@<0.28.1': '^0.28.1'
+  'form-data@>=4.0.0 <4.0.6': '^4.0.6'
+  'hono@<4.12.27': '^4.12.27'
+  '@hono/node-server@<2.0.5': '^2.0.5'
+  'axios@<1.18.0': '^1.18.0'
+  'body-parser@>=2.0.0 <2.3.0': '^2.3.0'
+  'postcss@<8.5.18': '^8.5.18'
+  'fast-uri@<3.1.4': '^3.1.4'
+
 # Supply-chain cooldown (ADR-35 / SECURITY.md): refuse any dependency version published less
 # than this many MINUTES ago, resolving to the last version old enough instead. The 2026 npm
 # worms (Shai-Hulud / IronWorm / Miasma) land malicious versions in builds within minutes of
@@ -14,8 +29,8 @@ minimumReleaseAge: 4320
 # Narrow, deliberate exception (ADR-35): take the esbuild 0.28.1 SECURITY patch
 # (GHSA-gv7w-rqvm-qjhr) before the cooldown elapses. esbuild is a devDep (build/test tooling, not
 # shipped), already in `onlyBuiltDependencies`, single-author + enormously-vetted — about the
-# lowest-risk package to grant a cooldown exception. Paired with the `esbuild@<0.28.1` override in
-# package.json. Remove once the floor naturally clears the patched range.
+# lowest-risk package to grant a cooldown exception. Paired with the `esbuild@<0.28.1` override
+# above. Remove once the floor naturally clears the patched range.
 minimumReleaseAgeExclude:
   - esbuild
   - '@esbuild/*'
