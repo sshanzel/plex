@@ -32,17 +32,22 @@ export async function recordIncident(
 
 /**
  * Re-anchor incident `file`/`symbol` across file renames (ADR-53) so code-path memory + suppression keep
- * matching at the new path. Pure. `renames` is old→new repo-relative POSIX. `id`/`pitfallId`/provenance
- * are LEFT UNTOUCHED — the id's file slug is cosmetic (nothing parses it back out) and rewriting it would
- * sever pitfall provenance (a dangling `incidentIds` is silently dropped). Returns the FULL set (so the
- * caller can honor `replaceIncidents`' full-set contract) plus `changed`, so a no-rename review skips the write.
+ * matching at the new path. Pure. `renames` is old→new repo-relative POSIX. **Scoped to `repo`** — the
+ * knowledge store is GLOBAL (`~/.plex/knowledge`, every repo's incidents), so only incidents tagged with
+ * the current repo are eligible; without this a rename in one repo would rewrite another repo's incident
+ * at the same relative path (e.g. `src/index.ts`). `id`/`pitfallId`/provenance are LEFT UNTOUCHED — the
+ * id's file slug is cosmetic (nothing parses it back out) and rewriting it would sever pitfall provenance
+ * (a dangling `incidentIds` is silently dropped). Returns the FULL set (so the caller can honor
+ * `replaceIncidents`' full-set contract) plus `changed`, so a no-rename review skips the write.
  */
 export function migrateIncidentAnchors(
   incidents: Incident[],
   renames: ReadonlyMap<string, string>,
+  repo: string,
 ): { incidents: Incident[]; changed: boolean } {
   let changed = false;
   const out = incidents.map((i) => {
+    if (i.repo !== repo) return i; // not this repo's incident — the global store holds every repo's
     const r = remapAnchor(renames, i.file, i.symbol);
     if (!r.changed) return i;
     changed = true;

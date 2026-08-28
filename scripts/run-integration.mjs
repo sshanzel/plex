@@ -26,6 +26,7 @@ const SCENARIOS = [
   'cochange-weak',
   'cochange-rename-full',
   'cochange-rename-inc',
+  'cochange-rename-both',
   'rename-anchor-migrate',
   'semantic-waiver',
   'reconcile',

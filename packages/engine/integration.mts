@@ -871,6 +871,46 @@ test('cochange-rename-inc', 'code-graph: incremental migrates co-change across a
   }
 });
 
+test('cochange-rename-both', 'code-graph: incremental migrates a co-change edge when BOTH endpoints rename (ADR-53 dedup)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-renboth-'));
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-renbothdb-')), 'g.kuzu');
+  try {
+    git(repo, 'init', '-q');
+    git(repo, 'config', 'user.email', 't@t.dev');
+    git(repo, 'config', 'user.name', 'Test');
+    mkdirSync(join(repo, 'src'));
+    writeFileSync(join(repo, 'src/a.ts'), 'export const a = 1;\n');
+    writeFileSync(join(repo, 'src/b.ts'), 'export const b = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'c0'); // couples a,b (cnt 1)
+    for (let i = 0; i < 2; i++) {
+      appendFileSync(join(repo, 'src/a.ts'), `// ${i}\n`);
+      appendFileSync(join(repo, 'src/b.ts'), `// ${i}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-q', '-m', `c${i + 1}`); // cnt 3
+    }
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }); // stored: a<->b cnt 3
+    // Rename BOTH endpoints in SEPARATE commits (so a rename commit never re-couples the two files):
+    // getCoChangeEdges lists the a<->b edge from each deleted end, and the migration must dedup to ONE.
+    git(repo, 'mv', 'src/a.ts', 'src/a2.ts');
+    git(repo, 'commit', '-q', '-m', 'rename a');
+    git(repo, 'mv', 'src/b.ts', 'src/b2.ts');
+    git(repo, 'commit', '-q', '-m', 'rename b');
+    await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const e = (await getCoChangeEdges(db, ['src/a2.ts'])).find((x) => x.dst === 'src/b2.ts');
+      assert.ok(e, 'the edge migrated onto both renamed endpoints');
+      assert.equal(e!.cnt, 3, `both-endpoints edge migrated ONCE, not doubled (cnt ${e?.cnt}, expected 3)`);
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
 test('rename-anchor-migrate', 'engine: a file rename re-anchors code-path Incidents + symbol-scoped Waivers (ADR-53)', async () => {
   const repo = mkdtempSync(join(tmpdir(), 'reviewer-ranchor-'));
   git(repo, 'init', '-q');
@@ -883,9 +923,20 @@ test('rename-anchor-migrate', 'engine: a file rename re-anchors code-path Incide
     await knowledgeStore(config).addIncident({
       id: 'inc:src-old-ts:h:1',
       source: 'review',
+      repo: basename(resolve(repo)), // the id the accept path stamps; the migration is repo-scoped
       file: 'src/old.ts',
       symbol: symbolKey('src/old.ts', 'fn'),
       snippet: 'x',
+      ts: new Date().toISOString(),
+    });
+    // A different repo's incident at the SAME relative path must NOT be touched (global store, ADR-53 scope).
+    await knowledgeStore(config).addIncident({
+      id: 'inc:other:h:1',
+      source: 'review',
+      repo: 'some-other-repo',
+      file: 'src/old.ts',
+      symbol: symbolKey('src/old.ts', 'fn'),
+      snippet: 'y',
       ts: new Date().toISOString(),
     });
     await recordVerdict(
@@ -896,10 +947,12 @@ test('rename-anchor-migrate', 'engine: a file rename re-anchors code-path Incide
 
     await migrateRenamedAnchors(repo, config, new Map([['src/old.ts', 'src/new.ts']]));
 
-    const inc = (await knowledgeStore(config).incidents())[0]!;
+    const incidents = await knowledgeStore(config).incidents();
+    const inc = incidents.find((i) => i.id === 'inc:src-old-ts:h:1')!;
     assert.equal(inc.file, 'src/new.ts', 'incident file re-anchored to the new path');
     assert.equal(inc.symbol, symbolKey('src/new.ts', 'fn'), 'incident symbol re-anchored');
-    assert.equal(inc.id, 'inc:src-old-ts:h:1', 'incident id kept stable (pitfall provenance intact)');
+    const other = incidents.find((i) => i.id === 'inc:other:h:1')!;
+    assert.equal(other.file, 'src/old.ts', 'another repo’s incident at the same path is NOT migrated');
     const v = (await readVerdicts(repo, config)).find((x) => x.findingId === 'f1')!;
     assert.equal(v.file, 'src/new.ts', 'waiver file re-anchored');
     assert.equal(v.symbol, symbolKey('src/new.ts', 'fn'), 'waiver symbol re-anchored — suppression still matches');
