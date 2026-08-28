@@ -1,4 +1,4 @@
-import { slugify, hashId, type Incident, type IncidentSource } from '@plex/core';
+import { slugify, hashId, remapAnchor, type Incident, type IncidentSource } from '@plex/core';
 import type { KnowledgeStore } from './store';
 
 /** Record a confirmed finding as a provenance incident linking a pitfall (ADR-10); returns the incident id. */
@@ -28,4 +28,29 @@ export async function recordIncident(
   };
   await store.addIncident(incident);
   return id;
+}
+
+/**
+ * Re-anchor incident `file`/`symbol` across file renames (ADR-53) so code-path memory + suppression keep
+ * matching at the new path. Pure. `renames` is old→new repo-relative POSIX. `id`/`pitfallId`/provenance
+ * are LEFT UNTOUCHED — the id's file slug is cosmetic (nothing parses it back out) and rewriting it would
+ * sever pitfall provenance (a dangling `incidentIds` is silently dropped). Returns the FULL set (so the
+ * caller can honor `replaceIncidents`' full-set contract) plus `changed`, so a no-rename review skips the write.
+ */
+export function migrateIncidentAnchors(
+  incidents: Incident[],
+  renames: ReadonlyMap<string, string>,
+): { incidents: Incident[]; changed: boolean } {
+  let changed = false;
+  const out = incidents.map((i) => {
+    const r = remapAnchor(renames, i.file, i.symbol);
+    if (!r.changed) return i;
+    changed = true;
+    return {
+      ...i,
+      ...(i.file !== undefined ? { file: r.file } : {}),
+      ...(i.symbol !== undefined ? { symbol: r.symbol } : {}),
+    };
+  });
+  return { incidents: out, changed };
 }

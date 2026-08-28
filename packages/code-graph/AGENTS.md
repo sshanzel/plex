@@ -20,7 +20,8 @@ a diff's blast radius. One graph per repo path, stored at `~/.plex/repos/<id>/gr
   specifiers) and the relative-import resolver. No type checker.
 - `src/precise.ts` — tsconfig-aware (`paths`/`baseUrl`) module resolution via
   `ts.resolveModuleName` → `Refs` edges the relative resolver missed.
-- `src/co-change.ts` — pure `aggregateCoChange` (the weighting math) + the impure git
+- `src/co-change.ts` — pure `aggregateCoChange` (the weighting math) + the pure
+  rename-following pair `parseLogNameStatus`/`foldRenames` (ADR-53) + the impure git
   readers (`readCommits`, `changedSourceFilesSince`, `headSha`, `commitsBehind`).
 - `src/build.ts` — `buildCodeGraph` (full) and `updateCodeGraph` (incremental, ADR-25/26);
   both share `extractAndResolve` (per-file plugin dispatch in discovery order + ONE batch
@@ -70,8 +71,11 @@ Age is clamped `Math.max(0, now − ts)` (future-dated commits contribute 1, nev
 Pairs with `count < minPairCount` are dropped — kills singleton N² noise. Defaults
 (`@plex/core` `defaultConfig.coChange`): `maxCommitFiles: 25`, `halfLifeDays: 365`,
 `minPairCount: 2`, `maxCommits: 5000` — basis in `docs/design/tuning.md` §co-change.
-History is read via `git log --no-merges --name-only` with an SOH (0x01) record marker;
-`old => new` rename artifacts keep the new path.
+History is read via `git log --no-merges --name-status -M` with an SOH (0x01) record marker;
+**renames are FOLLOWED** (ADR-53): `parseLogNameStatus` → `foldRenames` walks commits newest→oldest
+with an alias map so a renamed file's PRE-rename commits attribute to its current path (temporally
+correct — a later-reused name isn't mis-mapped; A→B→C chains fold transitively), so pre-rename
+coupling survives the `fileSet` filter instead of being dropped.
 
 **Full build (`buildCodeGraph`).** Wipes `dbDir` (unless `fresh: false`), discovers source files
 (`discoverFiles`), inserts Files → Symbols/Declares → Imports → Refs → fileSet-filtered CoChange
@@ -88,8 +92,14 @@ as real code and the fallback skips — git is authoritative. Both apply the sam
 (`git diff` never reports ignored files).
 
 **Incremental update (`updateCodeGraph`, ADR-25/26).** Diffs `storedSha..HEAD`
-(`git diff --name-status -M`; renames split into delete(old)+add(new)). Then:
-1. **Deleted** files: `DETACH DELETE` Symbols + File (incoming edges go too).
+(`git diff --name-status -M`; renames split into delete(old)+add(new), AND paired in
+`ChangedFiles.renamed`). Then:
+1. **Deleted** files: `DETACH DELETE` Symbols + File (incoming edges go too). **Rename edge
+   migration (ADR-53):** a renamed file's old `CoChange` edges — captured in `deletedEdges.co`
+   BEFORE the delete — re-anchor onto the new-path node (direction canonicalized a<b,
+   both-endpoints-renamed deduped, self-loops/gone-neighbors skipped, accumulate-merged), so the
+   rename doesn't reset the file's coupling; the window's own commits already fold onto the new path
+   via `readCommits`. `CoChangePending` on the old node is sub-threshold and not migrated.
 2. **Modified** files: keep the File node so **incoming** edges from unchanged importers
    survive; delete only its Symbols and **outgoing** `Imports`/`Refs`.
 3. Re-extract only added/modified files — O(changed files), skipping the dominant

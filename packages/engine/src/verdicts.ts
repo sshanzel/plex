@@ -1,6 +1,6 @@
-import { appendFile, readFile, mkdir } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { Verdict, Waiver, ReviewerConfig } from '@plex/core';
+import { remapAnchor, type Verdict, type Waiver, type ReviewerConfig } from '@plex/core';
 import { repoPaths, baseRepoPath } from './paths';
 
 /** Identity fields captured at waive time so a waiver can re-match future findings. */
@@ -38,6 +38,48 @@ export async function recordVerdict(
   await appendFile(p.verdictsFile, JSON.stringify(rec) + '\n', 'utf8');
   const { embedding: _embedding, ...slim } = rec;
   return slim;
+}
+
+/**
+ * Atomically rewrite the whole verdict log (temp+rename, like `replaceIncidents`) — the rename-migration
+ * writer (ADR-53). INVARIANT: pass the FULL set read via `readVerdicts` — a filter-then-replace would
+ * silently drop every other verdict, so every dismissed finding would re-surface.
+ */
+export async function replaceVerdicts(
+  repoPath: string,
+  config: ReviewerConfig,
+  verdicts: StoredVerdict[],
+): Promise<void> {
+  const p = repoPaths(baseRepoPath(repoPath), config.dataDir); // base-keyed (ADR-46): survives worktree removal
+  await mkdir(path.dirname(p.verdictsFile), { recursive: true });
+  const body = verdicts.length ? verdicts.map((v) => JSON.stringify(v)).join('\n') + '\n' : '';
+  const tmp = `${p.verdictsFile}.tmp-${process.pid}`;
+  await writeFile(tmp, body, 'utf8');
+  await rename(tmp, p.verdictsFile);
+}
+
+/**
+ * Re-anchor stored verdicts' `file`/`symbol` across file renames (ADR-53) so a symbol-scoped `waive`/
+ * `acknowledge`/`reject` keeps matching (and suppressing) at the new path instead of silently un-suppressing.
+ * Pure. `renames` is old→new repo-relative POSIX. Returns the FULL set + `changed`, so a no-rename review
+ * skips the rewrite.
+ */
+export function migrateWaiverAnchors(
+  verdicts: StoredVerdict[],
+  renames: ReadonlyMap<string, string>,
+): { verdicts: StoredVerdict[]; changed: boolean } {
+  let changed = false;
+  const out = verdicts.map((v) => {
+    const r = remapAnchor(renames, v.file, v.symbol);
+    if (!r.changed) return v;
+    changed = true;
+    return {
+      ...v,
+      ...(v.file !== undefined ? { file: r.file } : {}),
+      ...(v.symbol !== undefined ? { symbol: r.symbol } : {}),
+    };
+  });
+  return { verdicts: out, changed };
 }
 
 export async function readVerdicts(

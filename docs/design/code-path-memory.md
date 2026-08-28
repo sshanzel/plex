@@ -47,6 +47,10 @@ choice is deliberate:
 - **Not the bare name** — `handle` exists in fifty files; the key has to be joinable back to a file.
 - A symbol that **moves** keeps its key (good — same concern, same code). A symbol that is **renamed**
   genuinely becomes a different key (also good — it's different code now).
+- A **file rename** would otherwise invalidate the *file* half of every key in that file (same code, new
+  path). ADR-53 closes this: on a review whose diff renames a file, `migrateRenamedAnchors` re-anchors the
+  affected Incidents' `file`/`symbol` (and the symbol-scoped Waivers) from the diff's `oldPath` to the new
+  path before the match runs — so a sentinel/suppression survives a file rename.
 
 Granularity is **symbol-level** by design: line-level is too brittle (drifts on every edit);
 file-level is too coarse (every concern in a busy file would fire at once). Symbol is the sweet spot.

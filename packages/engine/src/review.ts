@@ -44,6 +44,7 @@ import { createEmbeddingProvider, buildKnowledgeGraph } from '@plex/knowledge';
 import { Brain, type RoundSummary } from './brain';
 import { logAudit } from './audit';
 import { buildKnowledgeQuery, getRelevantKnowledge, embeddingReady, knowledgeStore } from './knowledge';
+import { migrateRenamedAnchors, renameMapFromDiff } from './rename-migrate';
 import { matchCodePath, applyCodePathBoost, type CodePathAlert } from './code-path';
 import { loadWaivers } from './verdicts';
 import { cachedEmbed } from './embed-cache';
@@ -582,6 +583,11 @@ export async function assembleReviewContext(opts: AssembleOptions): Promise<Revi
     resolveDiff(opts.repoPath, opts.config, opts),
     resolveChangeContext(opts.repoPath, opts.config, opts),
   ]);
+
+  // Re-anchor knowledge Incidents + symbol-scoped Waivers across any file renames in this diff (ADR-53),
+  // BEFORE the stores are read below (loadWaivers, matchCodePath) — a rename must not silence a regression
+  // sentinel or un-suppress a waiver. Best-effort + a no-op when nothing was renamed.
+  await migrateRenamedAnchors(opts.repoPath, opts.config, renameMapFromDiff(diff));
 
   // A secondary worktree has its OWN graph (copied by `indexRepo`, ADR-32/ADR-39), opened normally —
   // NOT shared read-only (Kùzu's read-only open SIGSEGVs on Linux). So `graphP` is this repo's own dir.

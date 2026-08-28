@@ -41,6 +41,7 @@ import {
   reviewTarget,
   reviewTargetFor,
   loadSuppressions,
+  migrateRenamedAnchors,
   Brain,
 } from './src/index';
 
@@ -802,6 +803,109 @@ test('cochange-inc', 'code-graph: incremental co-change merges new commits (ADR-
   } finally {
     rmSync(repo, { recursive: true, force: true });
     rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+// Shared setup for the rename scenarios: old.ts + x.ts coupled over 3 commits (cnt 3, passes minPairCount=2).
+function makeCoupledRenameRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-ren-'));
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 't@t.dev');
+  git(repo, 'config', 'user.name', 'Test');
+  mkdirSync(join(repo, 'src'));
+  writeFileSync(join(repo, 'src/old.ts'), 'export const a = 1;\n');
+  writeFileSync(join(repo, 'src/x.ts'), 'export const x = 1;\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'c0'); // couples old,x (cnt 1)
+  for (let i = 0; i < 2; i++) {
+    appendFileSync(join(repo, 'src/old.ts'), `// ${i}\n`);
+    appendFileSync(join(repo, 'src/x.ts'), `// ${i}\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', `c${i + 1}`); // cnt 3
+  }
+  return repo;
+}
+
+test('cochange-rename-full', 'code-graph: a full build follows renames (ADR-53 history fold)', async () => {
+  const repo = makeCoupledRenameRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-renfdb-')), 'g.kuzu');
+  try {
+    git(repo, 'mv', 'src/old.ts', 'src/new.ts'); // pure rename (n=1, adds no coupling)
+    git(repo, 'commit', '-q', '-m', 'rename old→new');
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const e = (await getCoChangeEdges(db, ['src/new.ts'])).find((x) => x.dst === 'src/x.ts');
+      assert.ok(e, 'renamed file inherits the pre-rename co-change edge');
+      assert.equal(e!.cnt, 3, `pre-rename history folded onto new.ts (cnt ${e?.cnt}, expected 3)`);
+      assert.equal((await getCoChangeEdges(db, ['src/old.ts'])).length, 0, 'the old path carries no edges');
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('cochange-rename-inc', 'code-graph: incremental migrates co-change across a rename (ADR-53)', async () => {
+  const repo = makeCoupledRenameRepo();
+  const dbDir = join(mkdtempSync(join(tmpdir(), 'reviewer-renidb-')), 'g.kuzu');
+  try {
+    await buildCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE }); // stored BEFORE the rename (old↔x cnt 3)
+    git(repo, 'mv', 'src/old.ts', 'src/new.ts');
+    git(repo, 'commit', '-q', '-m', 'rename old→new');
+    await updateCodeGraph({ repoPath: repo, dbDir, coChange: COCHANGE });
+    const db = new CodeGraphDB(dbDir);
+    try {
+      const e = (await getCoChangeEdges(db, ['src/new.ts'])).find((x) => x.dst === 'src/x.ts');
+      assert.ok(e, 'the old node’s co-change edge migrated onto the renamed node');
+      assert.equal(e!.cnt, 3, `migrated edge preserves the accumulated count (cnt ${e?.cnt}, expected 3)`);
+      assert.equal((await getCoChangeEdges(db, ['src/old.ts'])).length, 0, 'the old node was removed');
+    } finally {
+      await db.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(dbDir, { recursive: true, force: true });
+  }
+});
+
+test('rename-anchor-migrate', 'engine: a file rename re-anchors code-path Incidents + symbol-scoped Waivers (ADR-53)', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'reviewer-ranchor-'));
+  git(repo, 'init', '-q');
+  git(repo, 'config', 'user.email', 't@t.dev');
+  git(repo, 'config', 'user.name', 'Test');
+  const knowledgeDir = mkdtempSync(join(tmpdir(), 'reviewer-ranchor-k-'));
+  try {
+    const config = resolveConfig({ dataDir: '.plex', knowledgeDir });
+    // Seed an incident + a waiver both anchored to src/old.ts#fn.
+    await knowledgeStore(config).addIncident({
+      id: 'inc:src-old-ts:h:1',
+      source: 'review',
+      file: 'src/old.ts',
+      symbol: symbolKey('src/old.ts', 'fn'),
+      snippet: 'x',
+      ts: new Date().toISOString(),
+    });
+    await recordVerdict(
+      repo,
+      { findingId: 'f1', kind: 'waive', scope: 'file', file: 'src/old.ts', symbol: symbolKey('src/old.ts', 'fn') },
+      config,
+    );
+
+    await migrateRenamedAnchors(repo, config, new Map([['src/old.ts', 'src/new.ts']]));
+
+    const inc = (await knowledgeStore(config).incidents())[0]!;
+    assert.equal(inc.file, 'src/new.ts', 'incident file re-anchored to the new path');
+    assert.equal(inc.symbol, symbolKey('src/new.ts', 'fn'), 'incident symbol re-anchored');
+    assert.equal(inc.id, 'inc:src-old-ts:h:1', 'incident id kept stable (pitfall provenance intact)');
+    const v = (await readVerdicts(repo, config)).find((x) => x.findingId === 'f1')!;
+    assert.equal(v.file, 'src/new.ts', 'waiver file re-anchored');
+    assert.equal(v.symbol, symbolKey('src/new.ts', 'fn'), 'waiver symbol re-anchored — suppression still matches');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(knowledgeDir, { recursive: true, force: true });
   }
 });
 

@@ -9,7 +9,7 @@ export {
 export { KnowledgeStore } from './store';
 export { retrieveRelevant, retrieveRelevantLexical, lexicalScores, lexicalTokens } from './retrieve';
 export type { RetrievedPitfall } from './retrieve';
-export { recordIncident } from './incidents';
+export { recordIncident, migrateIncidentAnchors } from './incidents';
 export { buildKnowledgeGraph, historyOf, concernsAt, concernsInFile, pitfallsOf } from './graph';
 export type { KnowledgeGraph } from './graph';
 export { addOrReinforcePitfall } from './reinforce';
