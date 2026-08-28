@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateCoChange, parseNameStatus, resolveRenameArtifact, type CommitRecord } from './co-change';
+import {
+  aggregateCoChange,
+  parseNameStatus,
+  parseLogNameStatus,
+  foldRenames,
+  type CommitRecord,
+  type ParsedCommit,
+} from './co-change';
+
+const SOH = '';
 
 describe('aggregateCoChange — generated artifacts', () => {
   it('excludes lockfiles from the commit BEFORE the size factor and pairs', () => {
@@ -12,25 +21,72 @@ describe('aggregateCoChange — generated artifacts', () => {
   });
 });
 
-describe('resolveRenameArtifact', () => {
-  it('passes plain paths through untouched', () => {
-    expect(resolveRenameArtifact('src/db.ts')).toBe('src/db.ts');
+describe('parseLogNameStatus', () => {
+  it('parses commit headers and A/M/D/R status entries', () => {
+    const blob = [
+      `${SOH}1000`,
+      'A\tsrc/a.ts',
+      'M\tsrc/b.ts',
+      `${SOH}900`,
+      'R100\tsrc/old.ts\tsrc/new.ts',
+      'D\tsrc/gone.ts',
+    ].join('\n');
+    expect(parseLogNameStatus(blob)).toEqual([
+      { tsSec: 1000, entries: [{ status: 'A', path: 'src/a.ts' }, { status: 'M', path: 'src/b.ts' }] },
+      {
+        tsSec: 900,
+        entries: [
+          { status: 'R100', path: 'src/new.ts', oldPath: 'src/old.ts' },
+          { status: 'D', path: 'src/gone.ts' },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('foldRenames', () => {
+  const opts1 = { maxCommitFiles: 25, halfLifeDays: 365, minPairCount: 1, nowSec: 1_000_000 };
+
+  it('leaves a rename-free history untouched', () => {
+    const commits: ParsedCommit[] = [
+      { tsSec: 100, entries: [{ status: 'M', path: 'a.ts' }, { status: 'M', path: 'b.ts' }] },
+    ];
+    expect(foldRenames(commits)).toEqual([{ tsSec: 100, files: ['a.ts', 'b.ts'] }]);
   });
 
-  it('resolves the plain rename form to the new path', () => {
-    expect(resolveRenameArtifact('src/old.ts => src/new.ts')).toBe('src/new.ts');
+  it('folds a renamed file’s pre-rename co-change onto the current path', () => {
+    // newest → oldest (git log default order)
+    const commits: ParsedCommit[] = [
+      { tsSec: 300, entries: [{ status: 'M', path: 'src/new.ts' }, { status: 'M', path: 'src/x.ts' }] },
+      { tsSec: 200, entries: [{ status: 'R100', path: 'src/new.ts', oldPath: 'src/old.ts' }] },
+      { tsSec: 100, entries: [{ status: 'M', path: 'src/old.ts' }, { status: 'M', path: 'src/x.ts' }] },
+    ];
+    const pairs = aggregateCoChange(foldRenames(commits), opts1);
+    expect(pairs.find((p) => p.a === 'src/new.ts' && p.b === 'src/x.ts')?.count).toBe(2);
+    expect(pairs.some((p) => p.a === 'src/old.ts' || p.b === 'src/old.ts')).toBe(false);
   });
 
-  it('resolves the brace form WITHOUT dropping the shared prefix', () => {
-    expect(resolveRenameArtifact('packages/{old => new}/src/file.ts')).toBe('packages/new/src/file.ts');
+  it('folds a rename chain A→B→C onto the final path', () => {
+    const commits: ParsedCommit[] = [
+      { tsSec: 400, entries: [{ status: 'M', path: 'c.ts' }, { status: 'M', path: 'x.ts' }] },
+      { tsSec: 300, entries: [{ status: 'R100', path: 'c.ts', oldPath: 'b.ts' }] },
+      { tsSec: 200, entries: [{ status: 'R100', path: 'b.ts', oldPath: 'a.ts' }] },
+      { tsSec: 100, entries: [{ status: 'M', path: 'a.ts' }, { status: 'M', path: 'x.ts' }] },
+    ];
+    const pairs = aggregateCoChange(foldRenames(commits), opts1);
+    expect(pairs.find((p) => p.a === 'c.ts' && p.b === 'x.ts')?.count).toBe(2);
   });
 
-  it('handles an empty new segment (a directory level removed)', () => {
-    expect(resolveRenameArtifact('packages/{nested => }/file.ts')).toBe('packages/file.ts');
-  });
-
-  it('a root-position emptied segment leaves no leading slash (ids are repo-relative)', () => {
-    expect(resolveRenameArtifact('{src => }/file.ts')).toBe('file.ts');
+  it('does NOT mis-map a path later REUSED for a different file (temporal correctness)', () => {
+    const commits: ParsedCommit[] = [
+      { tsSec: 400, entries: [{ status: 'M', path: 'old.ts' }, { status: 'M', path: 'y.ts' }] }, // new old.ts
+      { tsSec: 300, entries: [{ status: 'A', path: 'old.ts' }] }, // a NEW file takes the freed name
+      { tsSec: 200, entries: [{ status: 'R100', path: 'new.ts', oldPath: 'old.ts' }] }, // original old.ts → new.ts
+      { tsSec: 100, entries: [{ status: 'M', path: 'old.ts' }, { status: 'M', path: 'x.ts' }] }, // original old.ts
+    ];
+    const pairs = aggregateCoChange(foldRenames(commits), opts1);
+    expect(pairs.find((p) => p.a === 'old.ts' && p.b === 'y.ts')?.count).toBe(1); // reused name stays put
+    expect(pairs.find((p) => p.a === 'new.ts' && p.b === 'x.ts')?.count).toBe(1); // pre-rename folded
   });
 });
 
@@ -50,6 +106,7 @@ describe('parseNameStatus', () => {
       added: ['src/new.ts', 'src/renamed.ts', 'src/copy.ts'],
       modified: ['src/mod.ts'],
       deleted: ['src/gone.ts', 'src/old.ts'],
+      renamed: [{ from: 'src/old.ts', to: 'src/renamed.ts' }],
     });
   });
 

@@ -79,41 +79,89 @@ export function aggregateCoChange(commits: CommitRecord[], opts: AggregateOption
   return [...acc.values()].filter((p) => p.count >= opts.minPairCount);
 }
 
-// SOH control byte: unambiguously marks commit-header lines in `--name-only` output (no real
+// SOH control byte: unambiguously marks commit-header lines in `--name-status` output (no real
 // path/timestamp line begins with it). JS escape keeps the source printable.
 const RECORD = '';
 
-/**
- * Resolve a rename artifact from git's path output to the NEW path. Pure. Handles the plain form
- * (`old.ts => new.ts`) and the brace form (`dir/{old => new}/file.ts`, shared prefix/suffix OUTSIDE the braces).
- */
-export function resolveRenameArtifact(line: string): string {
-  if (!line.includes(' => ')) return line;
-  return line
-    .replace(/\{([^{}]*) => ([^{}]*)\}/g, '$2') // brace segments → the new segment
-    .replace(/^.* => /, '') // plain "old => new" (no braces left) → the new path
-    .replace(/\/{2,}/g, '/') // an empty new segment ("{old => }") leaves a doubled slash
-    .replace(/^\//, ''); // …and a root-position one leaves a leading slash — ids are repo-relative
+/** One parsed `--name-status` entry. For a rename (`R`), `path` is the NEW path and `oldPath` the source. */
+export interface LogEntry {
+  status: string;
+  path: string;
+  oldPath?: string;
 }
 
-/** Read commit history (timestamp + touched files) via git. `maxCommits` 0 = full; `sinceRef` restricts to `sinceRef..HEAD` (ADR-26). Merges excluded. */
-export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {
-  const args = ['log', '--no-merges', '--name-only', `--pretty=format:${RECORD}%ct`];
-  if (maxCommits > 0) args.push('-n', String(maxCommits));
-  if (sinceRef) args.push(`${sinceRef}..HEAD`);
-  const { stdout } = await pexec('git', args, { cwd, maxBuffer: 256 * 1024 * 1024 });
+/** A commit as parsed from `git log --name-status`: timestamp + its raw status entries. */
+export interface ParsedCommit {
+  tsSec: number;
+  entries: LogEntry[];
+}
 
-  const commits: CommitRecord[] = [];
-  let current: CommitRecord | null = null;
+/**
+ * Parse `git log --no-merges --name-status --pretty=format:<SOH>%ct` into per-commit entries. Pure.
+ * A rename line is `R<score>\t<old>\t<new>` and a copy `C<score>\t<src>\t<dst>`; everything else is
+ * `<status>\t<path>`. Trailing `\r` (Windows checkouts) is trimmed off every path field.
+ */
+export function parseLogNameStatus(stdout: string): ParsedCommit[] {
+  const commits: ParsedCommit[] = [];
+  let current: ParsedCommit | null = null;
   for (const line of stdout.split('\n')) {
     if (line.startsWith(RECORD)) {
-      current = { tsSec: Number(line.slice(1)) || 0, files: [] };
+      current = { tsSec: Number(line.slice(1)) || 0, entries: [] };
       commits.push(current);
     } else if (line.trim() !== '' && current) {
-      current.files.push(resolveRenameArtifact(line).trim());
+      const parts = line.split('\t');
+      const status = parts[0] ?? '';
+      if (status.startsWith('R') || status.startsWith('C')) {
+        const oldP = parts[1]?.trim();
+        const newP = parts[2]?.trim();
+        // Only a rename (R) aliases the old path; a copy (C) leaves its source untouched.
+        if (newP) current.entries.push({ status, path: newP, ...(status.startsWith('R') && oldP ? { oldPath: oldP } : {}) });
+      } else {
+        const p = parts[1]?.trim();
+        if (p) current.entries.push({ status, path: p });
+      }
     }
   }
   return commits;
+}
+
+/**
+ * Fold renames so a file's PRE-rename history attributes to its CURRENT path — the fix for co-change
+ * being lost across a rename. Pure. Walks commits NEWEST→OLDEST (git log's default order), carrying an
+ * alias map; each commit's touched paths are resolved through the current alias, THEN that commit's own
+ * renames (`old → new`) register `alias[old] = resolve(new)` for the OLDER commits still to come.
+ * Registering AFTER emitting is what makes it temporally correct: a path later REUSED for a different
+ * file (a newer commit, processed first) is never mis-mapped, and A→B→C chains fold transitively.
+ */
+export function foldRenames(commits: ParsedCommit[]): CommitRecord[] {
+  const alias = new Map<string, string>();
+  const resolve = (p: string): string => {
+    let cur = p;
+    // Bounded chase (cycle guard): a pathological rename cycle can never spin forever.
+    for (let i = 0; i < 10_000 && alias.has(cur); i++) cur = alias.get(cur)!;
+    return cur;
+  };
+  const out: CommitRecord[] = [];
+  for (const c of commits) {
+    out.push({ tsSec: c.tsSec, files: c.entries.map((e) => resolve(e.path)) });
+    for (const e of c.entries) {
+      if (e.oldPath && e.status.startsWith('R')) alias.set(e.oldPath, resolve(e.path));
+    }
+  }
+  return out;
+}
+
+/**
+ * Read commit history (timestamp + touched files) via git, with renames FOLLOWED (`foldRenames`): a
+ * renamed file's pre-rename commits attribute to its current path. `maxCommits` 0 = full; `sinceRef`
+ * restricts to `sinceRef..HEAD` (ADR-26). Merges excluded; `-M` surfaces renames as `R` status lines.
+ */
+export async function readCommits(cwd: string, maxCommits: number, sinceRef?: string): Promise<CommitRecord[]> {
+  const args = ['log', '--no-merges', '--name-status', '-M', `--pretty=format:${RECORD}%ct`];
+  if (maxCommits > 0) args.push('-n', String(maxCommits));
+  if (sinceRef) args.push(`${sinceRef}..HEAD`);
+  const { stdout } = await pexec('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER });
+  return foldRenames(parseLogNameStatus(stdout));
 }
 
 /** Resolve the current HEAD sha (for incremental update bookkeeping). */
@@ -143,18 +191,21 @@ export async function listWorktreeFiles(cwd: string): Promise<string[] | null> {
   }
 }
 
-/** Indexable source files added/modified/deleted between `sha` and HEAD (ADR-25). */
+/** Indexable source files added/modified/deleted between `sha` and HEAD (ADR-25). `renamed` pairs the
+ *  old→new of a rename (both sides indexable) so co-change edges + knowledge anchors can migrate. */
 export interface ChangedFiles {
   added: string[];
   modified: string[];
   deleted: string[];
+  renamed: Array<{ from: string; to: string }>;
 }
 
-/** Parse `git diff --name-status` output into added/modified/deleted. Pure (unit-tested). */
+/** Parse `git diff --name-status` output into added/modified/deleted (+ rename pairs). Pure (unit-tested). */
 export function parseNameStatus(stdout: string): ChangedFiles {
   const added: string[] = [];
   const modified: string[] = [];
   const deleted: string[] = [];
+  const renamed: Array<{ from: string; to: string }> = [];
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
     const parts = line.split('\t');
@@ -164,6 +215,9 @@ export function parseNameStatus(stdout: string): ChangedFiles {
       const newP = parts[2];
       if (oldP && isIndexable(oldP)) deleted.push(oldP);
       if (newP && isIndexable(newP)) added.push(newP);
+      // Pair the rename for durable migration — only when BOTH sides are indexable source (a rename
+      // across an unindexed extension isn't a source-file rename whose edges/anchors we can carry).
+      if (oldP && newP && isIndexable(oldP) && isIndexable(newP)) renamed.push({ from: oldP, to: newP });
     } else if (status.startsWith('C')) {
       // Copy (diff.renames=copies): source untouched; index only the new path (parts[2]).
       const newP = parts[2];
@@ -176,12 +230,13 @@ export function parseNameStatus(stdout: string): ChangedFiles {
       else modified.push(p);
     }
   }
-  return { added, modified, deleted };
+  return { added, modified, deleted, renamed };
 }
 
 /**
- * Source files changed since `sha` (`git diff --name-status -M`). Renames split into delete(old)+add(new);
- * copies index the new path. Returns `null` when the diff can't be computed (force-push) — caller falls back to a full build.
+ * Source files changed since `sha` (`git diff --name-status -M`). Renames split into delete(old)+add(new)
+ * AND paired in `renamed` (so the old node's co-change edges can migrate to the new node); copies index
+ * the new path. Returns `null` when the diff can't be computed (force-push) — caller falls back to a full build.
  */
 export async function changedSourceFilesSince(cwd: string, sha: string): Promise<ChangedFiles | null> {
   let stdout: string;

@@ -24,8 +24,10 @@ const SKIP_DIRS = new Set([
  * Bumped when the extractor/graph shape changes in a way an incremental update can't reproduce —
  * e.g. adding a language, whose existing (unchanged) files an incremental pass would never index.
  * A mismatch throws `FullRebuildRequired`, so the first post-upgrade review full-rebuilds.
+ * '3': co-change now FOLLOWS renames across history (readCommits `foldRenames`); existing graphs must
+ * rebuild once so pre-rename coupling folds onto current paths rather than staying dropped.
  */
-export const GRAPH_VERSION = '2';
+export const GRAPH_VERSION = '3';
 
 /**
  * Collision-safe `Symbol.id` (`file#name#startLine`): a minified bundle can pack many declarations on
@@ -68,7 +70,7 @@ export interface BuildResult {
  *  purpose: weighting lives upstream in @plex/neighborhood, which this package cannot depend on. */
 export interface DeletedFileEdges {
   deletedPaths: string[];
-  co: { src: string; dst: string; weight: number }[];
+  co: { src: string; dst: string; weight: number; cnt: number }[];
   imports: { src: string; dst: string }[];
   refs: { src: string; dst: string }[];
   coDegrees: Record<string, number>;
@@ -374,6 +376,37 @@ export async function updateCodeGraph(opts: BuildOptions): Promise<UpdateResult>
     await db.insertMany('MATCH (f:File {id:$f}), (s:Symbol {id:$s}) CREATE (f)-[:Declares]->(s)', batch.declareRows);
     await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Imports]->(b)', batch.importRows);
     await db.insertMany('MATCH (a:File {id:$from}), (b:File {id:$to}) CREATE (a)-[:Refs]->(b)', batch.refRows);
+
+    // 4b. Rename migration (ADR-53): a renamed file's old node was DETACH DELETEd above, so its
+    //     accumulated CoChange edges — captured in `deletedEdges.co` BEFORE that deletion — must
+    //     re-anchor onto the new-path node, else a rename resets the file's blast radius. The window's
+    //     OWN commits already fold onto the new path via readCommits `foldRenames`; this carries the
+    //     PRE-window coupling (a disjoint commit set, so the accumulate below is correct). Direction is
+    //     canonicalized (a<b) to match how CoChange is stored; a both-endpoints-renamed edge — which
+    //     getCoChangeEdges lists from each end — is deduped so one physical edge migrates once.
+    if (delta.renamed.length > 0 && deletedEdges) {
+      const renameMap = new Map(delta.renamed.map((r) => [r.from, r.to]));
+      const seen = new Set<string>();
+      const migrated: { a: string; b: string; weight: number; cnt: number }[] = [];
+      for (const e of deletedEdges.co) {
+        const src = renameMap.get(e.src) ?? e.src;
+        const dst = renameMap.get(e.dst) ?? e.dst;
+        if (src === e.src && dst === e.dst) continue; // neither endpoint renamed (a plain delete)
+        if (src === dst) continue; // self-loop after mapping
+        if (!fileSet.has(src) || !fileSet.has(dst)) continue; // an endpoint is gone from the tree
+        const [a, b] = src < dst ? [src, dst] : [dst, src];
+        const key = `${a}\t${b}`;
+        if (seen.has(key)) continue; // the bidirectional listing of one edge
+        seen.add(key);
+        migrated.push({ a, b, weight: e.weight, cnt: e.cnt });
+      }
+      await db.insertMany(
+        'MATCH (a:File {id:$a}), (b:File {id:$b}) MERGE (a)-[c:CoChange]->(b) ' +
+          'ON CREATE SET c.weight = $weight, c.cnt = $cnt ' +
+          'ON MATCH SET c.weight = c.weight + $weight, c.cnt = c.cnt + $cnt',
+        migrated,
+      );
+    }
 
     // 5. Co-change: merge ONLY the commits since the last index (ADR-26) — accumulate onto stored
     //    pairs; new commits land at full recency (no epoch bookkeeping; decay re-baselines on a full build).

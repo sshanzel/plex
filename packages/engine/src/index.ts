@@ -54,5 +54,6 @@ export type {
   RefreshOutcomesResult,
 } from './analyze';
 export type { LearnedLesson } from '@plex/distill';
-export { recordVerdict, readVerdicts, loadWaivers } from './verdicts';
+export { recordVerdict, readVerdicts, loadWaivers, replaceVerdicts, migrateWaiverAnchors } from './verdicts';
 export type { StoredVerdict, VerdictInput, WaiverIdentity } from './verdicts';
+export { migrateRenamedAnchors, renameMapFromDiff } from './rename-migrate';
