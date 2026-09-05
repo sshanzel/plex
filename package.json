@@ -64,7 +64,7 @@
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "kuzu": "^0.11.3",
     "parse-diff": "^0.12.0",
     "tree-sitter-python": "^0.25.0",
@@ -73,9 +73,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.4.1",
     "tsup": "^8.5.1",
-    "tsx": "^4.19.2",
-    "vitest": "^4.1.0"
+    "tsx": "^4.23.13",
+    "vitest": "^4.1.11"
   }
 }
