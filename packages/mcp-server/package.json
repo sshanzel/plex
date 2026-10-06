@@ -5,11 +5,11 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@plex/core": "workspace:*",
     "@plex/engine": "workspace:*",
     "@plex/ingest": "workspace:*",
     "@plex/viz-server": "workspace:*",
-    "zod": "^4.6.1"
+    "zod": "^4.6.5"
   }
 }
