@@ -9,16 +9,18 @@ overrides:
   'tar@<7.5.21': '^7.5.21'
   'esbuild@<0.28.1': '^0.28.1'
   'form-data@>=4.0.0 <4.0.6': '^4.0.6'
-  'hono': '4.13.7'
+  'hono': '4.13.11'
   '@hono/node-server@<2.0.5': '^2.0.5'
   'axios@<1.20.0': '^1.20.0'
-  'body-parser@>=2.0.0 <2.3.0': '^2.3.0'
+  'body-parser@>=2.0.0 <2.4.0': '^2.4.0'
   'proxy-addr@>=1.1.0 <2.0.8': '^2.0.8'
   'postcss@<8.5.18': '^8.5.18'
-  'fast-uri': '^3.1.7'
+  'fast-uri': '^3.1.9'
   'qs': '^6.16.0'
-  'ip-address': '10.7.1'
+  'ip-address': '10.7.4'
   nanoid: '3.3.18'
+  'vite@>=7.0.0 <7.3.7': '^7.3.7'
+  'follow-redirects@<1.16.1': '^1.16.1'
 
 # Supply-chain cooldown (ADR-35 / SECURITY.md): refuse any dependency version published less
 # than this many MINUTES ago, resolving to the last version old enough instead. The 2026 npm
@@ -35,6 +37,13 @@ minimumReleaseAge: 4320
 # shipped), already in `onlyBuiltDependencies`, single-author + enormously-vetted — about the
 # lowest-risk package to grant a cooldown exception. Paired with the `esbuild@<0.28.1` override
 # above. Remove once the floor naturally clears the patched range.
+#
+# body-parser@2.4.0 is the same kind of exception, scoped to that ONE version (not the package):
+# the HIGH advisory GHSA-27r3-jxmh-p828 published 2026-10-23, a day after the 2026-10-22 patch, so
+# the CI `pnpm audit --audit-level=high` gate fails until the cooldown clears on 2026-10-25. It is
+# transitive via @modelcontextprotocol/sdk's HTTP transport (express), which Plex never loads (stdio
+# only). Paired with the `body-parser@>=2.0.0 <2.4.0` override above; remove after 2026-10-25.
 minimumReleaseAgeExclude:
   - esbuild
   - '@esbuild/*'
+  - body-parser@2.4.0
