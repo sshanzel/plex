@@ -28,6 +28,20 @@ const json = (res: http.ServerResponse, status: number, body: unknown): void => 
   res.end(payload);
 };
 
+export interface FailureResponse {
+  status: 500 | 503;
+  body: { error: string; retry?: true };
+}
+
+/** A busy repo is a retryable 503; anything else is a generic 500. Error messages and stacks never
+ *  reach the response body — `startServer` writes them to stderr instead. */
+export function failureResponse(err: unknown): FailureResponse {
+  if (err instanceof RepoBusyError) {
+    return { status: 503, body: { error: 'repo busy — a review is using it; retry', retry: true } };
+  }
+  return { status: 500, body: { error: 'internal error — see the plex serve output for details' } };
+}
+
 /** Handle one request. Store reads open Kùzu per-request and close immediately (collect.ts) so the
  *  daemon never holds the single-writer lock; a `RepoBusyError` becomes a 503 the UI retries (ADR-45). */
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, opts: ServeOptions): Promise<void> {
@@ -90,8 +104,12 @@ export function startServer(opts: ServeOptions): Promise<RunningServer> {
   const first = opts.port ?? DEFAULT_PORT;
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch((err) => {
-      if (err instanceof RepoBusyError) return json(res, 503, { error: 'repo busy — a review is using it; retry', retry: true });
-      json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      const failure = failureResponse(err);
+      if (failure.status === 500) {
+        const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+        process.stderr.write(`[plex] serve: ${req.method ?? 'GET'} ${req.url ?? '/'} failed: ${detail}\n`);
+      }
+      json(res, failure.status, failure.body);
     });
   });
 
