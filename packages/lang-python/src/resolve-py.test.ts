@@ -107,6 +107,20 @@ describe('buildModuleIndex + absolute imports', () => {
     const index = buildModuleIndex(fileSet, ['lib/deep']);
     expect(resolvePythonImport('main.py', 'ns.mod', index, fileSet)).toBe('lib/deep/ns/mod.py');
   });
+
+  it('extraRoots tolerates trailing slashes', () => {
+    const fileSet = new Set(['lib/deep/ns/mod.py', 'main.py']);
+    const index = buildModuleIndex(fileSet, ['lib/deep///']);
+    expect(resolvePythonImport('main.py', 'ns.mod', index, fileSet)).toBe('lib/deep/ns/mod.py');
+  });
+
+  it('extraRoots with a long run of slashes indexes in linear time', () => {
+    const fileSet = new Set(['main.py']);
+    const hostileRoot = `lib${'/'.repeat(100_000)}x`;
+    const started = performance.now();
+    buildModuleIndex(fileSet, [hostileRoot, `${hostileRoot}/`]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe('relative imports', () => {

@@ -14,6 +14,14 @@ const dirOf = (p: string): string => {
   return d === '.' ? '' : d;
 };
 
+// A linear scan, not `/\/+$/`: that regex backtracks quadratically on a long run of '/' that is
+// not at the end, so a hostile extraRoots entry could stall indexing.
+const stripTrailingSlashes = (p: string): string => {
+  let end = p.length;
+  while (end > 0 && p[end - 1] === '/') end--;
+  return p.slice(0, end);
+};
+
 /**
  * Derive module roots + the dotted-module index from the discovered fileSet alone — no fs reads,
  * no packaging-config parsing. Roots: the repo root, every `src/` segment, the parent of each
@@ -29,7 +37,7 @@ export function buildModuleIndex(
   const packageDirs = new Set(pyFiles.filter((f) => path.posix.basename(f) === '__init__.py').map(dirOf));
 
   const roots = new Set<string>(['']);
-  for (const r of extraRoots) roots.add(r.replace(/\/+$/, ''));
+  for (const r of extraRoots) roots.add(stripTrailingSlashes(r));
   for (const f of pyFiles) {
     const segs = f.split('/');
     for (let i = 0; i < segs.length - 1; i++) {
