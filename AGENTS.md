@@ -58,11 +58,16 @@ Plex **dogfoods itself**: this repo ships the same reviewer agent + MCP registra
 .claude/
   settings.json                            # project MCP + pr-master@sshanzel + a permission allowlist
   agents/plex-reviewer.md      -> ../../plugin/agents/plex-reviewer.md         (symlink → plugin/)
+  commands/plex-review.md     -> ../../plugin/commands/review.md              (symlink → plugin/)
 plugin/                                    # the REAL files — single source of truth (see Distribution)
   agents/plex-reviewer.md                  # the fresh-context, unbiased reviewer subagent
 ```
 
 **One-time:** `pnpm build` (the `.mcp.json` runs the *built* `dist/plex-mcp.js` under node — never tsx, ADR-17/19). Open the repo in Claude Code and approve the `plex` project MCP when prompted (or it's pre-enabled via `.claude/settings.json`).
+
+The repository-local review command is `/plex-review`; the installed plugin's command is
+`/plex:review`. The local alias uses a hyphen because Windows cannot check out filenames
+containing a colon. Both point to the canonical `plugin/commands/review.md` instructions.
 
 **Crowded MCP sessions — `alwaysLoad`.** With many MCP servers connected, Claude Code **defers** most MCP tools behind tool-search (they aren't listed top-level), and a reviewer agent can waste minutes failing to find `mcp__plex__*` and fall back to a manual git review. The fix: `"alwaysLoad": true` on the plex server entry (`.mcp.json` here; or the per-project `~/.claude.json` registration `plex init` writes) — it exempts plex from deferral so its tools load eagerly. The server also declares `instructions` (helps tool-search), and the `plex-reviewer` agent is told to `ToolSearch("mcp__plex__")` if deferred and **never** fall back to a manual review. (Subagent `tools:` is an allow-list only — it does NOT un-defer.)
 
