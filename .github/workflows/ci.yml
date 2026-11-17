@@ -27,6 +27,24 @@ permissions:
   contents: read # least privilege; this job only reads the repo
 
 jobs:
+  checkout-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check repository-local review command
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath '.claude/commands/plex-review.md')) {
+            throw 'Repository-local review command is missing.'
+          }
+          $target = git cat-file -p 'HEAD:.claude/commands/plex-review.md'
+          if ($LASTEXITCODE -ne 0 -or $target -ne '../../plugin/commands/review.md') {
+            throw 'Repository-local review command must point to the canonical plugin command.'
+          }
+          if (-not (Test-Path -LiteralPath 'plugin/commands/review.md')) {
+            throw 'Canonical plugin review command is missing.'
+          }
+
   verify:
     runs-on: ubuntu-latest
     steps:
